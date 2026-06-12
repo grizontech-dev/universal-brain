@@ -12,10 +12,10 @@ class ArchitectureMemory:
         self.db.execute(
             text("""
                 INSERT INTO memory_architecture_patterns
-                    (pattern_name, frontend, backend, database, auth_method,
+                    (id, pattern_name, frontend, backend, database, auth_method,
                      times_used, success_count, success_rate, project_ids, last_used)
                 VALUES (
-                    :key, :fe, :be, :db, :auth,
+                    gen_random_uuid()::text, :key, :fe, :be, :db, :auth,
                     1, :sc, :sr, ARRAY[:project]::text[], now()
                 )
                 ON CONFLICT (pattern_name) DO UPDATE SET
