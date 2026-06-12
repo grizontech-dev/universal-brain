@@ -18,7 +18,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from Brain.modules.chat.controller import router as brain_chat_router
 from Brain.modules.conversations.controller import brain_conversations_router
-from Brain.modules.sandbox.controller import router as brain_sandbox_router
+try:
+    from Brain.modules.sandbox.controller import router as brain_sandbox_router
+except ModuleNotFoundError:
+    print("WARNING: sandbox module not found, sandbox routes disabled")
+    brain_sandbox_router = None
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -49,7 +53,8 @@ app.add_middleware(
 # Include Routers
 app.include_router(brain_chat_router)
 app.include_router(brain_conversations_router)
-app.include_router(brain_sandbox_router)
+if brain_sandbox_router:
+    app.include_router(brain_sandbox_router)
 
 @app.get("/health")
 async def health_check():
