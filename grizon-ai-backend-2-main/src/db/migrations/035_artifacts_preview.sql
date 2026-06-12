@@ -1,0 +1,3 @@
+ALTER TABLE artifacts
+  ADD COLUMN IF NOT EXISTS preview_html TEXT,
+  ADD COLUMN IF NOT EXISTS preview_generated_at TIMESTAMPTZ;

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Module 2 — Plan & Subscription · Visuals</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    h2 { margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    .muted { color: #666; font-size: 0.9rem; }
+    .mermaid { background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Module 2 — Plan &amp; Subscription System</h1>
+  <p class="muted">Visual reference. Open in a browser. Source: <code>docs/Layer 2 Modules/Module 2 - Plan and Subscription/</code></p>
+
+  <h2>Subscription Lifecycle</h2>
+  <div class="mermaid">
+stateDiagram-v2
+  [*] --> active : register → assignFreePlan
+  active --> active : upgrade (new active row, old → cancelled in same tx)
+  active --> active_cancel_scheduled : POST /subscription/cancel (graceful)
+  active_cancel_scheduled --> cancelled : currentPeriodEnd reached (renewal cron)
+  cancelled --> active : assignFreePlan after cancel
+  active --> cancelled : POST /subscription/cancel (immediate)
+  active --> past_due : PG charge fails (future)
+  past_due --> active : PG retry succeeds (future)
+  past_due --> cancelled : grace period exceeded
+  active --> paused : admin adjust (rare)
+  paused --> active : admin adjust
+  </div>
+
+  <h2>Request Pipeline (with Module 2)</h2>
+  <div class="mermaid">
+flowchart LR
+  C[Client] --> R[requestId]
+  R --> A[authMiddleware<br/>(Module 1)<br/>sets req.user]
+  A --> AD[adminMiddleware<br/>(Module 1)]
+  AD --> L[logger / helmet / cors / json]
+  L --> P[planMiddleware<br/><b>Module 2</b><br/>sets req.subscription, req.plan]
+  P --> F[featureFlag · creditBudget · rateLimit · sanitiser]
+  F --> H[Route Handler]
+  P -. emits on state change .-> EV[(plan.events)]
+  EV -. listened by .-> M4[Module 4 Wallet]
+  EV -. listened by .-> N[Notification]
+  EV -. listened by .-> AN[Analytics]
+  </div>
+
+  <h2>Upgrade Flow (Single DB Transaction)</h2>
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Client
+  participant Route as user/plan.routes
+  participant SubSvc as subscription.service
+  participant DB as Postgres
+  participant Bus as plan.events
+
+  Client->>Route: POST /subscription/upgrade {planId, billingCycle}
+  Route->>SubSvc: upgradeSubscription(userId, payload)
+  SubSvc->>DB: BEGIN
+  SubSvc->>DB: SELECT plan WHERE id=:planId
+  alt plan invalid
+    SubSvc-->>Route: throw (PLAN_NOT_FOUND / ARCHIVED / NOT_PUBLIC)
+  end
+  SubSvc->>DB: SELECT active sub FOR UPDATE
+  alt same plan + cycle
+    SubSvc-->>Route: throw ALREADY_ON_PLAN
+  end
+  SubSvc->>DB: UPDATE old sub status='cancelled'
+  SubSvc->>DB: INSERT subscription_history (cancelled, reason='upgraded')
+  SubSvc->>DB: INSERT new sub (plan_snapshot=&lt;frozen&gt;, period now+cycle)
+  SubSvc->>DB: INSERT subscription_history (upgraded)
+  SubSvc->>DB: COMMIT
+  SubSvc->>Bus: emit subscription.upgraded
+  SubSvc-->>Route: new Subscription
+  Route-->>Client: 201 { subscription }
+  Bus-->>+Module4: wallet.grantCredits(...)
+  </div>
+
+  <h2>Entity Relationship (Module 2 + touch points)</h2>
+  <div class="mermaid">
+erDiagram
+  USERS ||--o{ SUBSCRIPTIONS : "owns"
+  PLANS ||--o{ SUBSCRIPTIONS : "referenced by"
+  SUBSCRIPTIONS ||--o{ SUBSCRIPTION_HISTORY : "logs"
+  USERS ||--o{ SUBSCRIPTION_HISTORY : "actor (admin)"
+
+  PLANS {
+    text id PK
+    text name
+    text slug UK
+    text status
+    bool is_public
+    bool is_introductory
+    jsonb pricing "INR, paise"
+    jsonb credits
+    jsonb limits
+    text_array model_access
+    text_array agent_access
+    jsonb feature_flags
+    timestamptz created_at
+    timestamptz archived_at
+    uuid created_by FK
+  }
+
+  SUBSCRIPTIONS {
+    uuid id PK
+    uuid user_id FK
+    text plan_id FK
+    jsonb plan_snapshot
+    text billing_cycle
+    text status
+    timestamptz current_period_start
+    timestamptz current_period_end
+    bool cancel_at_period_end
+    int credits_granted
+    int credits_rolled_over
+    text pg_provider "phonepe (reserved)"
+    text pg_subscription_id
+    text pg_merchant_transaction_id
+    text pg_customer_ref
+    timestamptz created_at
+  }
+
+  SUBSCRIPTION_HISTORY {
+    bigserial id PK
+    uuid subscription_id FK
+    text event
+    text from_plan_id FK
+    text to_plan_id FK
+    uuid actor_user_id FK
+    jsonb payload
+    timestamptz occurred_at
+  }
+  </div>
+
+  <h2>Cancel: Graceful vs Immediate</h2>
+  <div class="mermaid">
+flowchart TD
+  start([POST /subscription/cancel]) --> chk{immediate?}
+  chk -- no --> g1[UPDATE active SET cancel_at_period_end=true]
+  g1 --> g2[INSERT history 'cancel_scheduled']
+  g2 --> g3[emit subscription.cancel_scheduled]
+  g3 --> g4[200 OK { effectiveAt: currentPeriodEnd }]
+  g4 -.-> cron[(renewal cron, future)]
+  cron --> c1[UPDATE old status='cancelled']
+  c1 --> c2[assignFreePlan]
+  c2 --> c3[emit subscription.cancelled + subscription.created]
+
+  chk -- yes --> i1[BEGIN tx]
+  i1 --> i2[UPDATE old status='cancelled']
+  i2 --> i3[INSERT history 'cancelled' mode=immediate]
+  i3 --> i4[INSERT FREE sub status='active']
+  i4 --> i5[INSERT history 'created' reason='immediate_cancel']
+  i5 --> i6[COMMIT]
+  i6 --> i7[emit subscription.cancelled + subscription.created]
+  i7 --> i8[200 OK { subscription:&lt;FREE&gt;, cancelledSubscriptionId }]
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+  </script>
+</body>
+</html>

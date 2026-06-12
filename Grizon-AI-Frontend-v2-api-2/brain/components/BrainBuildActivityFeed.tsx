@@ -1,0 +1,392 @@
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    CheckCircle2, Circle, Loader2, FilePlus, FilePen, FileSearch,
+    FolderPlus, Terminal, Sparkles, Search, Compass, AlertCircle,
+    Layers, Clock, ChevronDown, ChevronRight, Check
+} from 'lucide-react';
+import type { BuildActivity, BuildActivityType, BuildTodoItem } from '../lib/buildActivity';
+import { isBuildTodosComplete, isNoisyTerminalLine, normalizeTodoStatus } from '../lib/buildActivity';
+
+export type { BuildTodoItem };
+
+interface BrainBuildActivityFeedProps {
+    activities: BuildActivity[];
+    todos: BuildTodoItem[];
+    isSyncing?: boolean;
+    workedSeconds?: number;
+    className?: string;
+}
+
+function iconForType(type: BuildActivityType) {
+    switch (type) {
+        case 'write_file': return FilePlus;
+        case 'edit_file': return FilePen;
+        case 'read_file': return FileSearch;
+        case 'mkdir': return FolderPlus;
+        case 'run_command': return Terminal;
+        case 'template': return Layers;
+        case 'search': return Search;
+        case 'explore': return Compass;
+        case 'task_start':
+        case 'task_done':
+        case 'task_failed':
+        case 'milestone': return Sparkles;
+        case 'sync': return Loader2;
+        default: return Circle;
+    }
+}
+
+function todoStatusIcon(status?: string) {
+    const s = normalizeTodoStatus(status);
+    if (s === 'completed') {
+        return <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />;
+    }
+    if (s === 'failed') {
+        return <AlertCircle size={14} className="text-red-400 shrink-0" />;
+    }
+    if (s === 'executing') {
+        return <Loader2 size={14} className="text-[#976df8] animate-spin shrink-0" />;
+    }
+    return <Circle size={14} className="text-white/20 shrink-0" />;
+}
+
+function CollapsibleActivityGroup({ act, activities }: { act: any, activities: any[] }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const filesCount = activities.length;
+    const totalAdded = act.linesAdded || 0;
+    const totalRemoved = act.linesRemoved || 0;
+
+    return (
+        <div className="flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200 py-0.5">
+            {/* Compact v0-style group header */}
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="flex items-center gap-2 text-white/40 hover:text-white/60 transition-colors py-1 group"
+            >
+                <div className="flex items-center gap-1.5">
+                    {isOpen ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
+                    {act.status === 'running' && <Loader2 size={11} className="text-[#976df8] animate-spin shrink-0" />}
+                    <span className="text-[12px] font-medium">
+                        {act.status === 'running' ? 'Editing' : 'Modified'} {filesCount} {filesCount === 1 ? 'file' : 'files'}
+                    </span>
+                </div>
+                {(totalAdded > 0 || totalRemoved > 0) && (
+                    <div className="flex items-center gap-1 text-[11px] font-mono">
+                        {totalAdded > 0 && <span className="text-emerald-500">+{totalAdded}</span>}
+                        {totalRemoved > 0 && <span className="text-red-500">-{totalRemoved}</span>}
+                    </div>
+                )}
+            </button>
+
+            {/* Expanded file list */}
+            {isOpen && (
+                <div className="flex flex-col pl-4 border-l border-white/[0.06] mt-0.5 space-y-0.5">
+                    {activities.map((singleAct: any) => {
+                        let filePath = singleAct.path || singleAct.label;
+                        const match = singleAct.label.match(/^(Generated|Created folder|Edited|Modified|Removed|Updated|Fixed|Improved|Added|Created)\s+`?([^`\s]+)`?/);
+                        const fileLabel = singleAct.label || filePath.split('/').pop();
+                        const isFolder = filePath.endsWith('/');
+
+                        return (
+                            <div key={singleAct.id} className="flex items-center gap-2 py-0.5">
+                                {isFolder
+                                    ? <FolderPlus size={11} className="text-white/25 shrink-0" />
+                                    : <FilePen size={11} className="text-white/25 shrink-0" />}
+                                <span className="text-[12px] text-white/40 truncate">{fileLabel}</span>
+                                {(singleAct.linesAdded > 0 || singleAct.linesRemoved > 0) && (
+                                    <div className="flex items-center gap-1 text-[10px] font-mono ml-auto shrink-0">
+                                        {singleAct.linesAdded > 0 && <span className="text-emerald-500/70">+{singleAct.linesAdded}</span>}
+                                        {singleAct.linesRemoved > 0 && <span className="text-red-500/70">-{singleAct.linesRemoved}</span>}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default function BrainBuildActivityFeed({
+    activities,
+    todos,
+    isSyncing,
+    workedSeconds,
+    className = '',
+}: BrainBuildActivityFeedProps) {
+    const milestones = activities.filter((a) => a.type === 'task_done' || a.type === 'milestone');
+    const stream = activities.filter((a) => {
+        if (a.type === 'task_done' || a.type === 'milestone') return false;
+        if (a.type === 'narration' && isNoisyTerminalLine(a.label)) return false;
+        return true;
+    });
+
+    const dedupedStream = (() => {
+        // 1. Keep the LATEST occurrence of each ID
+        const latestById = new Map();
+        for (const a of stream) {
+            latestById.set(a.id, a);
+        }
+        
+        // 2. Convert back to array, preserving original order
+        const orderedUnique = [];
+        const seenInOrder = new Set();
+        for (const a of stream) {
+            if (!seenInOrder.has(a.id)) {
+                seenInOrder.add(a.id);
+                orderedUnique.push(latestById.get(a.id));
+            }
+        }
+
+        // 3. Filter out redundant reloads and duplicate narrations/explore tasks
+        let sawReload = false;
+        let lastExploreLabel: string | null = null;
+        const seenNarrations = new Set();
+        
+        return orderedUnique.reverse().filter((a) => {
+            const isReload = a.type === 'narration' && a.label.includes('Reloaded — restoring preview');
+            if (isReload) {
+                if (sawReload) return false;
+                sawReload = true;
+            }
+            if (a.type === 'explore' || a.type === 'task_start') {
+                if (a.label === lastExploreLabel) return false;
+                lastExploreLabel = a.label;
+            } else if (a.type !== 'narration' && !['write_file', 'edit_file', 'mkdir'].includes(a.type)) {
+                lastExploreLabel = null;
+            }
+            
+            if (a.type === 'narration') {
+                if (seenNarrations.has(a.label)) return false; // dedup identical narrations globally in this stream
+                seenNarrations.add(a.label);
+            }
+            return true;
+        }).reverse();
+    })();
+
+    const streamEndRef = useRef<HTMLDivElement>(null);
+    const tasksEndRef = useRef<HTMLLIElement>(null);
+
+    useEffect(() => {
+        streamEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [dedupedStream.length, activities.length]);
+
+    return (
+        <div className={`flex flex-col ${className}`}>
+            {isSyncing && !isBuildTodosComplete(todos) && (
+                <div className="mx-4 mt-4 flex items-center gap-2 px-3 py-2 rounded-full bg-white/[0.04] border border-white/10 text-[12px] text-white/60">
+                    <Loader2 size={14} className="animate-spin text-white/50" />
+                    <span>Syncing project files…</span>
+                </div>
+            )}
+
+            {todos.length > 0 && (
+                <div className="px-3 pt-3 pb-2 border-b border-white/5">
+                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">Tasks</p>
+                    <ul className="space-y-1.5 max-h-[140px] overflow-y-auto custom-scrollbar">
+                        {todos.map((t, i) => {
+                            const s = (t.status || '').toLowerCase();
+                            const isRunning = s === 'executing' || s === 'running' || s === 'pending_confirmation';
+                            return (
+                            <li
+                                key={t.id || i}
+                                ref={isRunning ? tasksEndRef : undefined}
+                                className="flex items-start gap-2 text-[12px]"
+                            >
+                                <span className={`shrink-0 ${
+                                    t.status === 'completed' || t.status === 'done' || t.status === 'success' ? 'text-emerald-400'
+                                    : isRunning ? 'text-[#c4b5fd]' : 'text-white/30'
+                                }`}>
+                                    {t.status === 'completed' || t.status === 'done' || t.status === 'success' ? '✔' : isRunning ? '▶' : '□'}
+                                </span>
+                                <span className={`leading-snug ${
+                                    t.status === 'completed' || t.status === 'done' || t.status === 'success'
+                                        ? 'text-white/35 line-through'
+                                        : isRunning
+                                          ? 'text-[#c4b5fd]'
+                                          : 'text-white/75'
+                                }`}>
+                                    {t.title || t.task || 'Task'}
+                                </span>
+                            </li>
+                            );
+                        })}
+                    </ul>
+                </div>
+            )}
+
+            <div className="flex-1 px-2 py-3 space-y-2.5">
+                {dedupedStream.length === 0 && !isSyncing && (
+                    <p className="text-[13px] text-white/30 leading-relaxed">
+                        Building your project in WebContainer. Actions will appear here as they run.
+                    </p>
+                )}
+
+                {(() => {
+                    const grouped: any[] = [];
+                    let currentGroup: any = null;
+                    for (const act of dedupedStream) {
+                        const isFileOp = ['write_file', 'edit_file', 'mkdir', 'read_file'].includes(act.type);
+                        if (isFileOp) {
+                            if (!currentGroup) {
+                                currentGroup = {
+                                    id: `group-${act.id}`,
+                                    isGroup: true,
+                                    label: 'Updated project files',
+                                    type: 'file_group',
+                                    activities: [act],
+                                    linesAdded: act.linesAdded || 0,
+                                    linesRemoved: act.linesRemoved || 0,
+                                    status: act.status,
+                                    lastTimestamp: act.timestamp
+                                };
+                                grouped.push(currentGroup);
+                            } else {
+                                const currentDir = act.label.split('/').slice(0, -1).join('/');
+                                const lastDir = currentGroup.activities[0].label.split('/').slice(0, -1).join('/');
+                                
+                                if (currentDir === lastDir && currentGroup.activities.length < 3) {
+                                    // Same directory and small group, so group them
+                                    currentGroup.activities.push(act);
+                                    currentGroup.linesAdded += (act.linesAdded || 0);
+                                    currentGroup.linesRemoved += (act.linesRemoved || 0);
+                                    currentGroup.lastTimestamp = act.timestamp;
+                                    if (act.status === 'running') currentGroup.status = 'running';
+                                } else {
+                                    // Create new group
+                                    currentGroup = {
+                                        id: `group-${act.id}`,
+                                        isGroup: true,
+                                        label: 'Updated project files',
+                                        type: 'file_group',
+                                        activities: [act],
+                                        linesAdded: act.linesAdded || 0,
+                                        linesRemoved: act.linesRemoved || 0,
+                                        status: act.status,
+                                        lastTimestamp: act.timestamp
+                                    };
+                                    grouped.push(currentGroup);
+                                }
+                            }
+                        } else {
+                            currentGroup = null;
+                            grouped.push(act);
+                        }
+                    }
+                    
+                    const completedTodos = todos.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'success');
+                    
+                    const isTaskCompleted = (taskTitle: string, actIdx: number) => {
+                        if (!taskTitle) return false;
+                        
+                        // 1. If there's a task_done activity for this taskTitle later in the feed
+                        if (activities.some(a => a.type === 'task_done' && a.taskTitle === taskTitle)) {
+                            return true;
+                        }
+                        
+                        // 2. Since tasks run sequentially, if there is ANY newer task_start or explore after this one, this one is done
+                        const hasNewerTask = grouped.slice(actIdx + 1).some((a: any) => 
+                            !a.isGroup && (a.type === 'explore' || a.type === 'task_start')
+                        );
+                        if (hasNewerTask) {
+                            return true;
+                        }
+
+                        // 3. Fallback to todo status fuzzy matching
+                        const key = taskTitle.trim().toLowerCase();
+                        return completedTodos.some(t => {
+                            const tk = (t.title || t.task || '').trim().toLowerCase();
+                            return tk === key || (tk && key.includes(tk)) || (key && tk.includes(key));
+                        });
+                    };
+
+                    return grouped.map((act: any, idx: number) => {
+                        const isMilestone = act.type === 'task_done' || act.type === 'milestone';
+
+                        if (isMilestone) {
+                            return (
+                                <div
+                                    key={act.id}
+                                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 flex items-center justify-between gap-2 animate-in fade-in duration-300"
+                                >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <Sparkles size={14} className="text-[#976df8] shrink-0" />
+                                        <span className="text-[13px] font-medium text-white truncate">{act.label}</span>
+                                    </div>
+                                    {act.status === 'done' && (
+                                        <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                                    )}
+                                </div>
+                            );
+                        }
+
+                        if (act.isGroup) {
+                            return <CollapsibleActivityGroup key={act.id} act={act} activities={act.activities} />;
+                        }
+
+                        if (act.type === 'explore' || act.type === 'task_start') {
+                            const isRunning = act.status === 'running' && !isTaskCompleted(act.taskTitle || '', idx);
+                            const labelText = act.label.replace(/^Exploring\s*[-—]\s*/i, 'Moved to ');
+                            return (
+                                <div key={act.id} className="flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-1 duration-200 py-2">
+                                    <div className="w-[18px] h-[18px] rounded-full bg-white/[0.05] border border-white/10 flex items-center justify-center shrink-0">
+                                        {isRunning ? (
+                                            <Loader2 size={10} className="text-[#976df8] animate-spin" />
+                                        ) : (
+                                            <Check size={10} className="text-emerald-400" />
+                                        )}
+                                    </div>
+                                    <span className={`text-[13px] font-medium truncate ${isRunning ? 'text-white/90' : 'text-white/60'}`}>
+                                        {labelText}
+                                    </span>
+                                </div>
+                            );
+                        }
+
+                        if (act.type === 'thinking') {
+                            const timeStr = act.timestamp ? new Date(act.timestamp).toLocaleTimeString([], { hour12: false }) : '';
+                            return (
+                                <div key={act.id} className="flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200 py-2">
+                                    <div className="flex items-start gap-3">
+                                        <span className="text-[11px] text-white/30 font-mono shrink-0 mt-0.5">{timeStr}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[13px] text-white/50 italic leading-relaxed">
+                                                <span className="font-semibold text-white/70 not-italic mr-2">💭 Thinking:</span>
+                                                {act.label}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        // Normal narration — v0 style: clean paragraph, normal weight
+                        return (
+                            <div key={act.id} className="animate-in fade-in slide-in-from-bottom-1 duration-200 py-1">
+                                <p className="text-[13.5px] text-white/80 leading-[1.7]">{act.label}</p>
+
+                                {act.detail && act.type === 'run_command' && !act.reason && (
+                                    <p className="text-[11px] text-white/30 mt-1 font-mono truncate">{act.detail}</p>
+                                )}
+                            </div>
+                        );
+                    });
+                })()}
+                
+                <div ref={streamEndRef} className="h-1 shrink-0" aria-hidden />
+            </div>
+
+            {workedSeconds !== undefined && workedSeconds > 0 && (
+                <div className="px-4 py-3 border-t border-white/5 flex items-center justify-between gap-2 text-[11px] text-white/40">
+                    <div className="flex items-center gap-2">
+                        <Clock size={12} className="text-white/20" />
+                        <span>Worked for {workedSeconds}s</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

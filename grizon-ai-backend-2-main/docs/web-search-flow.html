@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Search — Architecture & Data Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --brave: #fb542b;
+    --tavily: #7c3aed;
+    --subagent: #0ea5e9;
+    --llm: #10b981;
+    --worker: #f59e0b;
+    --router: #ec4899;
+    --cite: #6366f1;
+    --deep: #14b8a6;
+    --arrow: #30363d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* ── Header ───────────────────────────────────────── */
+  .header {
+    padding: 48px 40px 32px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+  }
+  .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .header p { color: var(--muted); margin-top: 8px; font-size: 15px; max-width: 640px; }
+  .tag-row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .tag {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 20px; border: 1px solid;
+  }
+  .tag-brave  { color: var(--brave);   border-color: var(--brave);   background: rgba(251,84,43,.08); }
+  .tag-tavily { color: var(--tavily);  border-color: var(--tavily);  background: rgba(124,58,237,.08); }
+  .tag-sub    { color: var(--subagent);border-color: var(--subagent);background: rgba(14,165,233,.08); }
+  .tag-cite   { color: var(--cite);    border-color: var(--cite);    background: rgba(99,102,241,.08); }
+  .tag-deep   { color: var(--deep);    border-color: var(--deep);    background: rgba(20,184,166,.08); }
+
+  /* ── Layout ───────────────────────────────────────── */
+  .main { max-width: 1200px; margin: 0 auto; padding: 40px; }
+  .section { margin-bottom: 64px; }
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--muted); font-weight: 600; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+
+  /* ── Cards ────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+  .card-grid { display: grid; gap: 16px; }
+  .card-grid-2 { grid-template-columns: 1fr 1fr; }
+  .card-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  /* ── Pipeline Flow ────────────────────────────────── */
+  .pipeline {
+    display: flex; align-items: center; gap: 0;
+    overflow-x: auto; padding-bottom: 4px;
+  }
+  .pipe-node {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; min-width: 110px; text-align: center;
+  }
+  .pipe-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; border: 1px solid var(--border);
+    background: var(--surface2);
+    position: relative;
+  }
+  .pipe-icon.active { animation: pulse 2s infinite; }
+  .pipe-label { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .pipe-sublabel { font-size: 10px; color: var(--border); }
+  .pipe-arrow {
+    flex-shrink: 0; color: var(--muted); font-size: 18px;
+    padding: 0 4px; margin-bottom: 20px;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(251,84,43,0); }
+    50% { box-shadow: 0 0 0 8px rgba(251,84,43,0.15); }
+  }
+
+  /* ── Decision Tree ────────────────────────────────── */
+  .decision-tree {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+  }
+  .decision-root {
+    display: flex; justify-content: center; margin-bottom: 0;
+  }
+  .decision-node {
+    padding: 10px 20px; border-radius: 8px; font-size: 13px;
+    font-weight: 600; border: 1px solid; text-align: center;
+    position: relative;
+  }
+  .dn-query    { border-color: var(--worker); background: rgba(245,158,11,.08); color: var(--worker); }
+  .dn-gate     { border-color: var(--border); background: var(--surface2); color: var(--muted); }
+  .dn-brave    { border-color: var(--brave);  background: rgba(251,84,43,.08); color: var(--brave); }
+  .dn-tavily   { border-color: var(--tavily); background: rgba(124,58,237,.08); color: var(--tavily); }
+
+  .decision-cols {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;
+  }
+  .decision-col {
+    border: 1px solid var(--border); border-radius: 10px; padding: 20px;
+    background: var(--surface2);
+  }
+  .decision-col h3 { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-brave  { background: var(--brave); }
+  .dot-tavily { background: var(--tavily); }
+
+  .criteria-list { list-style: none; }
+  .criteria-list li {
+    font-size: 13px; color: var(--muted); padding: 5px 0;
+    border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 8px;
+  }
+  .criteria-list li:last-child { border-bottom: none; }
+  .criteria-list .icon { flex-shrink: 0; }
+
+  /* ── Step Flow ────────────────────────────────────── */
+  .step-flow { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: flex; gap: 20px; position: relative;
+  }
+  .step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 40px;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--border), transparent);
+  }
+  .step-num {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; flex-shrink: 0;
+    border: 2px solid;
+    z-index: 1;
+    background: var(--bg);
+  }
+  .step-body { flex: 1; padding-bottom: 32px; }
+  .step-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .step-desc { color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+  .sn-worker { border-color: var(--worker); color: var(--worker); }
+  .sn-router { border-color: var(--router); color: var(--router); }
+  .sn-llm    { border-color: var(--llm);    color: var(--llm); }
+  .sn-brave  { border-color: var(--brave);  color: var(--brave); }
+  .sn-tavily { border-color: var(--tavily); color: var(--tavily); }
+  .sn-sub    { border-color: var(--subagent); color: var(--subagent); }
+  .sn-cite   { border-color: var(--cite);   color: var(--cite); }
+
+  /* ── Code Block ───────────────────────────────────── */
+  .code {
+    background: #0d1117; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px; line-height: 1.7; margin-top: 10px; overflow-x: auto;
+  }
+  .kw { color: #ff7b72; }
+  .str { color: #a5d6ff; }
+  .cm { color: #8b949e; }
+  .fn { color: #d2a8ff; }
+  .num { color: #79c0ff; }
+  .prop { color: #ffa657; }
+
+  /* ── Data Shape Cards ─────────────────────────────── */
+  .shape-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .shape-header {
+    padding: 8px 14px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.5px; text-transform: uppercase; border-bottom: 1px solid var(--border);
+  }
+  .shape-body { padding: 12px 14px; }
+  .shape-body .code { margin-top: 0; }
+
+  /* ── Gate Diagram ─────────────────────────────────── */
+  .gate-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .gate-row:last-child { border-bottom: none; }
+  .gate-check {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; flex-shrink: 0;
+  }
+  .gate-yes { background: rgba(16,185,129,.15); border: 1px solid var(--llm); color: var(--llm); }
+  .gate-no  { background: rgba(239,68,68,.12); border: 1px solid #ef4444; color: #ef4444; }
+  .gate-label { flex: 1; font-size: 13px; }
+  .gate-source { font-size: 11px; color: var(--muted); font-family: monospace; }
+
+  /* ── Subagent Box ─────────────────────────────────── */
+  .subagent-box {
+    border: 1px solid var(--subagent); border-radius: 10px;
+    background: rgba(14,165,233,.05); padding: 20px;
+  }
+  .subagent-title {
+    color: var(--subagent); font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* ── Deep Research Loop ───────────────────────────── */
+  .loop-box {
+    border: 1px dashed var(--deep); border-radius: 12px;
+    padding: 20px; background: rgba(20,184,166,.04);
+  }
+  .loop-title {
+    color: var(--deep); font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px;
+  }
+  .loop-steps {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .loop-step {
+    display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px;
+    background: var(--surface); border-radius: 8px; border: 1px solid var(--border);
+  }
+  .loop-step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(20,184,166,.15); border: 1px solid var(--deep);
+    color: var(--deep); font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .loop-step-text { font-size: 13px; color: var(--muted); }
+  .loop-step-text strong { color: var(--text); }
+
+  /* ── Citation Box ─────────────────────────────────── */
+  .cite-box {
+    border: 1px solid var(--cite); border-radius: 10px;
+    background: rgba(99,102,241,.04); padding: 20px;
+  }
+  .cite-title {
+    color: var(--cite); font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+  }
+
+  /* ── Comparison Table ─────────────────────────────── */
+  .compare-table { width: 100%; border-collapse: collapse; }
+  .compare-table th {
+    padding: 10px 16px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--border); text-align: left;
+  }
+  .compare-table td {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--muted);
+  }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table tr:hover td { background: var(--surface2); color: var(--text); }
+  .th-brave { color: var(--brave); }
+  .th-tavily { color: var(--tavily); }
+
+  /* ── Badge ────────────────────────────────────────── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 11px;
+    font-weight: 600; border: 1px solid;
+  }
+  .badge-brave  { color: var(--brave);   border-color: var(--brave);   background: rgba(251,84,43,.1); }
+  .badge-tavily { color: var(--tavily);  border-color: var(--tavily);  background: rgba(124,58,237,.1); }
+  .badge-sub    { color: var(--subagent);border-color: var(--subagent);background: rgba(14,165,233,.1); }
+
+  /* ── Full Pipeline Diagram ────────────────────────── */
+  .full-pipeline {
+    position: relative;
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px;
+    align-items: start;
+  }
+  .fp-node {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; text-align: center;
+  }
+  .fp-box {
+    width: 100%; padding: 12px 6px; border-radius: 8px;
+    border: 1px solid; font-size: 12px; font-weight: 600;
+    min-height: 56px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 4px;
+  }
+  .fp-emoji { font-size: 18px; }
+  .fp-sub { font-size: 10px; color: var(--muted); font-weight: 400; }
+  .fp-arrow-col {
+    display: flex; align-items: center; justify-content: center;
+    padding-top: 14px;
+  }
+  .fp-arrow { color: var(--muted); font-size: 20px; }
+
+  .fp-user    { border-color: #6b7280; background: rgba(107,114,128,.08); color: #9ca3af; }
+  .fp-queue   { border-color: var(--worker); background: rgba(245,158,11,.08); color: var(--worker); }
+  .fp-router  { border-color: var(--router); background: rgba(236,72,153,.08); color: var(--router); }
+  .fp-llm     { border-color: var(--llm);    background: rgba(16,185,129,.08); color: var(--llm); }
+  .fp-search  { border-color: var(--brave);  background: rgba(251,84,43,.08); color: var(--brave); }
+  .fp-response { border-color: #6b7280; background: rgba(107,114,128,.08); color: #9ca3af; }
+
+  /* ── Responsive ───────────────────────────────────── */
+  @media (max-width: 800px) {
+    .card-grid-2, .card-grid-3 { grid-template-columns: 1fr; }
+    .decision-cols { grid-template-columns: 1fr; }
+    .full-pipeline { grid-template-columns: 1fr; }
+    .main { padding: 20px; }
+  }
+
+  /* ── Tooltip ──────────────────────────────────────── */
+  .has-tip { cursor: help; position: relative; border-bottom: 1px dotted var(--muted); }
+  .tip {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 11px; white-space: nowrap;
+    color: var(--text); z-index: 10;
+  }
+  .has-tip:hover .tip { display: block; }
+
+  /* ── Scrollbar ────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════ HEADER ═══ -->
+<div class="header">
+  <h1>Web Search — Architecture &amp; Data Flow</h1>
+  <p>How web search is wired into the agent pipeline: from user query through engine selection, subagent summarisation, deep research loops, and citation assembly back to the response.</p>
+  <div class="tag-row">
+    <span class="tag tag-brave">Brave Search — Primary</span>
+    <span class="tag tag-tavily">Tavily — High Priority</span>
+    <span class="tag tag-sub">Subagent Summarisation</span>
+    <span class="tag tag-cite">Citation Assembly</span>
+    <span class="tag tag-deep">Deep Research Loop</span>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- ═══════════════════ 1. END-TO-END PIPELINE ═══ -->
+  <div class="section">
+    <div class="section-title">01 — End-to-End Pipeline</div>
+
+    <div class="card" style="overflow-x:auto;">
+      <div style="min-width:860px;">
+        <div style="display:grid; grid-template-columns: repeat(13, auto); align-items:center; gap:0; justify-content:start;">
+
+          <!-- User -->
+          <div class="fp-node">
+            <div class="fp-box fp-user" style="width:90px;">
+              <span class="fp-emoji">👤</span>
+              <span>User</span>
+              <span class="fp-sub">sends message</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Queue -->
+          <div class="fp-node">
+            <div class="fp-box fp-queue" style="width:90px;">
+              <span class="fp-emoji">📬</span>
+              <span>BullMQ</span>
+              <span class="fp-sub">chat queue</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Worker -->
+          <div class="fp-node">
+            <div class="fp-box fp-queue" style="width:90px;">
+              <span class="fp-emoji">⚙️</span>
+              <span>chat.worker</span>
+              <span class="fp-sub">processJob</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Router -->
+          <div class="fp-node">
+            <div class="fp-box fp-router" style="width:90px;">
+              <span class="fp-emoji">🧭</span>
+              <span>Router</span>
+              <span class="fp-sub">classify + dispatch</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- LLM -->
+          <div class="fp-node">
+            <div class="fp-box fp-llm" style="width:90px;">
+              <span class="fp-emoji">🤖</span>
+              <span>LLM</span>
+              <span class="fp-sub">streams response</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">↔</span></div>
+
+          <!-- Tool -->
+          <div class="fp-node">
+            <div class="fp-box fp-search" style="width:90px; border-color:var(--brave);">
+              <span class="fp-emoji">🔎</span>
+              <span>web_search</span>
+              <span class="fp-sub">tool call</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Engine -->
+          <div class="fp-node">
+            <div class="fp-box" style="width:90px; border-color:var(--brave); background:rgba(251,84,43,.08); color:var(--brave);">
+              <span class="fp-emoji">🌐</span>
+              <span>Brave / Tavily</span>
+              <span class="fp-sub">search API</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Subagent -->
+          <div class="fp-node">
+            <div class="fp-box" style="width:90px; border-color:var(--subagent); background:rgba(14,165,233,.08); color:var(--subagent);">
+              <span class="fp-emoji">🧩</span>
+              <span>Subagent</span>
+              <span class="fp-sub">summarise_pages</span>
+            </div>
+          </div>
+          <div class="fp-arrow-col"><span class="fp-arrow">→</span></div>
+
+          <!-- Response -->
+          <div class="fp-node">
+            <div class="fp-box fp-user" style="width:90px;">
+              <span class="fp-emoji">💬</span>
+              <span>Response</span>
+              <span class="fp-sub">with citations</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div style="margin-top:20px; padding-top:20px; border-top: 1px solid var(--border); display:flex; gap:24px; flex-wrap:wrap;">
+        <div style="font-size:12px; color:var(--muted);">
+          <span style="color:var(--router)">■</span> Router classifies intent + complexity → selects agent → resolves allowed tools
+        </div>
+        <div style="font-size:12px; color:var(--muted);">
+          <span style="color:var(--llm)">■</span> LLM calls web_search as a tool; worker executes it and re-injects result
+        </div>
+        <div style="font-size:12px; color:var(--muted);">
+          <span style="color:var(--subagent)">■</span> Subagent runs in parallel per result URL (nano model, 300 tokens)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 2. ENGINE SELECTION ═══ -->
+  <div class="section">
+    <div class="section-title">02 — Search Engine Selection Strategy</div>
+
+    <div class="decision-tree">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:16px; margin-bottom:24px;">
+        <div class="decision-node dn-query" style="min-width:320px;">
+          Incoming web_search tool call
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div style="width:2px; height:20px; background:var(--border);"></div>
+        </div>
+        <div class="decision-node dn-gate" style="min-width:320px;">
+          🔑 &nbsp; Who is asking? &nbsp; — &nbsp; Agent slug + query complexity
+        </div>
+        <div style="display:grid; grid-template-columns:1fr auto 1fr; width:100%; max-width:640px; align-items:start; gap:8px;">
+          <div style="text-align:right; padding-top:8px;">
+            <div style="font-size:11px; color:var(--brave); font-weight:600; margin-bottom:8px;">DEFAULT PATH</div>
+            <div style="width:2px; height:16px; background:var(--brave); margin-left:auto;"></div>
+          </div>
+          <div style="width:2px; background:var(--border); margin-top:8px;"></div>
+          <div style="text-align:left; padding-top:8px;">
+            <div style="font-size:11px; color:var(--tavily); font-weight:600; margin-bottom:8px;">HIGH-PRIORITY PATH</div>
+            <div style="width:2px; height:16px; background:var(--tavily);"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision-cols">
+
+        <!-- Brave Column -->
+        <div class="decision-col">
+          <h3 style="color:var(--brave);">
+            <span class="dot dot-brave"></span>
+            Brave Search
+            <span style="font-size:11px; color:var(--muted); font-weight:400; margin-left:auto;">api.search.brave.com</span>
+          </h3>
+          <ul class="criteria-list">
+            <li><span class="icon">📋</span> <span>General chat agent with search intent</span></li>
+            <li><span class="icon">📋</span> <span>Writer, Document agents needing context</span></li>
+            <li><span class="icon">📋</span> <span>Simple or medium complexity queries</span></li>
+            <li><span class="icon">📋</span> <span>Any query when Tavily key is absent</span></li>
+            <li><span class="icon">⚡</span> <span style="color:var(--text)">Faster, lower cost, good coverage</span></li>
+            <li><span class="icon">📦</span> <span>Returns: <code style="font-size:11px; color:var(--brave)">{ url, title, description }</code></span></li>
+            <li><span class="icon">🔢</span> <span>5 results per call</span></li>
+          </ul>
+          <div class="code" style="margin-top:14px;">
+<span class="cm">// X-Subscription-Token header</span>
+GET api.search.brave.com/res/v1/web/search
+  ?q=<span class="str">{query}</span>&amp;count=<span class="num">5</span>
+          </div>
+        </div>
+
+        <!-- Tavily Column -->
+        <div class="decision-col">
+          <h3 style="color:var(--tavily);">
+            <span class="dot dot-tavily"></span>
+            Tavily Search
+            <span style="font-size:11px; color:var(--muted); font-weight:400; margin-left:auto;">api.tavily.com/search</span>
+          </h3>
+          <ul class="criteria-list">
+            <li><span class="icon">🔬</span> <span><strong style="color:var(--text)">research</strong> agent — any complexity</span></li>
+            <li><span class="icon">🔬</span> <span><strong style="color:var(--text)">deep_research</strong> agent — always Tavily</span></li>
+            <li><span class="icon">🔬</span> <span>Any agent + <strong style="color:var(--text)">complex</strong> complexity class</span></li>
+            <li><span class="icon">🔬</span> <span>Queries with <code style="font-size:11px;">priority="high"</code> param</span></li>
+            <li><span class="icon">💎</span> <span style="color:var(--text)">AI-native, deeper results, answer snippets</span></li>
+            <li><span class="icon">📦</span> <span>Returns: <code style="font-size:11px; color:var(--tavily)">{ url, title, content }</code></span></li>
+            <li><span class="icon">🔢</span> <span>5 results, richer content per result</span></li>
+          </ul>
+          <div class="code" style="margin-top:14px;">
+POST api.tavily.com/search
+<span class="prop">api_key</span>: <span class="str">{TAVILY_API_KEY}</span>
+<span class="prop">query</span>: <span class="str">{query}</span>
+<span class="prop">max_results</span>: <span class="num">5</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px; padding:14px 16px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
+        <div style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px;">
+          <span>🔄</span>
+          <span><strong style="color:var(--text)">Automatic fallback:</strong> If Tavily fails or is unavailable, the call falls through to Brave. If Brave also fails, returns <code style="color:var(--worker)">{ results: [], engine: "none" }</code>. The LLM handles empty results gracefully.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 3. TOOL GATE ═══ -->
+  <div class="section">
+    <div class="section-title">03 — Tool Activation Gate (Three-Way Check)</div>
+
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="margin-bottom:16px;">All three conditions must be <span style="color:var(--llm)">true</span></h3>
+        <div class="gate-row">
+          <div class="gate-check gate-yes">✓</div>
+          <div class="gate-label">
+            <div><strong>Classification signals web search needed</strong></div>
+            <div class="gate-source">ClassificationResult.needsWebSearch === true</div>
+          </div>
+        </div>
+        <div class="gate-row">
+          <div class="gate-check gate-yes">✓</div>
+          <div class="gate-label">
+            <div><strong>Agent descriptor includes web_search in its allowed tools</strong></div>
+            <div class="gate-source">agent.allowedTools.includes("web_search")</div>
+          </div>
+        </div>
+        <div class="gate-row">
+          <div class="gate-check gate-yes">✓</div>
+          <div class="gate-label">
+            <div><strong>User's plan has web search feature enabled</strong></div>
+            <div class="gate-source">plan.featureFlags.webSearch === true</div>
+          </div>
+        </div>
+        <div style="margin-top:16px; padding:10px 14px; background:rgba(239,68,68,.08); border:1px solid #ef4444; border-radius:6px; font-size:12px; color:#ef4444;">
+          If any check fails → tool is never passed to the LLM. It cannot be called.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:12px;">Resolver: <code style="font-size:13px; color:var(--router)">resolveAllowedTools()</code></h3>
+        <p style="color:var(--muted); font-size:13px; margin-bottom:12px;">
+          Called in <code>src/router/tools.ts</code> during routing. Returns the final list of tool IDs that get passed to the LLM as function declarations.
+        </p>
+        <div class="code">
+<span class="kw">if</span> (
+  classification.needsWebSearch
+  &amp;&amp; agent.allowedTools.<span class="fn">includes</span>(<span class="str">"web_search"</span>)
+  &amp;&amp; plan.featureFlags.<span class="prop">webSearch</span> === <span class="kw">true</span>
+) {
+  tools.<span class="fn">push</span>(<span class="str">"web_search"</span>);
+}
+        </div>
+        <p style="color:var(--muted); font-size:12px; margin-top:12px;">
+          The resulting <code>allowedTools[]</code> is embedded in the <code>RoutingDecision</code> and passed directly to <code>toolSpecsFor()</code> which generates the JSON Schema declarations sent to the LLM.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 4. STEP-BY-STEP DATA FLOW ═══ -->
+  <div class="section">
+    <div class="section-title">04 — Step-by-Step Data Flow</div>
+
+    <div class="step-flow">
+
+      <div class="step">
+        <div class="step-num sn-router">1</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--router)">Classifier detects search intent</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/router/classifier.ts</span>
+          </div>
+          <div class="step-desc">
+            The query is analysed via heuristic patterns (keywords like "what is", "latest", "find") and optionally a lightweight GPT-4o-mini call if confidence is below 0.7. The result includes <code>intent: "search"</code>, <code>complexity</code>, and <code>needsWebSearch: true</code>. The classification result is cached in Redis for 60 seconds (SHA256 of query).
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-router">2</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--router)">Agent dispatcher selects agent</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/router/agentDispatcher.ts</span>
+          </div>
+          <div class="step-desc">
+            Intent <code>"search"</code> maps to the <strong>research</strong> agent by default. For <code>complexity: "complex"</code>, it routes to <strong>deep_research</strong> agent instead. The agent's <code>allowedTools</code> array then gates which tools are available. Only agents that list <code>"web_search"</code> in their descriptor can trigger a search.
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-llm">3</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--llm)">LLM receives tool declarations and starts streaming</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/models/providers/*.ts</span>
+          </div>
+          <div class="step-desc">
+            The <code>web_search</code> function schema is passed to the provider (Anthropic/OpenAI/Gemini) as a tool declaration. The LLM decides when to call it and emits a <code>tool_call</code> event with its chosen query string. The stream pauses at this point — the worker takes over.
+          </div>
+          <div class="code" style="max-width:520px;">
+<span class="cm">// ProviderEvent emitted by the streaming loop</span>
+{ <span class="prop">type</span>: <span class="str">"tool_call"</span>,
+  <span class="prop">toolId</span>: <span class="str">"web_search"</span>,
+  <span class="prop">arguments</span>: { <span class="prop">query</span>: <span class="str">"latest AI chip benchmarks 2025"</span> },
+  <span class="prop">callId</span>: <span class="str">"call_abc123"</span> }
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-brave">4</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--brave)">executeTool() dispatches to webSearch()</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/tools/index.ts → src/tools/webSearch.tool.ts</span>
+          </div>
+          <div class="step-desc">
+            The worker calls <code>executeTool("web_search", { query }, ctx)</code>. The switch dispatcher routes it to <code>webSearch()</code>. Engine selection happens here: Tavily is tried first for research/complex paths; Brave for everything else. The function returns a <code>WebSearchResult</code> object.
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+            <div class="shape-card">
+              <div class="shape-header" style="background:rgba(251,84,43,.1); color:var(--brave);">Brave Response Shape</div>
+              <div class="shape-body">
+                <div class="code">
+web.results[]: {
+  <span class="prop">url</span>: <span class="str">string</span>
+  <span class="prop">title</span>: <span class="str">string</span>
+  <span class="prop">description</span>: <span class="str">string</span>  <span class="cm">← snippet</span>
+}
+                </div>
+              </div>
+            </div>
+            <div class="shape-card">
+              <div class="shape-header" style="background:rgba(124,58,237,.1); color:var(--tavily);">Tavily Response Shape</div>
+              <div class="shape-body">
+                <div class="code">
+results[]: {
+  <span class="prop">url</span>: <span class="str">string</span>
+  <span class="prop">title</span>: <span class="str">string</span>
+  <span class="prop">content</span>: <span class="str">string</span> <span class="cm">← 400 chars</span>
+}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-sub">5</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--subagent)">Subagent summarises top results</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/runtime/subagent.ts</span>
+          </div>
+          <div class="step-desc">
+            After raw results arrive, webSearch() spawns a <code>summarise_pages</code> subagent for each of the top 3 URLs <em>(only when ctx.jobId is present)</em>. Each subagent is a lightweight GPT-4o-mini call (nano tier, 300-token output) that receives the title + snippet + URL and returns a 3-bullet factual summary. Subagent cost is attributed back to the parent job in <code>api_calls.metadata.subagentCost</code>.
+          </div>
+          <div class="subagent-box" style="margin-top:12px;">
+            <div class="subagent-title">🧩 summarise_pages Subagent</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+              <div>
+                <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Input</div>
+                <div class="code" style="font-size:11px;">
+<span class="str">"{title}\n{snippet}\n{url}"</span>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Output</div>
+                <div class="code" style="font-size:11px;">
+<span class="cm">• 3-bullet factual summary</span>
+<span class="cm">• max 300 tokens</span>
+<span class="cm">• nano model tier</span>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:12px; display:flex; gap:16px; flex-wrap:wrap;">
+              <div style="font-size:12px; color:var(--muted);">🗄️ Logged to: <code>subagent_runs</code> table</div>
+              <div style="font-size:12px; color:var(--muted);">💰 Cost: added to parent <code>api_calls.metadata</code></div>
+              <div style="font-size:12px; color:var(--muted);">⚡ Parallel: up to 3 subagents at once</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-llm">6</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--llm)">Search result re-injected into LLM context</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">src/workers/chat.worker.ts</span>
+          </div>
+          <div class="step-desc">
+            The complete <code>WebSearchResult</code> (results + summaries) is serialised to JSON and added to the message history as a <code>role: "tool"</code> message. The LLM stream resumes with this new context — it can now synthesise the search results, quote facts, and decide whether to call more tools or produce a final answer.
+          </div>
+          <div class="code" style="max-width:560px;">
+<span class="cm">// Injected back as tool result message</span>
+{
+  <span class="prop">role</span>: <span class="str">"tool"</span>,
+  <span class="prop">toolCallId</span>: <span class="str">"call_abc123"</span>,
+  <span class="prop">toolName</span>: <span class="str">"web_search"</span>,
+  <span class="prop">content</span>: <span class="fn">JSON.stringify</span>(webSearchResult)
+}
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num sn-cite">7</div>
+        <div class="step-body">
+          <div class="step-title">
+            <span style="color:var(--cite)">Citation accumulation &amp; postProcess</span>
+            <span class="badge" style="color:var(--muted); border-color:var(--border); background:transparent; font-size:10px;">P4 — agent hook</span>
+          </div>
+          <div class="step-desc">
+            While processing tool results, the worker accumulates a <code>citations[]</code> array from every <code>web_search</code> result. After the LLM stream finishes, the agent's <code>postProcess</code> hook appends a formatted source list if the LLM didn't already include one.
+          </div>
+          <div class="cite-box" style="margin-top:12px;">
+            <div class="cite-title">📎 Citation Assembly (postProcess hook)</div>
+            <div class="code">
+<span class="kw">if</span> (!content.<span class="fn">includes</span>(<span class="str">'## Sources'</span>)) {
+  content += <span class="str">`\n\n---\n**Sources**\n`</span>
+    + citations.<span class="fn">map</span>(c =>
+        <span class="str">`[${c.index}] [${c.title}](${c.url})`</span>
+      ).<span class="fn">join</span>(<span class="str">'\n'</span>);
+}
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 5. WEB_FETCH ═══ -->
+  <div class="section">
+    <div class="section-title">05 — web_fetch: Full Page Retrieval</div>
+
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h2 style="font-size:16px; margin-bottom:8px;">What is web_fetch?</h2>
+        <p style="color:var(--muted); font-size:13px; line-height:1.8; margin-bottom:14px;">
+          <code>web_search</code> returns snippets — typically 400 characters of content. For deep research, that's not enough. <code>web_fetch</code> fetches the full URL, strips all navigation/ads/boilerplate using <strong>@mozilla/readability</strong> + <strong>jsdom</strong>, and returns clean article text up to a configurable character limit.
+        </p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <div style="padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:12px; color:var(--muted);">
+            Input: <code style="color:var(--text)">{ url: string }</code>
+          </div>
+          <div style="padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:12px; color:var(--muted);">
+            Output: <code style="color:var(--text)">{ title, text, url }</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:12px;">How readability extraction works</h3>
+        <div class="step-flow">
+          <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:10px;">
+            <div style="width:22px; height:22px; border-radius:50%; background:rgba(20,184,166,.15); border:1px solid var(--deep); color:var(--deep); font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0;">1</div>
+            <div style="font-size:13px; color:var(--muted);">Fetch raw HTML via <code>fetch(url)</code> with 10s timeout</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:10px;">
+            <div style="width:22px; height:22px; border-radius:50%; background:rgba(20,184,166,.15); border:1px solid var(--deep); color:var(--deep); font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0;">2</div>
+            <div style="font-size:13px; color:var(--muted);">Parse into DOM via <code>jsdom</code></div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:10px;">
+            <div style="width:22px; height:22px; border-radius:50%; background:rgba(20,184,166,.15); border:1px solid var(--deep); color:var(--deep); font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0;">3</div>
+            <div style="font-size:13px; color:var(--muted);"><code>@mozilla/readability</code> strips nav, ads, sidebars — keeps article body</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:22px; height:22px; border-radius:50%; background:rgba(20,184,166,.15); border:1px solid var(--deep); color:var(--deep); font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0;">4</div>
+            <div style="font-size:13px; color:var(--muted);">Truncate to <code>MAX_FETCH_CHARS</code> (default 12,000 chars) → return clean text</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 6. DEEP RESEARCH LOOP ═══ -->
+  <div class="section">
+    <div class="section-title">06 — Deep Research Agent Loop</div>
+
+    <div class="card-grid card-grid-2">
+      <div>
+        <div class="loop-box">
+          <div class="loop-title">🔬 deep_research agent — multi-step loop</div>
+          <div class="loop-steps">
+            <div class="loop-step">
+              <div class="loop-step-num">1</div>
+              <div class="loop-step-text">
+                <strong>web_search</strong> with Tavily (high priority) — identifies 5 candidate URLs
+              </div>
+            </div>
+            <div class="loop-step">
+              <div class="loop-step-num">2</div>
+              <div class="loop-step-text">
+                LLM scores results for relevance — selects <strong>3–5 best URLs</strong> to fetch
+              </div>
+            </div>
+            <div class="loop-step">
+              <div class="loop-step-num">3</div>
+              <div class="loop-step-text">
+                <strong>web_fetch</strong> called per URL — returns full clean article text (up to 12,000 chars each)
+              </div>
+            </div>
+            <div class="loop-step">
+              <div class="loop-step-num">4</div>
+              <div class="loop-step-text">
+                All fetched content accumulated in context — LLM <strong>synthesises across sources</strong>
+              </div>
+            </div>
+            <div class="loop-step">
+              <div class="loop-step-num">5</div>
+              <div class="loop-step-text">
+                Response written with inline <strong>citations [1][2][3]</strong> — postProcess appends Sources list
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:14px; padding:10px 14px; background:var(--surface); border-radius:6px; border:1px solid var(--border);">
+            <div style="font-size:12px; color:var(--muted);">
+              <strong style="color:var(--deep)">Max iterations:</strong> 10 &nbsp;·&nbsp;
+              <strong style="color:var(--deep)">Credit multiplier:</strong> 2.0× &nbsp;·&nbsp;
+              <strong style="color:var(--deep)">Plan required:</strong> pro
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card" style="margin-bottom:16px;">
+          <h3 style="margin-bottom:12px;">research vs deep_research</h3>
+          <table class="compare-table" style="font-size:12px;">
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <th class="th-brave">research</th>
+                <th class="th-tavily">deep_research</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Triggered by</td>
+                <td>intent=search (simple/medium)</td>
+                <td>intent=search + complexity=complex</td>
+              </tr>
+              <tr>
+                <td>Search engine</td>
+                <td>Brave (default)</td>
+                <td>Tavily (always)</td>
+              </tr>
+              <tr>
+                <td>Fetches full pages?</td>
+                <td>No — snippets only</td>
+                <td>Yes — web_fetch per URL</td>
+              </tr>
+              <tr>
+                <td>Max iterations</td>
+                <td>4 (default)</td>
+                <td>10</td>
+              </tr>
+              <tr>
+                <td>Credit multiplier</td>
+                <td>1.0× (researchAgent)</td>
+                <td>2.0× (deep_research)</td>
+              </tr>
+              <tr>
+                <td>Plan required</td>
+                <td>free</td>
+                <td>pro</td>
+              </tr>
+              <tr>
+                <td>Fallback agent</td>
+                <td>chat</td>
+                <td>research</td>
+              </tr>
+              <tr>
+                <td>Subagent summaries</td>
+                <td>Yes (top 3 results)</td>
+                <td>Yes (top 3 results)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-bottom:10px;">Strict Grounding Rule</h3>
+          <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+            The deep_research system prompt enforces that the LLM can <strong>only state facts that appear in retrieved sources</strong>. It cannot use training knowledge to fill gaps. If a source doesn't contain the answer, it must say so explicitly. Every factual claim must end with a citation <code>[n]</code>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 7. DATA SHAPES ═══ -->
+  <div class="section">
+    <div class="section-title">07 — Data Shapes Through the Pipeline</div>
+
+    <div class="card-grid card-grid-3">
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(251,84,43,.08); color:var(--brave);">WebSearchResult</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">results</span>: [{
+    <span class="prop">url</span>: <span class="str">string</span>,
+    <span class="prop">title</span>: <span class="str">string</span>,
+    <span class="prop">snippet</span>: <span class="str">string</span>
+  }],
+  <span class="prop">engine</span>: <span class="str">"brave"</span>|<span class="str">"tavily"</span>|<span class="str">"none"</span>,
+  <span class="prop">summaries</span>?: <span class="str">string</span>[],   <span class="cm">// subagent</span>
+  <span class="prop">subagentCost</span>?: <span class="num">number</span>
+}
+          </div>
+        </div>
+      </div>
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(14,165,233,.08); color:var(--subagent);">SubagentResult</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">summary</span>: <span class="str">string</span>,     <span class="cm">// 3 bullets</span>
+  <span class="prop">tokensUsed</span>: <span class="num">number</span>,
+  <span class="prop">creditsUsed</span>: <span class="num">number</span>,
+  <span class="prop">durationMs</span>: <span class="num">number</span>
+}
+<span class="cm">// logged to subagent_runs table</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(99,102,241,.08); color:var(--cite);">Citation (accumulated)</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">index</span>: <span class="num">number</span>,      <span class="cm">// [1], [2]...</span>
+  <span class="prop">url</span>: <span class="str">string</span>,
+  <span class="prop">title</span>: <span class="str">string</span>,
+  <span class="prop">source</span>: <span class="str">string</span>
+}
+<span class="cm">// stored on message.citations JSONB</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(20,184,166,.08); color:var(--deep);">web_fetch Result</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">title</span>: <span class="str">string</span>,
+  <span class="prop">text</span>: <span class="str">string</span>,   <span class="cm">// clean body</span>
+  <span class="prop">url</span>: <span class="str">string</span>,
+  <span class="prop">charCount</span>: <span class="num">number</span>
+}
+<span class="cm">// max 12,000 chars</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(16,185,129,.08); color:var(--llm);">ProviderEvent — tool_call</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">type</span>: <span class="str">"tool_call"</span>,
+  <span class="prop">toolId</span>: <span class="str">"web_search"</span>,
+  <span class="prop">arguments</span>: {
+    <span class="prop">query</span>: <span class="str">string</span>
+  },
+  <span class="prop">callId</span>: <span class="str">string</span>
+}
+          </div>
+        </div>
+      </div>
+
+      <div class="shape-card">
+        <div class="shape-header" style="background:rgba(236,72,153,.08); color:var(--router);">RoutingDecision (relevant)</div>
+        <div class="shape-body">
+          <div class="code">
+{
+  <span class="prop">agentSlug</span>: <span class="str">"research"</span>,
+  <span class="prop">allowedTools</span>: [<span class="str">"web_search"</span>],
+  <span class="prop">systemPrompt</span>: <span class="str">string</span>,
+  <span class="prop">modelId</span>: <span class="str">string</span>,
+  <span class="prop">modelProvider</span>: <span class="str">string</span>
+}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 8. COST & TELEMETRY ═══ -->
+  <div class="section">
+    <div class="section-title">08 — Cost Attribution &amp; Telemetry</div>
+
+    <div class="card">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px;">
+        <div>
+          <h3 style="color:var(--worker); margin-bottom:10px;">Parent Job Cost</h3>
+          <ul style="list-style:none; font-size:13px; color:var(--muted);">
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">LLM input tokens (fresh)</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">LLM output tokens</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">Agent multiplier (1.0× or 2.0×)</li>
+            <li style="padding:5px 0;">Credits deducted from wallet</li>
+          </ul>
+        </div>
+        <div>
+          <h3 style="color:var(--subagent); margin-bottom:10px;">Subagent Cost</h3>
+          <ul style="list-style:none; font-size:13px; color:var(--muted);">
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">Per-subagent: nano model tokens</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">Up to 3 × summarise_pages calls</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);">Added to parent <code>api_calls.metadata.subagentCost</code></li>
+            <li style="padding:5px 0;">Logged in <code>subagent_runs</code> table</li>
+          </ul>
+        </div>
+        <div>
+          <h3 style="color:var(--cite); margin-bottom:10px;">Telemetry Written</h3>
+          <ul style="list-style:none; font-size:13px; color:var(--muted);">
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);"><code>api_calls</code> row (39 fields)</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);"><code>subagent_runs</code> per subagent</li>
+            <li style="padding:5px 0; border-bottom:1px solid var(--border);"><code>messages.citations</code> JSONB</li>
+            <li style="padding:5px 0;">Redis live counter: <code>metrics:agent:{slug}:calls:{date}</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 9. AGENTS THAT CAN SEARCH ═══ -->
+  <div class="section">
+    <div class="section-title">09 — Agents &amp; Their Search Capabilities</div>
+
+    <div class="card">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>web_search</th>
+            <th>web_fetch</th>
+            <th>Engine Used</th>
+            <th>Why</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>chat</strong></td>
+            <td style="color:#ef4444;">✗ not in allowedTools</td>
+            <td style="color:#ef4444;">✗</td>
+            <td>—</td>
+            <td>General conversation; no grounding needed</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--brave)">research</strong></td>
+            <td style="color:var(--llm);">✓</td>
+            <td style="color:#ef4444;">✗</td>
+            <td><span class="badge badge-brave">Brave</span></td>
+            <td>Snippet-level research for standard queries</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--deep)">deep_research</strong></td>
+            <td style="color:var(--llm);">✓</td>
+            <td style="color:var(--llm);">✓</td>
+            <td><span class="badge badge-tavily">Tavily</span></td>
+            <td>Multi-step; needs full page content for synthesis</td>
+          </tr>
+          <tr>
+            <td><strong style="color:var(--tavily)">architect</strong></td>
+            <td style="color:var(--llm);">✓</td>
+            <td style="color:#ef4444;">✗</td>
+            <td><span class="badge badge-brave">Brave</span></td>
+            <td>Checks current library versions and benchmarks</td>
+          </tr>
+          <tr>
+            <td><strong>analyst</strong></td>
+            <td style="color:#ef4444;">✗</td>
+            <td style="color:#ef4444;">✗</td>
+            <td>—</td>
+            <td>Works on uploaded data, not the web</td>
+          </tr>
+          <tr>
+            <td><strong>code / debugger</strong></td>
+            <td style="color:#ef4444;">✗</td>
+            <td style="color:#ef4444;">✗</td>
+            <td>—</td>
+            <td>Executes code; doesn't search</td>
+          </tr>
+          <tr>
+            <td><strong>writer / document / ui</strong></td>
+            <td style="color:#ef4444;">✗</td>
+            <td style="color:#ef4444;">✗</td>
+            <td>—</td>
+            <td>Generate content from context; no web needed</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ 10. KEY CONCEPTS ═══ -->
+  <div class="section">
+    <div class="section-title">10 — Key Concepts Summary</div>
+
+    <div class="card-grid card-grid-3">
+
+      <div class="card" style="border-color:var(--brave);">
+        <h3 style="color:var(--brave); margin-bottom:8px;">🟠 Brave as Default</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Every web search defaults to Brave unless the calling agent is research/deep_research or complexity is complex. This keeps costs low for the majority of queries which don't need AI-native depth.
+        </p>
+      </div>
+
+      <div class="card" style="border-color:var(--tavily);">
+        <h3 style="color:var(--tavily); margin-bottom:8px;">🟣 Tavily for Depth</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Tavily is an AI-native search API — results include longer content excerpts and are optimised for LLM consumption. Reserved for tasks where answer quality matters more than cost: research agents and complex queries.
+        </p>
+      </div>
+
+      <div class="card" style="border-color:var(--subagent);">
+        <h3 style="color:var(--subagent); margin-bottom:8px;">🔵 Subagent Summarisation</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Rather than passing raw snippets to the main LLM, search results are compressed into 3-bullet summaries by a tiny nano-tier subagent. This compresses context consumption and improves relevance of what the main LLM sees.
+        </p>
+      </div>
+
+      <div class="card" style="border-color:var(--deep);">
+        <h3 style="color:var(--deep); margin-bottom:8px;">🟢 web_fetch for Full Content</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Snippets are 400 chars. Articles are 10,000+ words. The deep_research agent bridges this gap by fetching full page content, using readability to extract the article body, and truncating to a manageable size for the LLM.
+        </p>
+      </div>
+
+      <div class="card" style="border-color:var(--cite);">
+        <h3 style="color:var(--cite); margin-bottom:8px;">🔷 Citation Grounding</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Citations are tracked structurally (not just asked for in prompts). The worker accumulates a typed <code>Citation[]</code> array from tool results and the postProcess hook appends them as a verifiable source list — stored permanently in <code>messages.citations</code> JSONB.
+        </p>
+      </div>
+
+      <div class="card" style="border-color:var(--router);">
+        <h3 style="color:var(--router); margin-bottom:8px;">🩷 Three-Way Gate</h3>
+        <p style="color:var(--muted); font-size:13px; line-height:1.7;">
+          Web search is never accidentally available. Classifier must signal it. The agent must declare it. The plan must enable it. If any layer says no, the tool declaration is never sent to the LLM — it literally cannot be invoked.
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="text-align:center; padding:32px 0 48px; color:var(--muted); font-size:12px; border-top:1px solid var(--border); margin-top:16px;">
+    grizon-ai-backend-2 &nbsp;·&nbsp; Web Search Architecture &nbsp;·&nbsp; 2026-05-09
+  </div>
+
+</div>
+</body>
+</html>

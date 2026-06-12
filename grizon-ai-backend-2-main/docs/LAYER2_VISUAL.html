@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Layer 2 — API Gateway Visual</title>
+<style>
+  :root {
+    --bg:        #0d0f14;
+    --surface:   #151820;
+    --card:      #1c2030;
+    --border:    #2a3050;
+    --accent:    #4f8ef7;
+    --accent2:   #a78bfa;
+    --accent3:   #34d399;
+    --accent4:   #f59e0b;
+    --accent5:   #f87171;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --pill:      #0f172a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, #1a1f35 0%, #0d0f14 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 40px;
+  }
+  header h1 { font-size: 22px; font-weight: 700; color: var(--accent); letter-spacing: -0.3px; }
+  header p  { color: var(--muted); margin-top: 4px; }
+  .badge {
+    display: inline-block; padding: 2px 10px;
+    background: var(--pill); border: 1px solid var(--border);
+    border-radius: 20px; font-size: 11px; color: var(--muted);
+    margin-top: 8px; margin-right: 6px;
+  }
+
+  /* ── Layout ── */
+  main { padding: 32px 40px; }
+
+  /* ── Section headers ── */
+  .section-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 16px; margin-top: 36px;
+  }
+
+  /* ── Flow ── */
+  .flow {
+    display: flex; align-items: stretch; gap: 0;
+    overflow-x: auto; padding-bottom: 8px;
+    margin-bottom: 40px;
+  }
+  .flow-step {
+    flex: 0 0 auto;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .flow-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; min-width: 130px;
+    text-align: center; position: relative;
+  }
+  .flow-box .num {
+    font-size: 10px; font-weight: 700; color: var(--accent);
+    background: rgba(79,142,247,0.12);
+    border-radius: 4px; padding: 1px 6px;
+    display: inline-block; margin-bottom: 6px;
+  }
+  .flow-box .label { font-weight: 600; font-size: 12px; }
+  .flow-box .sub   { color: var(--muted); font-size: 10px; margin-top: 3px; }
+  .flow-arrow {
+    flex: 0 0 32px; display: flex; align-items: center; justify-content: center;
+    color: var(--border); font-size: 18px;
+  }
+  .flow-box.auth    { border-color: #4f8ef7; }
+  .flow-box.plan    { border-color: #a78bfa; }
+  .flow-box.flag    { border-color: #34d399; }
+  .flow-box.rate    { border-color: #f59e0b; }
+  .flow-box.credit  { border-color: #fb923c; }
+  .flow-box.sanit   { border-color: #e879f9; }
+  .flow-box.queue   { border-color: #38bdf8; }
+  .flow-box.router  { border-color: #a3e635; }
+  .flow-box.agent   { border-color: #f472b6; }
+  .flow-box.usage   { border-color: #34d399; }
+
+  /* ── Module Grid ── */
+  .module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+  .module-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color .2s, transform .15s;
+  }
+  .module-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .module-card-header {
+    padding: 14px 18px 10px;
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .module-icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .module-num  { font-size: 10px; color: var(--muted); }
+  .module-name { font-weight: 700; font-size: 14px; }
+  .module-file { font-size: 10px; color: var(--muted); font-family: monospace; margin-top: 1px; }
+  .module-body { padding: 14px 18px; }
+  .feature-list { list-style: none; }
+  .feature-list li {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 4px 0; border-bottom: 1px solid rgba(42,48,80,0.5);
+    font-size: 12px;
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list li .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    flex-shrink: 0; margin-top: 5px;
+  }
+  .feature-list li .feat-name { font-weight: 500; }
+  .feature-list li .feat-desc { color: var(--muted); font-size: 11px; }
+
+  /* ── Plan Matrix ── */
+  .plan-matrix {
+    border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; margin-bottom: 40px;
+  }
+  .plan-matrix table { width: 100%; border-collapse: collapse; }
+  .plan-matrix thead th {
+    background: var(--surface); padding: 12px 16px;
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  .plan-matrix thead th:first-child { color: var(--text); }
+  .plan-matrix tbody td {
+    padding: 10px 16px; border-bottom: 1px solid rgba(42,48,80,0.4);
+    font-size: 12px;
+  }
+  .plan-matrix tbody tr:last-child td { border-bottom: none; }
+  .plan-matrix tbody tr:hover td { background: rgba(79,142,247,0.04); }
+  .plan-matrix .feat-label { font-weight: 500; }
+  .check { color: #34d399; font-size: 14px; }
+  .cross { color: #4b5563; font-size: 14px; }
+
+  /* ── Credit Formula ── */
+  .formula-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 40px;
+  }
+  .formula { font-family: monospace; font-size: 14px; color: var(--accent3); margin-bottom: 16px; }
+  .rate-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;
+    margin-top: 16px;
+  }
+  .rate-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px;
+  }
+  .rate-card .tier { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing:.5px; }
+  .rate-card .rate { font-size: 20px; font-weight: 700; color: var(--accent4); margin: 4px 0; }
+  .rate-card .models { font-size: 11px; color: var(--muted); }
+
+  /* ── Rate Limit Timeline ── */
+  .ratelimit-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    margin-bottom: 40px;
+  }
+  .window-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .window-card .window-label { font-size: 10px; text-transform: uppercase; letter-spacing:.8px; color: var(--muted); }
+  .window-card .window-icon  { font-size: 28px; margin: 8px 0; }
+  .window-card .window-vals  { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+  .window-val { font-size: 11px; color: var(--muted); }
+  .window-val strong { color: var(--text); }
+
+  /* ── Conversation diagram ── */
+  .conv-diagram {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 40px;
+  }
+  .conv-container { max-width: 680px; margin: 0 auto; }
+  .conv-header {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 2px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .conv-title { font-weight: 700; font-size: 14px; }
+  .conv-meta  { color: var(--muted); font-size: 11px; }
+  .conv-badge { background: rgba(79,142,247,0.15); border: 1px solid rgba(79,142,247,0.3); color: var(--accent); border-radius: 4px; padding: 1px 6px; font-size: 10px; }
+  .message-thread { padding-left: 20px; border-left: 2px solid var(--border); margin: 8px 0 8px 0; }
+  .message-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 6px;
+  }
+  .message-item.user    { border-left: 3px solid var(--accent); }
+  .message-item.assistant { border-left: 3px solid var(--accent2); }
+  .msg-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .msg-role { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing:.6px; }
+  .msg-role.user { color: var(--accent); }
+  .msg-role.asst { color: var(--accent2); }
+  .msg-content { font-size: 12px; color: var(--muted); }
+  .msg-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .msg-tag {
+    background: rgba(79,142,247,0.1); border: 1px solid rgba(79,142,247,0.2);
+    border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--accent);
+  }
+  .msg-tag.search  { color: #34d399; background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.2); }
+  .msg-tag.code    { color: #f59e0b; background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); }
+  .msg-tag.file    { color: #a78bfa; background: rgba(167,139,250,0.1); border-color: rgba(167,139,250,0.2); }
+  .artifact-row { display: flex; gap: 6px; margin-top: 6px; }
+  .artifact-pill {
+    background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.25);
+    border-radius: 20px; padding: 2px 10px; font-size: 10px; color: #34d399;
+  }
+  .token-pill {
+    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2);
+    border-radius: 20px; padding: 2px 10px; font-size: 10px; color: #f59e0b;
+    margin-left: auto;
+  }
+
+  /* ── API split ── */
+  .api-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 40px; }
+  .api-col { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .api-col-header {
+    padding: 12px 18px; font-weight: 700; font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .api-col-header.user  { background: rgba(79,142,247,0.08); color: var(--accent); }
+  .api-col-header.admin { background: rgba(167,139,250,0.08); color: var(--accent2); }
+  .api-routes { padding: 10px 18px; }
+  .route-item {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 5px 0; border-bottom: 1px solid rgba(42,48,80,0.4);
+    font-size: 11px;
+  }
+  .route-item:last-child { border-bottom: none; }
+  .method { font-weight: 700; font-family: monospace; width: 38px; flex-shrink: 0; }
+  .method.GET    { color: #34d399; }
+  .method.POST   { color: #4f8ef7; }
+  .method.PATCH  { color: #f59e0b; }
+  .method.DELETE { color: #f87171; }
+  .route-path { font-family: monospace; color: var(--text); }
+  .route-desc { color: var(--muted); margin-left: auto; text-align: right; }
+  .gate { background: rgba(167,139,250,0.12); color: var(--accent2); border-radius: 3px; padding: 0 5px; font-size: 10px; }
+
+  /* ── Usage tracking ── */
+  .tracking-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;
+    margin-bottom: 40px;
+  }
+  .track-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px;
+  }
+  .track-icon  { font-size: 20px; margin-bottom: 8px; }
+  .track-label { font-size: 11px; text-transform: uppercase; letter-spacing:.6px; color: var(--muted); }
+  .track-items { list-style: none; margin-top: 8px; }
+  .track-items li { font-size: 11px; color: var(--muted); padding: 2px 0; }
+  .track-items li::before { content: '·  '; color: var(--accent); }
+
+  /* ── Queue flow ── */
+  .queue-flow {
+    display: flex; align-items: center; gap: 0; margin-bottom: 40px;
+    overflow-x: auto;
+  }
+  .qstep {
+    flex: 0 0 auto; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; min-width: 120px; text-align: center;
+  }
+  .qstep .qi { font-size: 20px; margin-bottom: 4px; }
+  .qstep .ql { font-size: 11px; font-weight: 600; }
+  .qstep .qs { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .qarrow { flex: 0 0 28px; text-align: center; color: var(--muted); font-size: 16px; }
+
+  /* ── DB schema ── */
+  .db-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 40px; }
+  .db-table {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  .db-table-header {
+    background: var(--surface); padding: 8px 14px;
+    font-weight: 700; font-size: 12px; color: var(--accent4);
+    border-bottom: 1px solid var(--border);
+    font-family: monospace;
+  }
+  .db-table-body { padding: 8px 0; }
+  .db-col {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 3px 14px; font-size: 11px;
+  }
+  .db-col .col-name { font-family: monospace; color: var(--text); }
+  .db-col .col-type { color: var(--muted); margin-left: auto; font-family: monospace; }
+  .db-col .col-key  { color: var(--accent); font-size: 10px; }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border); padding: 20px 40px;
+    color: var(--muted); font-size: 11px; text-align: center;
+  }
+
+  @media (max-width: 768px) {
+    main { padding: 20px 16px; }
+    header { padding: 20px 16px; }
+    .ratelimit-grid { grid-template-columns: repeat(2,1fr); }
+    .api-split { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Layer 2 — API / Backend Gateway</h1>
+  <p>Complete module map, data flows, and design decisions</p>
+  <span class="badge">Express / TypeScript</span>
+  <span class="badge">PostgreSQL · Redis · BullMQ</span>
+  <span class="badge">April 2026</span>
+</header>
+
+<main>
+
+  <!-- ── Request Lifecycle ── -->
+  <div class="section-title">Request Lifecycle — Every request passes all 10 steps in order</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-box auth">
+        <div class="num">01</div>
+        <div class="label">Auth</div>
+        <div class="sub">JWT verify<br>Load user</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box plan">
+        <div class="num">02</div>
+        <div class="label">Plan</div>
+        <div class="sub">Load sub<br>Capabilities</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box flag">
+        <div class="num">03</div>
+        <div class="label">Feature Flag</div>
+        <div class="sub">Agent/feature<br>gate check</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box rate">
+        <div class="num">04</div>
+        <div class="label">Rate Limit</div>
+        <div class="sub">4 windows<br>hr/day/wk/mo</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box credit">
+        <div class="num">05</div>
+        <div class="label">Credit Check</div>
+        <div class="sub">Wallet balance<br>+ hold</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box sanit">
+        <div class="num">06</div>
+        <div class="label">Sanitise</div>
+        <div class="sub">Validate<br>Strip injection</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box queue">
+        <div class="num">07</div>
+        <div class="label">Queue</div>
+        <div class="sub">Enqueue job<br>Return jobId</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box router">
+        <div class="num">08</div>
+        <div class="label">Router</div>
+        <div class="sub">Classify<br>Select model</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box agent">
+        <div class="num">09</div>
+        <div class="label">Agent + LLM</div>
+        <div class="sub">Execute<br>SSE stream</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-box usage">
+        <div class="num">10</div>
+        <div class="label">Usage Log</div>
+        <div class="sub">Deduct credits<br>Record all</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modules ── -->
+  <div class="section-title">12 Modules</div>
+  <div class="module-grid">
+
+    <!-- M1 Auth -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(79,142,247,0.12);">🔐</div>
+        <div>
+          <div class="module-num">Module 01</div>
+          <div class="module-name">Auth & Identity</div>
+          <div class="module-file">gateway/auth.middleware.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">JWT Verification</div><div class="feat-desc">RS256, 15-min access token + 30-day refresh</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Token Blacklist</div><div class="feat-desc">Redis-backed revocation on logout</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Role Guard</div><div class="feat-desc">user / admin / superadmin roles</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">API Key Auth</div><div class="feat-desc">Enterprise programmatic access</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Platform Detection</div><div class="feat-desc">web / admin / api via x-platform header</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M2 Plan -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(167,139,250,0.12);">📋</div>
+        <div>
+          <div class="module-num">Module 02</div>
+          <div class="module-name">Plan & Subscription</div>
+          <div class="module-file">services/plan.service.ts · subscription.service.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Immutable Plans</div><div class="feat-desc">Archive + create new — never edit live plan</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Monthly / Annual</div><div class="feat-desc">Billing cycle choice, annual discount</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Credit Rollover</div><div class="feat-desc">Unused credits carry over (plan flag + cap)</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Plan Snapshot</div><div class="feat-desc">Frozen copy stored at subscribe time for historical accuracy</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Introductory Plans</div><div class="feat-desc">Flag for limited-time offers, archivable later</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M3 Feature Flags -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(52,211,153,0.12);">🚩</div>
+        <div>
+          <div class="module-num">Module 03</div>
+          <div class="module-name">Feature Flag Engine</div>
+          <div class="module-file">gateway/featureFlag.middleware.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">webSearch</div><div class="feat-desc">Tavily / Brave search access</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">smartSynthesizer</div><div class="feat-desc">Multi-source synthesis agent</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">documentCreation</div><div class="feat-desc">Generate Word, Excel, PDF</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">codeExecution</div><div class="feat-desc">Judge0 sandboxed runner</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">modelPicker</div><div class="feat-desc">Manual model selection (Enterprise only)</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">voiceMode / apiAccess / webhooks</div><div class="feat-desc">Plan-gated advanced features</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Feature Usage Limits</div><div class="feat-desc">webSearch: 20/day · 200/mo (Starter) · 100/day · 1,000/mo (Pro)</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">requireFeatureWithLimit()</div><div class="feat-desc">Flag check + quota check + Redis INCR + X-Feature-* headers</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M4 Wallet -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(251,146,60,0.12);">💳</div>
+        <div>
+          <div class="module-num">Module 04</div>
+          <div class="module-name">Credit Wallet System</div>
+          <div class="module-file">services/wallet.service.ts · creditCalculator.service.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#fb923c"></span><div><div class="feat-name">Credit Abstraction</div><div class="feat-desc">Decouples user pricing from provider token costs</div></div></li>
+          <li><span class="dot" style="background:#fb923c"></span><div><div class="feat-name">Model Rate × Agent Multiplier × Plan Discount</div><div class="feat-desc">3-factor cost formula, all admin-configurable</div></div></li>
+          <li><span class="dot" style="background:#fb923c"></span><div><div class="feat-name">Optimistic Hold</div><div class="feat-desc">Credits held on job start, confirmed/released on complete</div></div></li>
+          <li><span class="dot" style="background:#fb923c"></span><div><div class="feat-name">Top-up Packages</div><div class="feat-desc">Ad-hoc credit purchases per plan</div></div></li>
+          <li><span class="dot" style="background:#fb923c"></span><div><div class="feat-name">Full Transaction Log</div><div class="feat-desc">Every debit/credit with context: messageId, agent, model</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M5 Rate Limit -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(245,158,11,0.12);">⏱</div>
+        <div>
+          <div class="module-num">Module 05</div>
+          <div class="module-name">Rate Limiting (4-Tier)</div>
+          <div class="module-file">gateway/rateLimit.middleware.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#f59e0b"></span><div><div class="feat-name">4 Sliding Windows</div><div class="feat-desc">Hourly · Daily · Weekly · Monthly — all checked per request</div></div></li>
+          <li><span class="dot" style="background:#f59e0b"></span><div><div class="feat-name">Redis Sorted Sets</div><div class="feat-desc">Per-user per-window, automatic TTL expiry</div></div></li>
+          <li><span class="dot" style="background:#f59e0b"></span><div><div class="feat-name">Cooldown Escalation</div><div class="feat-desc">3 hits/10min → 15min block. 5 blocks → flagged for review</div></div></li>
+          <li><span class="dot" style="background:#f59e0b"></span><div><div class="feat-name">Response Headers</div><div class="feat-desc">X-RateLimit-* headers on every response</div></div></li>
+          <li><span class="dot" style="background:#f59e0b"></span><div><div class="feat-name">Audit Log</div><div class="feat-desc">rate_limit_events table for admin analysis</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M6 Usage -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(52,211,153,0.12);">📊</div>
+        <div>
+          <div class="module-num">Module 06</div>
+          <div class="module-name">Usage Tracking & Analytics</div>
+          <div class="module-file">services/usageTracker.service.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Per-Message Record</div><div class="feat-desc">userId, sessionId, messageId, jobId, platform</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Token Detail</div><div class="feat-desc">Fresh tokens, cached tokens, output, cache writes</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Credit Detail</div><div class="feat-desc">Rate, multiplier, discount, before/after balance</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Feature Tags</div><div class="feat-desc">webSearch, codeExecution, fileAnalysis, voiceMode flags</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Latency Metrics</div><div class="feat-desc">Router ms · First token ms · Total ms</div></div></li>
+          <li><span class="dot" style="background:#34d399"></span><div><div class="feat-name">Outcome</div><div class="feat-desc">success / failed / cancelled / timeout + error code</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M7 Queue -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(56,189,248,0.12);">📨</div>
+        <div>
+          <div class="module-num">Module 07</div>
+          <div class="module-name">Message Queue System</div>
+          <div class="module-file">queues/chat.queue.ts · workers/chat.worker.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#38bdf8"></span><div><div class="feat-name">BullMQ Backed</div><div class="feat-desc">Redis-backed persistent job queue</div></div></li>
+          <li><span class="dot" style="background:#38bdf8"></span><div><div class="feat-name">Background Completion</div><div class="feat-desc">Job continues even if user closes the tab</div></div></li>
+          <li><span class="dot" style="background:#38bdf8"></span><div><div class="feat-name">SSE Job Stream</div><div class="feat-desc">GET /chat/stream/{jobId} — reconnectable</div></div></li>
+          <li><span class="dot" style="background:#38bdf8"></span><div><div class="feat-name">Retry on Failure</div><div class="feat-desc">3 attempts with backoff (1 for code execution)</div></div></li>
+          <li><span class="dot" style="background:#38bdf8"></span><div><div class="feat-name">Heartbeat Events</div><div class="feat-desc">Every 15s to prevent proxy timeout</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M8 Conversations -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(244,114,182,0.12);">💬</div>
+        <div>
+          <div class="module-num">Module 08</div>
+          <div class="module-name">Conversation & Messages</div>
+          <div class="module-file">services/conversation.service.ts · message.service.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#f472b6"></span><div><div class="feat-name">Rich Message Object</div><div class="feat-desc">Content, files, artifacts, citations, feature tags, tokens</div></div></li>
+          <li><span class="dot" style="background:#f472b6"></span><div><div class="feat-name">File Tracking</div><div class="feat-desc">Which message sent which file, processing status</div></div></li>
+          <li><span class="dot" style="background:#f472b6"></span><div><div class="feat-name">Artifact Linking</div><div class="feat-desc">Generated artifacts linked to the message that created them</div></div></li>
+          <li><span class="dot" style="background:#f472b6"></span><div><div class="feat-name">Rolling Summarisation</div><div class="feat-desc">60% context → notify, 85% → auto-compact</div></div></li>
+          <li><span class="dot" style="background:#f472b6"></span><div><div class="feat-name">Conversation Tokens</div><div class="feat-desc">Running total tracked per conversation</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M9 Sanitiser -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(232,121,249,0.12);">🛡</div>
+        <div>
+          <div class="module-num">Module 09</div>
+          <div class="module-name">Sanitiser & Validation</div>
+          <div class="module-file">gateway/sanitiser.middleware.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#e879f9"></span><div><div class="feat-name">Zod Schema Validation</div><div class="feat-desc">All request bodies validated with descriptive errors</div></div></li>
+          <li><span class="dot" style="background:#e879f9"></span><div><div class="feat-name">Prompt Injection Strip</div><div class="feat-desc">Known jailbreak patterns removed</div></div></li>
+          <li><span class="dot" style="background:#e879f9"></span><div><div class="feat-name">Message Length Limits</div><div class="feat-desc">Free: 2K / Pro: 10K / Enterprise: 50K chars</div></div></li>
+          <li><span class="dot" style="background:#e879f9"></span><div><div class="feat-name">File Whitelist</div><div class="feat-desc">PDF, DOCX, XLSX, CSV, TXT, PNG, JPG, MP4 only</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M10 Router -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(163,230,53,0.12);">🧠</div>
+        <div>
+          <div class="module-num">Module 10</div>
+          <div class="module-name">Smart Router</div>
+          <div class="module-file">router/classifier.ts · modelSelector.ts · agentDispatcher.ts</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#a3e635"></span><div><div class="feat-name">Intent Classification</div><div class="feat-desc">search / code / write / analyse / design / debug / ui / chat</div></div></li>
+          <li><span class="dot" style="background:#a3e635"></span><div><div class="feat-name">Complexity Detection</div><div class="feat-desc">simple → nano / medium → standard / complex → frontier</div></div></li>
+          <li><span class="dot" style="background:#a3e635"></span><div><div class="feat-name">Plan-Gated Agent Selection</div><div class="feat-desc">Only dispatches agents in user's agentAccess list</div></div></li>
+          <li><span class="dot" style="background:#a3e635"></span><div><div class="feat-name">Query Rewriting</div><div class="feat-desc">Expands query into parallel search queries (Perplexity-style)</div></div></li>
+          <li><span class="dot" style="background:#a3e635"></span><div><div class="feat-name">Provider Fallback</div><div class="feat-desc">Unhealthy provider → next available in same tier</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M11 User API -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(79,142,247,0.12);">🌐</div>
+        <div>
+          <div class="module-num">Module 11</div>
+          <div class="module-name">User API</div>
+          <div class="module-file">routes/user/</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Auth Routes</div><div class="feat-desc">register, login, refresh, logout, me</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Conversation & Chat</div><div class="feat-desc">CRUD conversations, send message, SSE stream</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Files & Artifacts</div><div class="feat-desc">Upload, status, download, version history</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Wallet & Subscription</div><div class="feat-desc">Balance, top-up, upgrade plan, cancel</div></div></li>
+          <li><span class="dot" style="background:#4f8ef7"></span><div><div class="feat-name">Usage Dashboard</div><div class="feat-desc">Period summary, per-day breakdown</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- M12 Admin API -->
+    <div class="module-card">
+      <div class="module-card-header">
+        <div class="module-icon" style="background:rgba(167,139,250,0.12);">⚙️</div>
+        <div>
+          <div class="module-num">Module 12</div>
+          <div class="module-name">Admin API</div>
+          <div class="module-file">routes/admin/</div>
+        </div>
+      </div>
+      <div class="module-body">
+        <ul class="feature-list">
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">User Management</div><div class="feat-desc">List, ban, manual credit adjustment, force plan change</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Plan Management</div><div class="feat-desc">Create, archive, publish plans. View subscribers</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Agent Config</div><div class="feat-desc">Edit system prompts, multipliers, model defaults (superadmin)</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Analytics Dashboard</div><div class="feat-desc">Revenue, cache hit rate, cost vs credits, errors</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">System Health</div><div class="feat-desc">All services, queues, providers, cache stats</div></div></li>
+          <li><span class="dot" style="background:#a78bfa"></span><div><div class="feat-name">Rate Limit Control</div><div class="feat-desc">Clear limits, manage cooldowns, handle flagged users</div></div></li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Credit System ── -->
+  <div class="section-title">Credit Wallet — How Costs Are Calculated</div>
+  <div class="formula-box">
+    <div style="color:var(--muted);font-size:11px;margin-bottom:8px;">FORMULA</div>
+    <div class="formula">credits = ceil( (input_tokens + output_tokens) × model_rate × agent_multiplier × plan_discount )</div>
+    <div style="color:var(--muted);font-size:12px;">All three multipliers are stored in the database and editable from the Admin Panel — no code changes needed to reprice.</div>
+    <div class="rate-grid">
+      <div class="rate-card">
+        <div class="tier">Nano</div>
+        <div class="rate">0.5×</div>
+        <div class="models">Haiku 4.5 · GPT-4o-mini · Gemini Flash Lite</div>
+      </div>
+      <div class="rate-card">
+        <div class="tier">Standard</div>
+        <div class="rate">1.0×</div>
+        <div class="models">Sonnet 4.6 · Gemini Flash · GPT-4o</div>
+      </div>
+      <div class="rate-card">
+        <div class="tier">Premium</div>
+        <div class="rate">2.0×</div>
+        <div class="models">GPT-4o · Gemini Pro · Sonnet 4.6 (complex)</div>
+      </div>
+      <div class="rate-card">
+        <div class="tier">Frontier</div>
+        <div class="rate">5.0×</div>
+        <div class="models">Opus 4.7 · GPT-4 · Gemini Ultra</div>
+      </div>
+      <div class="rate-card">
+        <div class="tier">Reasoning</div>
+        <div class="rate">8.0×</div>
+        <div class="models">o1 · Gemini 2.5 Pro Thinking</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Rate Limit Windows ── -->
+  <div class="section-title">Rate Limiting — 4 Sliding Windows (All Checked Per Request)</div>
+  <div class="ratelimit-grid">
+    <div class="window-card">
+      <div class="window-label">Hourly</div>
+      <div class="window-icon">🕐</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>10 req</strong></div>
+        <div class="window-val">Starter: <strong>30 req</strong></div>
+        <div class="window-val">Pro: <strong>100 req</strong></div>
+        <div class="window-val">Enterprise: <strong>500 req</strong></div>
+      </div>
+    </div>
+    <div class="window-card">
+      <div class="window-label">Daily</div>
+      <div class="window-icon">📅</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>50 req</strong></div>
+        <div class="window-val">Starter: <strong>200 req</strong></div>
+        <div class="window-val">Pro: <strong>1,000 req</strong></div>
+        <div class="window-val">Enterprise: <strong>10,000 req</strong></div>
+      </div>
+    </div>
+    <div class="window-card">
+      <div class="window-label">Weekly</div>
+      <div class="window-icon">📆</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>200 req</strong></div>
+        <div class="window-val">Starter: <strong>1,000 req</strong></div>
+        <div class="window-val">Pro: <strong>5,000 req</strong></div>
+        <div class="window-val">Enterprise: <strong>Unlimited</strong></div>
+      </div>
+    </div>
+    <div class="window-card">
+      <div class="window-label">Monthly</div>
+      <div class="window-icon">🗓</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>500 req</strong></div>
+        <div class="window-val">Starter: <strong>3,000 req</strong></div>
+        <div class="window-val">Pro: <strong>20,000 req</strong></div>
+        <div class="window-val">Enterprise: <strong>Unlimited</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Feature Limits ── -->
+  <div class="section-title">Feature Usage Limits — Quotas on Expensive External Features</div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:16px;font-size:12px;color:var(--muted);">
+    Feature limits are separate from global rate limits. They count only calls to specific expensive features (web search, code execution) and are tracked per-user with Redis INCR counters.
+    When exceeded, the request returns <code style="color:var(--accent5);">429 FEATURE_LIMIT_EXCEEDED</code> with reset time and upgrade URL.
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:40px;">
+    <div class="window-card" style="text-align:left;">
+      <div class="window-label">Web Search — Daily</div>
+      <div class="window-icon">🔍</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>✗ Not Available</strong></div>
+        <div class="window-val">Starter: <strong>20 searches</strong></div>
+        <div class="window-val">Pro: <strong>100 searches</strong></div>
+        <div class="window-val">Enterprise: <strong>Unlimited</strong></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px;">Redis: <code>feature:websearch:daily:{uid}</code> · TTL 86400s</div>
+    </div>
+    <div class="window-card" style="text-align:left;">
+      <div class="window-label">Web Search — Monthly</div>
+      <div class="window-icon">📅</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>✗ Not Available</strong></div>
+        <div class="window-val">Starter: <strong>200 searches</strong></div>
+        <div class="window-val">Pro: <strong>1,000 searches</strong></div>
+        <div class="window-val">Enterprise: <strong>Unlimited</strong></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px;">Redis: <code>feature:websearch:monthly:{uid}</code> · TTL 2592000s</div>
+    </div>
+    <div class="window-card" style="text-align:left;">
+      <div class="window-label">Code Execution — Hourly</div>
+      <div class="window-icon">⚡</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>✗ Not Available</strong></div>
+        <div class="window-val">Starter: <strong>10 runs</strong></div>
+        <div class="window-val">Pro: <strong>50 runs</strong></div>
+        <div class="window-val">Enterprise: <strong>200 runs</strong></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px;">Redis: <code>feature:codeexec:hourly:{uid}</code> · TTL 3600s</div>
+    </div>
+    <div class="window-card" style="text-align:left;">
+      <div class="window-label">Code Execution — Daily</div>
+      <div class="window-icon">💻</div>
+      <div class="window-vals">
+        <div class="window-val">Free: <strong>✗ Not Available</strong></div>
+        <div class="window-val">Starter: <strong>50 runs</strong></div>
+        <div class="window-val">Pro: <strong>300 runs</strong></div>
+        <div class="window-val">Enterprise: <strong>Unlimited</strong></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px;">Redis: <code>feature:codeexec:daily:{uid}</code> · TTL 86400s</div>
+    </div>
+  </div>
+
+  <!-- ── Feature Matrix ── -->
+  <div class="section-title">Feature Flag Matrix — Plan Gating</div>
+  <div class="plan-matrix">
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Free</th>
+          <th>Starter</th>
+          <th>Pro</th>
+          <th>Enterprise</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="feat-label">Web Search (Tavily / Brave)<br><span style="font-size:10px;color:var(--muted);font-weight:400;">Daily / Monthly quota</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">20/day · 200/mo</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">100/day · 1k/mo</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">Unlimited</span></td></tr>
+        <tr><td class="feat-label">Smart Synthesizer</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Deep Research Agent</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">File Upload</td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Document Creation (Word/Excel/PDF)</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Code Execution (Judge0)<br><span style="font-size:10px;color:var(--muted);font-weight:400;">Hourly / Daily quota</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">10/hr · 50/day</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">50/hr · 300/day</span></td><td><span class="check">✓</span><br><span style="font-size:10px;color:var(--muted);">200/hr · Unlimited</span></td></tr>
+        <tr><td class="feat-label">HTML Preview</td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Artifact Versioning</td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Long-Term Memory (Qdrant)</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Voice Mode</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">Manual Model Picker</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td class="feat-label">API Key Access</td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="check">✓</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Conversation Structure ── -->
+  <div class="section-title">Conversation Structure — ChatGPT / Claude Style</div>
+  <div class="conv-diagram">
+    <div class="conv-container">
+      <div class="conv-header">
+        <div style="font-size:20px;">💬</div>
+        <div>
+          <div class="conv-title">How to build a SaaS product</div>
+          <div class="conv-meta">
+            <span class="conv-badge">Research Agent</span>&nbsp;
+            <span class="conv-badge">Sonnet 4.6</span>&nbsp;
+            32 messages · 48,200 tokens · 124 credits spent
+          </div>
+        </div>
+      </div>
+      <div class="message-thread">
+        <div class="message-item user">
+          <div class="msg-top">
+            <span class="msg-role user">User</span>
+            <span style="color:var(--muted);font-size:10px;">Apr 27, 14:02</span>
+          </div>
+          <div class="msg-content">Can you research the top SaaS pricing strategies in 2026?</div>
+          <div class="artifact-row">
+            <span class="msg-tag file">📎 market-data.xlsx</span>
+            <span class="token-pill">↑ 840 tokens</span>
+          </div>
+        </div>
+        <div class="message-item assistant">
+          <div class="msg-top">
+            <span class="msg-role asst">Assistant</span>
+            <span style="color:var(--muted);font-size:10px;">Apr 27, 14:02 · 3.2s</span>
+          </div>
+          <div class="msg-content">Based on 12 sources, the dominant strategies in 2026 are...</div>
+          <div class="msg-tags">
+            <span class="msg-tag search">🔍 web search (brave)</span>
+            <span class="msg-tag file">📄 file analysed</span>
+            <span class="msg-tag">Research Agent</span>
+          </div>
+          <div class="artifact-row">
+            <span class="artifact-pill">📊 SaaS Pricing Report.md</span>
+            <span class="artifact-pill">📊 Pricing Chart.png</span>
+            <span class="token-pill">↓ 2,140 tokens · 6 credits</span>
+          </div>
+        </div>
+        <div class="message-item user">
+          <div class="msg-top">
+            <span class="msg-role user">User</span>
+            <span style="color:var(--muted);font-size:10px;">Apr 27, 14:05</span>
+          </div>
+          <div class="msg-content">Now write a Python script to visualise this data</div>
+        </div>
+        <div class="message-item assistant">
+          <div class="msg-top">
+            <span class="msg-role asst">Assistant</span>
+            <span style="color:var(--muted);font-size:10px;">Apr 27, 14:05 · 4.8s</span>
+          </div>
+          <div class="msg-content">Here's a matplotlib script to visualise the pricing distribution...</div>
+          <div class="msg-tags">
+            <span class="msg-tag code">⚡ code executed</span>
+            <span class="msg-tag">Code Agent</span>
+          </div>
+          <div class="artifact-row">
+            <span class="artifact-pill">💻 visualise_pricing.py</span>
+            <span class="artifact-pill">🖼 output_chart.png</span>
+            <span class="token-pill">↓ 1,890 tokens · 4 credits</span>
+          </div>
+        </div>
+      </div>
+      <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:10px 14px;font-size:11px;color:#f59e0b;margin-top:8px;">
+        ⚠️ This conversation is getting long (61% of context window used).
+        Consider <strong>starting a new chat</strong> or <strong>summarising to continue</strong>.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Queue Flow ── -->
+  <div class="section-title">Message Queue Flow — Background Processing</div>
+  <div class="queue-flow">
+    <div class="qstep">
+      <div class="qi">📨</div>
+      <div class="ql">POST /chat</div>
+      <div class="qs">User sends message</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">✅</div>
+      <div class="ql">Validate</div>
+      <div class="qs">Auth · plan · flags · limits</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">💳</div>
+      <div class="ql">Hold Credits</div>
+      <div class="qs">Optimistic reserve</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">📦</div>
+      <div class="ql">Enqueue</div>
+      <div class="qs">BullMQ job created</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep" style="border-color:#38bdf8">
+      <div class="qi">🔢</div>
+      <div class="ql">{ jobId }</div>
+      <div class="qs">Returned instantly</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">📡</div>
+      <div class="ql">SSE Connect</div>
+      <div class="qs">GET /stream/{jobId}</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">⚙️</div>
+      <div class="ql">Worker Picks Up</div>
+      <div class="qs">Router → Agent → LLM</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep" style="border-color:#34d399">
+      <div class="qi">✨</div>
+      <div class="ql">Stream Tokens</div>
+      <div class="qs">chunks → done event</div>
+    </div>
+    <div class="qarrow">→</div>
+    <div class="qstep">
+      <div class="qi">📊</div>
+      <div class="ql">Confirm Credits</div>
+      <div class="qs">Deduct + log usage</div>
+    </div>
+  </div>
+
+  <!-- ── Usage Tracking ── -->
+  <div class="section-title">Usage Tracking — What Gets Recorded Per Message</div>
+  <div class="tracking-grid">
+    <div class="track-card">
+      <div class="track-icon">🪪</div>
+      <div class="track-label">Identity</div>
+      <ul class="track-items">
+        <li>userId</li>
+        <li>conversationId</li>
+        <li>messageId</li>
+        <li>jobId</li>
+        <li>platform (web/api/admin)</li>
+      </ul>
+    </div>
+    <div class="track-card">
+      <div class="track-icon">🤖</div>
+      <div class="track-label">Agent & Model</div>
+      <ul class="track-items">
+        <li>agentSlug</li>
+        <li>modelId</li>
+        <li>modelProvider</li>
+        <li>creditRate used</li>
+        <li>agentMultiplier</li>
+      </ul>
+    </div>
+    <div class="track-card">
+      <div class="track-icon">🪙</div>
+      <div class="track-label">Tokens & Credits</div>
+      <ul class="track-items">
+        <li>inputTokensFresh</li>
+        <li>inputTokensCached</li>
+        <li>outputTokens</li>
+        <li>creditsDeducted</li>
+        <li>walletBefore / After</li>
+      </ul>
+    </div>
+    <div class="track-card">
+      <div class="track-icon">🏷</div>
+      <div class="track-label">Features Used</div>
+      <ul class="track-items">
+        <li>webSearchUsed + engine</li>
+        <li>webSearchCount (this request)</li>
+        <li>fileUploadUsed</li>
+        <li>codeExecutionUsed</li>
+        <li>codeExecutionCount (this request)</li>
+        <li>voiceModeUsed</li>
+        <li>cacheHitLayer</li>
+      </ul>
+    </div>
+    <div class="track-card">
+      <div class="track-icon">⚡</div>
+      <div class="track-label">Latency</div>
+      <ul class="track-items">
+        <li>routerLatencyMs</li>
+        <li>llmFirstTokenMs</li>
+        <li>llmTotalMs</li>
+        <li>totalRequestMs</li>
+      </ul>
+    </div>
+    <div class="track-card">
+      <div class="track-icon">📋</div>
+      <div class="track-label">Outcome</div>
+      <ul class="track-items">
+        <li>status (success/failed/timeout)</li>
+        <li>errorCode</li>
+        <li>finishReason</li>
+        <li>actualCostUsd</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── API Split ── -->
+  <div class="section-title">API Split — User vs Admin</div>
+  <div class="api-split">
+    <div class="api-col">
+      <div class="api-col-header user">🌐 User API &nbsp;<span style="font-weight:400;font-size:11px;color:var(--muted)">/api/v1/</span></div>
+      <div class="api-routes">
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/login</span><span class="route-desc">Get tokens</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/register</span><span class="route-desc">Create account</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/conversations</span><span class="route-desc">List conversations</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/conversations</span><span class="route-desc">New conversation</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/conversations/:id</span><span class="route-desc">Update / pin</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/chat</span><span class="route-desc">Send message → jobId</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/chat/stream/:jobId</span><span class="route-desc">SSE stream</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/files/upload</span><span class="route-desc">Upload file <span class="gate">fileUpload</span></span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/artifacts</span><span class="route-desc">My artifacts</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/wallet</span><span class="route-desc">Balance + history</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/wallet/topup</span><span class="route-desc">Buy credits</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/subscription</span><span class="route-desc">Current plan</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/subscription/upgrade</span><span class="route-desc">Upgrade plan</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/plans</span><span class="route-desc">Public plan list</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/usage/summary</span><span class="route-desc">Period usage</span></div>
+      </div>
+    </div>
+    <div class="api-col">
+      <div class="api-col-header admin">⚙️ Admin API &nbsp;<span style="font-weight:400;font-size:11px;color:var(--muted)">/api/v1/admin/</span></div>
+      <div class="api-routes">
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/users</span><span class="route-desc">List all users</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/admin/users/:id</span><span class="route-desc">Update / ban</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/users/:id/wallet</span><span class="route-desc">Adjust credits</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/plans</span><span class="route-desc">All plans (incl. archived)</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/plans</span><span class="route-desc">Create plan</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/plans/:id/archive</span><span class="route-desc">Archive plan</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/models</span><span class="route-desc">Model registry</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/admin/models/:id</span><span class="route-desc">Update rate / toggle</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/admin/agents/:id</span><span class="route-desc">Edit system prompt <span class="gate">SA</span></span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/analytics/overview</span><span class="route-desc">System dashboard</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/analytics/costs</span><span class="route-desc">Cost vs revenue</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/system/health</span><span class="route-desc">All services</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/ratelimits/:userId/clear</span><span class="route-desc">Clear user limits</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/ratelimits/flagged</span><span class="route-desc">Flagged users</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/system/queues/:name/retry-failed</span><span class="route-desc">Retry failed jobs</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DB Tables ── -->
+  <div class="section-title">Core Database Tables</div>
+  <div class="db-grid">
+    <div class="db-table">
+      <div class="db-table-header">users</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">email</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">role</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">status</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">created_at</span><span class="col-type">timestamptz</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">plans</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">name, slug</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">status</span><span class="col-type">active|archived</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">pricing_monthly</span><span class="col-type">int (cents)</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">credits_included</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">limits_hourly/daily/weekly/monthly</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">model_access</span><span class="col-type">text[]</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">feature_flags</span><span class="col-type">jsonb</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">subscriptions</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">plan_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">plan_snapshot</span><span class="col-type">jsonb</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">billing_cycle</span><span class="col-type">monthly|annual</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">current_period_end</span><span class="col-type">timestamptz</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">credits_rolled_over</span><span class="col-type">int</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">wallets + wallet_transactions</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">balance, pending</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">lifetime_earned/spent</span><span class="col-type">int</span></div>
+        <div class="db-col" style="padding-top:8px;border-top:1px solid var(--border)"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">type</span><span class="col-type">grant|deduct|topup...</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">amount, balance_after</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">credit_rate, multiplier, discount</span><span class="col-type">numeric</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">conversations</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">title</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">total_tokens_used</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">summary_text</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">default_agent_slug</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">pinned_at, tags</span><span class="col-type">timestamptz, text[]</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">messages</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">conversation_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">role</span><span class="col-type">user|assistant|system</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">content</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">credits_deducted</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">agent_slug, model_id</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">web_search_used, code_exec_used</span><span class="col-type">bool</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">citations</span><span class="col-type">jsonb</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">usage_records</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">FK</span><span class="col-name">user_id, message_id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">input_tokens_fresh/cached</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">actual_cost_usd</span><span class="col-type">numeric</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">router_latency_ms, llm_total_ms</span><span class="col-type">int</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">status, error_code</span><span class="col-type">text</span></div>
+      </div>
+    </div>
+    <div class="db-table">
+      <div class="db-table-header">agents (admin-managed)</div>
+      <div class="db-table-body">
+        <div class="db-col"><span class="col-key">PK</span><span class="col-name">id</span><span class="col-type">uuid</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">slug, display_name</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">system_prompt</span><span class="col-type">text (editable)</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">agent_multiplier</span><span class="col-type">numeric</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">default_model_id</span><span class="col-type">text</span></div>
+        <div class="db-col"><span class="col-key">&nbsp;&nbsp;</span><span class="col-name">is_active, updated_by</span><span class="col-type">bool, uuid</span></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Layer 2 — API / Backend Gateway · Grizon AI Platform · April 2026 · See LAYER2_API_GATEWAY.md for full spec
+</footer>
+
+</body>
+</html>

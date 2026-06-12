@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../Grizon-AI-Frontend-v2"
+		},
+		{
+			"path": "../grizon-ai-admin-2"
+		}
+	],
+	"settings": {}
+}

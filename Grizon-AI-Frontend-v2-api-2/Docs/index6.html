@@ -1,0 +1,2427 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grizon AI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            accent: '#976df8',
+            'accent-hover': '#8559e8',
+            surface: {
+              0: '#09090b',
+              1: '#0f0f12',
+              2: '#16161a',
+              3: '#1c1c22',
+              4: '#24242c',
+              5: '#2e2e38',
+            }
+          },
+          fontFamily: {
+            sans: [
+              'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI',
+              'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'sans-serif'
+            ],
+            mono: [
+              'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas',
+              'Liberation Mono', 'Menlo', 'monospace'
+            ],
+          },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      background: #09090b;
+      color: #e4e4e7;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.08);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+    /* Textarea */
+    #chatInput {
+      resize: none;
+      field-sizing: content;
+      max-height: 160px;
+      scrollbar-width: thin;
+    }
+    #chatInput::-webkit-scrollbar { width: 3px; }
+
+    /* ===== ICON RAIL ===== */
+    .icon-rail {
+      background: #0f0f12;
+      border-right: 1px solid rgba(255,255,255,0.05);
+    }
+    .rail-btn {
+      position: relative;
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 12px;
+      color: rgba(255,255,255,0.35);
+      transition: all 0.15s ease;
+      cursor: pointer;
+    }
+    .rail-btn:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.05); }
+    .rail-btn.active { color: #976df8; background: rgba(151,109,248,0.1); }
+    .rail-btn .tooltip {
+      position: absolute; left: 54px; top: 50%; transform: translateY(-50%);
+      background: #1c1c22; color: #e4e4e7; border: 1px solid rgba(255,255,255,0.08);
+      padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500;
+      white-space: nowrap; opacity: 0; pointer-events: none;
+      transition: opacity 0.15s ease;
+      z-index: 99;
+    }
+    .rail-btn:hover .tooltip { opacity: 1; }
+
+    /* ===== THREAD LIST ===== */
+    .thread-panel {
+      background: #0f0f12;
+      border-right: 1px solid rgba(255,255,255,0.05);
+    }
+    .thread-item {
+      display: flex; align-items: center;
+      padding: 10px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .thread-item:hover { background: rgba(255,255,255,0.04); }
+    .thread-item.active { background: rgba(151,109,248,0.08); }
+
+    /* ===== CHAT AREA ===== */
+    .chat-area { background: #09090b; }
+
+    /* Left-right bubble messages */
+    .bubble-user {
+      background: rgba(151,109,248,0.10);
+      border: 1px solid rgba(151,109,248,0.14);
+      border-radius: 20px 20px 6px 20px;
+      padding: 14px 18px;
+      animation: fadeSlideUp 0.25s ease-out;
+    }
+    .bubble-ai {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px 20px 20px 6px;
+      padding: 16px 20px;
+      animation: fadeSlideUp 0.25s ease-out;
+    }
+    .bubble-ai .msg-body { color: #d4d4d8; }
+    .bubble-user .msg-body { color: #e8e0ff; }
+
+    .msg-body {
+      font-size: 14px; line-height: 1.75;
+    }
+    .msg-body p { margin-bottom: 10px; }
+    .msg-body p:last-child { margin-bottom: 0; }
+
+    .msg-label {
+      font-size: 11px; font-weight: 600;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* File attachment card */
+    .file-card {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin-top: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      max-width: 280px;
+    }
+    .file-card:hover {
+      background: rgba(255,255,255,0.07);
+      border-color: rgba(151,109,248,0.25);
+    }
+    .file-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .file-icon.pdf { background: rgba(239,68,68,0.12); color: #f87171; }
+    .file-icon.img { background: rgba(59,130,246,0.12); color: #60a5fa; }
+    .file-icon.code { background: rgba(34,197,94,0.12); color: #4ade80; }
+    .file-icon.doc { background: rgba(251,191,36,0.12); color: #fbbf24; }
+
+    /* ===== CANVAS / INLINE SPLIT VIEW ===== */
+    .canvas-wrapper {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .conversation-pane {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: flex 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Vertical resize divider between chat and canvas panel */
+    .canvas-divider {
+      width: 1px;
+      background: rgba(255,255,255,0.06);
+      position: relative;
+      cursor: col-resize;
+      flex-shrink: 0;
+      transition: opacity 0.25s ease, width 0.25s ease;
+      z-index: 20;
+    }
+    .canvas-divider:hover {
+      width: 3px;
+      background: rgba(151,109,248,0.3);
+    }
+    .canvas-divider::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0;
+      left: -4px; right: -4px;
+    }
+    .canvas-divider.hidden { display: none; }
+
+    .canvas-panel {
+      width: 0;
+      min-width: 0;
+      overflow: hidden;
+      background: #0f0f12;
+      display: flex;
+      flex-direction: column;
+      transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                  min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                  opacity 0.25s ease;
+      opacity: 0;
+    }
+    .canvas-panel.open {
+      width: 480px;
+      min-width: 380px;
+      opacity: 1;
+    }
+
+    /* Canvas panel header with tabs */
+    .canvas-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      height: 46px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.015);
+    }
+    .canvas-tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px; font-weight: 500;
+      color: rgba(255,255,255,0.35);
+      cursor: pointer;
+      transition: all 0.12s ease;
+      white-space: nowrap;
+    }
+    .canvas-tab:hover { color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.04); }
+    .canvas-tab.active { color: #c4b5fd; background: rgba(151,109,248,0.1); }
+
+    /* ===== FILE BROWSER (inside canvas) ===== */
+    .file-browser { border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .fb-section-label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.12em; color: rgba(255,255,255,0.2);
+      padding: 8px 14px 4px;
+    }
+    .fb-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 10px 5px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.1s ease;
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      user-select: none;
+    }
+    .fb-row:hover { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7); }
+    .fb-row.selected { background: rgba(151,109,248,0.10); color: #c4b5fd; }
+    .fb-row .fb-icon { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .fb-row .fb-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+    .fb-row .fb-meta { font-size: 10px; color: rgba(255,255,255,0.18); flex-shrink: 0; font-family: 'JetBrains Mono', monospace; }
+    .fb-row.folder .fb-icon { color: rgba(251,191,36,0.7); }
+    .fb-row.nested { padding-left: 30px; }
+    .fb-chevron {
+      width: 12px; height: 12px; flex-shrink: 0;
+      transition: transform 0.15s ease;
+      color: rgba(255,255,255,0.2);
+    }
+    .fb-chevron.open { transform: rotate(90deg); }
+
+    /* ===== DOCUMENT VIEWER ===== */
+    .doc-viewer { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .doc-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.015);
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .doc-breadcrumb {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 11px; color: rgba(255,255,255,0.3);
+      min-width: 0; overflow: hidden;
+    }
+    .doc-breadcrumb span { white-space: nowrap; }
+    .doc-breadcrumb .bc-sep { color: rgba(255,255,255,0.12); }
+    .doc-breadcrumb .bc-current { color: rgba(255,255,255,0.6); font-weight: 500; }
+    .doc-toolbar-btn {
+      width: 26px; height: 26px; border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      color: rgba(255,255,255,0.2);
+      transition: all 0.12s ease;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .doc-toolbar-btn:hover { color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.05); }
+
+    .doc-content {
+      flex: 1; overflow-y: auto;
+      background: #0a0a0d;
+    }
+    .doc-code {
+      padding: 14px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .code-line {
+      display: flex;
+      padding: 0 16px;
+      transition: background 0.08s ease;
+    }
+    .code-line:hover { background: rgba(255,255,255,0.02); }
+    .code-line .ln {
+      width: 32px; text-align: right; padding-right: 16px;
+      color: rgba(255,255,255,0.12); user-select: none; flex-shrink: 0;
+      font-size: 11px;
+    }
+    .code-line .lc { flex: 1; color: #c4c4cc; }
+    .code-line .lc .kw { color: #c4b5fd; }
+    .code-line .lc .fn { color: #67e8f9; }
+    .code-line .lc .str { color: #86efac; }
+    .code-line .lc .cm { color: rgba(255,255,255,0.22); font-style: italic; }
+    .code-line .lc .num { color: #fbbf24; }
+
+    .doc-rich {
+      padding: 20px 18px;
+      font-size: 13px;
+      line-height: 1.8;
+      color: #a1a1aa;
+    }
+    .doc-rich h1 { font-size: 18px; font-weight: 700; color: #e4e4e7; margin-bottom: 12px; }
+    .doc-rich h2 { font-size: 15px; font-weight: 600; color: #d4d4d8; margin: 18px 0 8px; }
+    .doc-rich p { margin-bottom: 12px; }
+    .doc-rich p:last-child { margin-bottom: 0; }
+
+    .doc-statusbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 12px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      font-size: 10px; color: rgba(255,255,255,0.18);
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.01);
+    }
+
+    /* Viewer empty state */
+    .doc-empty {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: rgba(255,255,255,0.15); gap: 8px;
+    }
+
+    /* File browser / viewer splitter (horizontal) */
+    .fb-viewer-divider {
+      height: 3px; cursor: ns-resize;
+      background: rgba(255,255,255,0.03);
+      position: relative; flex-shrink: 0;
+    }
+    .fb-viewer-divider::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px; height: 3px; border-radius: 2px;
+      background: rgba(255,255,255,0.08);
+    }
+    .fb-viewer-divider:hover { background: rgba(151,109,248,0.1); }
+    .fb-viewer-divider:hover::after { background: rgba(151,109,248,0.25); }
+
+    /* ===== FLOATING INPUT ===== */
+    .floating-input-wrap {
+      position: absolute;
+      bottom: 20px; left: 50%; transform: translateX(-50%);
+      width: calc(100% - 48px);
+      max-width: 740px;
+      z-index: 10;
+    }
+    .floating-input {
+      background: rgba(22, 22, 28, 0.92);
+      backdrop-filter: blur(32px) saturate(1.3);
+      -webkit-backdrop-filter: blur(32px) saturate(1.3);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .floating-input:focus-within {
+      border-color: rgba(151,109,248,0.35);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 3px rgba(151,109,248,0.08);
+    }
+
+    /* Model selector chip */
+    .model-chip {
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 12px; font-weight: 500;
+      color: rgba(255,255,255,0.4);
+      cursor: pointer;
+      transition: all 0.12s ease;
+      border: 1px solid transparent;
+    }
+    .model-chip:hover {
+      color: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(255,255,255,0.06);
+    }
+
+    /* Meta tags on messages */
+    .meta-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 10px; font-weight: 500;
+      color: rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.04);
+      transition: all 0.12s ease;
+      white-space: nowrap;
+    }
+    .meta-tag:hover {
+      color: rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.06);
+    }
+    .meta-tag .tag-icon { opacity: 0.45; }
+    /* Agent-specific tag colors */
+    .meta-tag.agent-coder { color: rgba(74,222,128,0.5); border-color: rgba(74,222,128,0.08); background: rgba(74,222,128,0.04); }
+    .meta-tag.agent-coder:hover { color: rgba(74,222,128,0.7); background: rgba(74,222,128,0.08); }
+    .meta-tag.agent-researcher { color: rgba(96,165,250,0.5); border-color: rgba(96,165,250,0.08); background: rgba(96,165,250,0.04); }
+    .meta-tag.agent-researcher:hover { color: rgba(96,165,250,0.7); background: rgba(96,165,250,0.08); }
+    .meta-tag.agent-analyst { color: rgba(251,191,36,0.5); border-color: rgba(251,191,36,0.08); background: rgba(251,191,36,0.04); }
+    .meta-tag.agent-analyst:hover { color: rgba(251,191,36,0.7); background: rgba(251,191,36,0.08); }
+    .meta-tag.agent-web { color: rgba(167,139,250,0.5); border-color: rgba(167,139,250,0.08); background: rgba(167,139,250,0.04); }
+    .meta-tag.agent-web:hover { color: rgba(167,139,250,0.7); background: rgba(167,139,250,0.08); }
+
+    /* Action bar */
+    .action-bar {
+      display: flex; align-items: center; gap: 2px;
+      margin-top: 8px;
+    }
+    .action-btn {
+      padding: 4px 8px; border-radius: 6px;
+      color: rgba(255,255,255,0.2);
+      font-size: 11px; font-weight: 500;
+      display: inline-flex; align-items: center; gap: 4px;
+      transition: all 0.12s ease;
+      cursor: pointer;
+    }
+    .action-btn:hover { color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.04); }
+
+    /* Focus ring */
+    .focus-ring:focus-visible {
+      outline: 2px solid rgba(151, 109, 248, 0.5);
+      outline-offset: 2px;
+    }
+
+    /* Typing dots */
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0.15; }
+      40% { opacity: 0.7; }
+    }
+    .typing-dot { animation: blink 1.4s infinite both; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Code blocks inside messages */
+    .msg-body pre {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 12px 0;
+      color: #c4c4cc;
+    }
+    .msg-body code:not(pre code) {
+      background: rgba(255,255,255,0.06);
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.87em;
+      color: #c4b5fd;
+    }
+
+    /* Gradient fade for floating input */
+    .chat-fade {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 100px;
+      background: linear-gradient(to top, #09090b 30%, transparent);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* Canvas header button active state */
+    .canvas-header-btn.canvas-active {
+      color: rgba(151,109,248,0.8) !important;
+      background: rgba(151,109,248,0.08);
+    }
+    .canvas-header-btn.canvas-active:hover {
+      color: rgba(151,109,248,0.9) !important;
+      background: rgba(151,109,248,0.12);
+    }
+
+    /* ===== SETTINGS PANEL ===== */
+    .settings-view {
+      display: none;
+      flex: 1;
+      min-width: 0;
+      flex-direction: row;
+      height: 100%;
+      overflow: hidden;
+    }
+    .settings-view.active {
+      display: flex;
+    }
+
+    .settings-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      border-right: 1px solid rgba(255,255,255,0.05);
+      padding: 20px 0;
+      overflow-y: auto;
+      background: #0f0f12;
+    }
+    .settings-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      margin: 0 10px 2px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.45);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 1px solid transparent;
+    }
+    .settings-nav-item:hover {
+      color: rgba(255,255,255,0.7);
+      background: rgba(255,255,255,0.04);
+    }
+    .settings-nav-item.active {
+      color: #976df8;
+      background: rgba(151,109,248,0.08);
+      border-color: rgba(151,109,248,0.12);
+    }
+    .settings-nav-item .s-nav-icon {
+      width: 18px; height: 18px; flex-shrink: 0;
+    }
+
+    .settings-content {
+      flex: 1;
+      min-width: 0;
+      overflow-y: auto;
+      padding: 32px 40px;
+      background: #09090b;
+    }
+
+    .settings-section { display: none; }
+    .settings-section.active {
+      display: block;
+      animation: fadeSlideUp 0.3s ease-out both;
+    }
+
+    .s-title {
+      font-size: 22px;
+      font-weight: 600;
+      color: white;
+      margin-bottom: 4px;
+    }
+    .s-desc {
+      font-size: 13px;
+      color: rgba(255,255,255,0.35);
+      margin-bottom: 28px;
+    }
+
+    .s-card {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 20px;
+      transition: border-color 0.2s ease;
+    }
+    .s-card:hover { border-color: rgba(255,255,255,0.10); }
+
+    .s-card-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: rgba(255,255,255,0.3);
+      margin-bottom: 16px;
+    }
+
+    .s-input {
+      width: 100%;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      color: #e4e4e7;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .s-input::placeholder { color: rgba(255,255,255,0.25); }
+    .s-input:focus {
+      border-color: rgba(151,109,248,0.5);
+      box-shadow: 0 0 0 3px rgba(151,109,248,0.08);
+    }
+
+    textarea.s-input {
+      resize: vertical;
+      min-height: 80px;
+      line-height: 1.6;
+    }
+
+    .s-field-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 6px;
+    }
+    .s-field-hint {
+      font-size: 11px;
+      color: rgba(255,255,255,0.2);
+      margin-top: 4px;
+    }
+
+    .s-btn-primary {
+      padding: 10px 20px;
+      background: #976df8;
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+      font-family: inherit;
+    }
+    .s-btn-primary:hover { background: #8559e8; }
+    .s-btn-primary:active { transform: scale(0.98); }
+
+    .s-btn-secondary {
+      padding: 10px 20px;
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.7);
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .s-btn-secondary:hover {
+      background: rgba(255,255,255,0.10);
+      border-color: rgba(255,255,255,0.14);
+      color: white;
+    }
+
+    .s-btn-danger {
+      padding: 10px 20px;
+      background: rgba(239,68,68,0.1);
+      color: #f87171;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .s-btn-danger:hover {
+      background: rgba(239,68,68,0.18);
+      border-color: rgba(239,68,68,0.35);
+    }
+
+    .s-avatar {
+      position: relative;
+      width: 80px; height: 80px;
+      border-radius: 20px;
+      overflow: hidden;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .s-avatar-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .s-avatar:hover .s-avatar-overlay { opacity: 1; }
+
+    .s-info-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .s-info-row:last-child { border-bottom: none; }
+    .s-info-label {
+      font-size: 13px;
+      color: rgba(255,255,255,0.45);
+      min-width: 110px;
+    }
+    .s-info-value {
+      font-size: 14px;
+      color: rgba(255,255,255,0.85);
+      flex: 1;
+    }
+    .s-info-action {
+      font-size: 12px;
+      font-weight: 500;
+      color: #976df8;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .s-info-action:hover {
+      background: rgba(151,109,248,0.1);
+      color: #8559e8;
+    }
+
+    .s-pw-wrapper { position: relative; }
+    .s-pw-wrapper .s-input { padding-right: 44px; }
+    .s-pw-toggle {
+      position: absolute;
+      right: 12px; top: 50%; transform: translateY(-50%);
+      background: none; border: none;
+      color: rgba(255,255,255,0.3);
+      cursor: pointer; padding: 4px;
+      display: flex;
+      transition: color 0.15s ease;
+    }
+    .s-pw-toggle:hover { color: rgba(255,255,255,0.6); }
+
+    .s-strength-track {
+      height: 4px; border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      overflow: hidden; margin-top: 8px;
+    }
+    .s-strength-fill {
+      height: 100%; border-radius: 4px;
+      transition: all 0.3s ease;
+      width: 0%;
+    }
+
+    .s-tab-placeholder {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 60px 20px; text-align: center;
+    }
+    .s-tab-icon {
+      width: 56px; height: 56px; border-radius: 16px;
+      background: rgba(151,109,248,0.08);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 20px;
+    }
+    .s-tab-icon svg {
+      width: 28px; height: 28px;
+      color: rgba(151,109,248,0.5);
+    }
+
+    /* Settings toast */
+    .s-toast {
+      position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 1100; padding: 12px 24px; border-radius: 10px;
+      font-size: 14px; font-weight: 500; font-family: inherit;
+      animation: fadeSlideUp 0.3s ease-out;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .s-toast-success {
+      background: rgba(34,197,94,0.15);
+      border: 1px solid rgba(34,197,94,0.3);
+      color: #4ade80;
+    }
+    .s-toast-error {
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: #f87171;
+    }
+
+    /* Logout modal */
+    .s-modal-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      opacity: 0; visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+    .s-modal-overlay.active { opacity: 1; visibility: visible; }
+    .s-modal-box {
+      background: rgba(22,22,28,0.95);
+      backdrop-filter: blur(32px) saturate(1.3);
+      -webkit-backdrop-filter: blur(32px) saturate(1.3);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+      width: 100%; max-width: 400px;
+      padding: 32px; margin: 16px;
+      transform: translateY(10px) scale(0.98); opacity: 0;
+      transition: transform 0.25s ease, opacity 0.25s ease;
+    }
+    .s-modal-overlay.active .s-modal-box {
+      transform: translateY(0) scale(1); opacity: 1;
+    }
+
+    @media (max-width: 768px) {
+      .settings-sidebar { display: none; }
+      .settings-content { padding: 20px 16px; }
+    }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .thread-panel { display: none; }
+      .canvas-panel { display: none; }
+      .canvas-divider { display: none; }
+      .icon-rail { width: 0; min-width: 0; overflow: hidden; border: none; }
+    }
+
+    /* ========== PRINT STYLES ========== */
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      html, body {
+        height: auto !important;
+        overflow: visible !important;
+        background: #09090b !important;
+      }
+      body { -webkit-font-smoothing: auto; }
+
+      .icon-rail { display: none !important; }
+      .thread-panel { display: none !important; }
+      .canvas-divider { display: none !important; }
+      .canvas-panel {
+        width: 340px !important; min-width: 340px !important;
+        opacity: 1 !important;
+        height: auto !important;
+        overflow: visible !important;
+        break-inside: avoid;
+      }
+      .file-browser { max-height: none !important; overflow: visible !important; }
+      .doc-content { max-height: none !important; overflow: visible !important; }
+      .doc-viewer { height: auto !important; }
+      .fb-viewer-divider { display: none !important; }
+      .chat-area {
+        flex: 1 !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      .conversation-pane {
+        flex: 1 !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      #messagesScroll {
+        overflow: visible !important;
+        height: auto !important;
+      }
+      .chat-fade { display: none !important; }
+      .floating-input-wrap {
+        position: relative !important;
+        transform: none !important;
+        left: auto !important; bottom: auto !important;
+        width: 100% !important;
+        margin-top: 16px;
+        break-inside: avoid;
+      }
+      .floating-input {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: #16161a !important;
+      }
+      .bubble-user, .bubble-ai { animation: none !important; break-inside: avoid; page-break-inside: avoid; }
+      .rail-btn .tooltip { display: none !important; }
+      .doc-preview-body { max-height: none !important; overflow: visible !important; }
+      @page { size: A4 landscape; margin: 0.4cm; }
+    }
+  </style>
+</head>
+<body class="h-full font-sans overflow-hidden">
+
+  <div class="flex h-full">
+
+    <!-- ===== 1. ICON RAIL ===== -->
+    <div class="icon-rail flex flex-col items-center py-4 px-1.5 gap-1 shrink-0" style="width:56px; min-width:56px;">
+
+      <!-- Logo -->
+      <div class="w-9 h-9 rounded-xl overflow-hidden mb-4 cursor-pointer" title="Grizon AI">
+        <img src="grizon_icon.png" alt="Grizon" class="w-full h-full object-cover" />
+      </div>
+
+      <!-- Nav icons -->
+      <button class="rail-btn active" onclick="showPanel('threads')" aria-label="Conversations">
+        <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="tooltip">Chats</span>
+      </button>
+
+      <button class="rail-btn" onclick="showPanel('search')" aria-label="Search">
+        <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span class="tooltip">Search</span>
+      </button>
+
+      <button class="rail-btn" aria-label="Projects">
+        <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="tooltip">Projects</span>
+      </button>
+
+      <button class="rail-btn" aria-label="Code">
+        <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="tooltip">Code</span>
+      </button>
+
+      <!-- Spacer -->
+      <div class="flex-1"></div>
+
+      <!-- Settings + Profile -->
+      <button class="rail-btn" id="settingsRailBtn" onclick="toggleSettingsView()" aria-label="Settings">
+        <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="tooltip">Settings</span>
+      </button>
+
+      <div class="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent cursor-pointer mt-1" title="John Doe">J</div>
+    </div>
+
+    <!-- ===== 2. THREAD LIST ===== -->
+    <div class="thread-panel flex flex-col h-full shrink-0" style="width:260px; min-width:260px;">
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-4 pt-5 pb-2">
+        <span class="text-[15px] font-semibold text-white tracking-tight">Conversations</span>
+        <button class="focus-ring w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center text-accent hover:bg-accent/[0.18] transition-colors" title="New Chat">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+
+      <!-- Search -->
+      <div class="px-3 py-2">
+        <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.05]">
+          <svg class="w-3.5 h-3.5 text-white/25 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search..." class="bg-transparent w-full text-[12px] text-white/70 placeholder-white/25 outline-none" />
+        </div>
+      </div>
+
+      <!-- Today -->
+      <div class="px-5 pt-3 pb-1">
+        <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/20">Today</span>
+      </div>
+
+      <!-- Thread items — NO avatars, clean text only -->
+      <nav class="flex-1 overflow-y-auto px-2 space-y-0.5 pb-3">
+
+        <a href="#" class="thread-item active">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white truncate">Lorem ipsum dolor sit amet</div>
+            <div class="text-[11px] text-white/25 truncate mt-0.5">2 files &middot; Just now</div>
+          </div>
+        </a>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Consectetur adipiscing elit</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">3m ago</div>
+          </div>
+        </a>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Sed do eiusmod tempor incididunt</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">1h ago</div>
+          </div>
+        </a>
+
+        <!-- Yesterday -->
+        <div class="px-3 pt-4 pb-1">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/20">Yesterday</span>
+        </div>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Ut labore et dolore magna aliqua</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">Yesterday</div>
+          </div>
+        </a>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Quis nostrud exercitation ullamco</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">Yesterday</div>
+          </div>
+        </a>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Duis aute irure dolor in reprehenderit</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">Yesterday</div>
+          </div>
+        </a>
+
+        <!-- This Week -->
+        <div class="px-3 pt-4 pb-1">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/20">This Week</span>
+        </div>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Excepteur sint occaecat cupidatat</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">3 days ago</div>
+          </div>
+        </a>
+
+        <a href="#" class="thread-item">
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-medium text-white/55 truncate">Nemo enim ipsam voluptatem</div>
+            <div class="text-[11px] text-white/20 truncate mt-0.5">5 days ago</div>
+          </div>
+        </a>
+
+      </nav>
+
+      <!-- Plan badge -->
+      <div class="px-4 py-3 border-t border-white/[0.04]">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-emerald-400/80"></div>
+            <span class="text-[11px] text-white/40 font-medium">Pro Plan</span>
+          </div>
+          <span class="text-[10px] text-white/20 font-mono">12.4K / 50K tokens</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 3. CHAT AREA (contains conversation + inline canvas) ===== -->
+    <div class="chat-area flex-1 flex flex-col h-full min-w-0">
+
+      <!-- Top bar -->
+      <header class="flex items-center justify-between px-6 py-3 shrink-0 border-b border-white/[0.04]">
+        <div class="flex items-center gap-3">
+          <h1 class="text-[14px] font-medium text-white/70">Lorem ipsum dolor sit amet</h1>
+        </div>
+        <div class="flex items-center gap-1">
+          <button onclick="toggleCanvas()" class="focus-ring canvas-header-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] text-white/30 hover:text-white/50 hover:bg-white/[0.04] transition-all" id="canvasToggleBtn">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <line x1="12" y1="3" x2="12" y2="21"/>
+            </svg>
+            <span>Canvas</span>
+          </button>
+          <button class="w-8 h-8 rounded-lg flex items-center justify-center text-white/25 hover:text-white/45 hover:bg-white/[0.04] transition-all">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ===== CANVAS WRAPPER: conversation + inline panel side by side ===== -->
+      <div class="canvas-wrapper">
+
+        <!-- LEFT: Conversation pane -->
+        <div class="conversation-pane" id="conversationPane">
+
+          <!-- Messages scroll area -->
+          <div id="messagesScroll" class="flex-1 overflow-y-auto relative" style="padding-bottom: 160px;">
+            <div id="messagesContainer" class="max-w-[780px] mx-auto px-6 py-6 space-y-5">
+
+              <!-- User message 1 -->
+              <div class="flex justify-end">
+                <div class="max-w-[75%]">
+                  <div class="msg-label justify-end">
+                    <span class="text-white/25">2:12 PM</span>
+                    <span class="text-accent/70">John Doe</span>
+                  </div>
+                  <div class="bubble-user">
+                    <div class="msg-body">
+                      <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI message 1 -->
+              <div class="flex justify-start">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                    <span class="text-white/20">2:12 PM</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="msg-body">
+                      <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.</p>
+                      <p>Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur? Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur.</p>
+                    </div>
+                  </div>
+                  <!-- Meta tags -->
+                  <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      Sonnet 4
+                    </span>
+                    <span class="meta-tag agent-researcher">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                      Researcher
+                    </span>
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                      420 tokens
+                    </span>
+                    <button class="action-btn ml-auto">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="action-btn">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- User message 2 -->
+              <div class="flex justify-end">
+                <div class="max-w-[75%]">
+                  <div class="msg-label justify-end">
+                    <span class="text-white/25">2:18 PM</span>
+                    <span class="text-accent/70">John Doe</span>
+                  </div>
+                  <div class="bubble-user">
+                    <div class="msg-body">
+                      <p>At vero eos et accusamus et iusto odio dignissimos ducimos qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI message 2 -->
+              <div class="flex justify-start">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                    <span class="text-white/20">2:18 PM</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="msg-body">
+                      <p>Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.</p>
+                      <p>Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus.</p>
+                    </div>
+                  </div>
+                  <!-- Meta tags -->
+                  <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      Opus 4.5
+                    </span>
+                    <span class="meta-tag agent-analyst">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                      Analyst
+                    </span>
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                      510 tokens
+                    </span>
+                    <button class="action-btn ml-auto">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="action-btn">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- User message 3 — with code block -->
+              <div class="flex justify-end">
+                <div class="max-w-[75%]">
+                  <div class="msg-label justify-end">
+                    <span class="text-white/25">2:25 PM</span>
+                    <span class="text-accent/70">John Doe</span>
+                  </div>
+                  <div class="bubble-user">
+                    <div class="msg-body">
+                      <p>Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur, vel illum qui dolorem eum fugiat quo voluptas nulla pariatur?</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI message 3 — longer response with code -->
+              <div class="flex justify-start">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                    <span class="text-white/20">2:25 PM</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="msg-body">
+                      <p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium.</p>
+                      <pre>def analyze_text(content):
+    words = content.split()
+    return {
+        "count": len(words),
+        "unique": len(set(words))
+    }</pre>
+                      <p>Doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.</p>
+                    </div>
+                  </div>
+                  <!-- Meta tags -->
+                  <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      Sonnet 4
+                    </span>
+                    <span class="meta-tag agent-coder">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                      Coder
+                    </span>
+                    <span class="meta-tag agent-web">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                      Web Search
+                    </span>
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                      680 tokens
+                    </span>
+                    <button class="action-btn ml-auto">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="action-btn">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- User message 4 — with file attachment -->
+              <div class="flex justify-end">
+                <div class="max-w-[75%]">
+                  <div class="msg-label justify-end">
+                    <span class="text-white/25">2:34 PM</span>
+                    <span class="text-accent/70">John Doe</span>
+                  </div>
+                  <div class="bubble-user">
+                    <div class="msg-body">
+                      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+                    </div>
+                    <!-- Attached file -->
+                    <div class="file-card" onclick="openFileInCanvas('pdf')">
+                      <div class="file-icon pdf">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="text-[12px] font-medium text-white/70 truncate">lorem_document.pdf</div>
+                        <div class="text-[10px] text-white/30">2.4 MB</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI message 4 — with generated file -->
+              <div class="flex justify-start">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                    <span class="text-white/20">2:34 PM</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="msg-body">
+                      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                      <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+                      <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt.</p>
+                    </div>
+                    <!-- Generated file — clickable to open in canvas -->
+                    <div class="file-card" onclick="openFileInCanvas('code')">
+                      <div class="file-icon code">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="text-[12px] font-medium text-white/70 truncate">ipsum_analysis.py</div>
+                        <div class="text-[10px] text-white/30">4.1 KB</div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Meta tags -->
+                  <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      Opus 4.5
+                    </span>
+                    <span class="meta-tag agent-coder">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                      Coder
+                    </span>
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                      1.8K tokens
+                    </span>
+                    <button class="action-btn ml-auto">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="action-btn">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- User message 5 -->
+              <div class="flex justify-end">
+                <div class="max-w-[75%]">
+                  <div class="msg-label justify-end">
+                    <span class="text-white/25">2:41 PM</span>
+                    <span class="text-accent/70">John Doe</span>
+                  </div>
+                  <div class="bubble-user">
+                    <div class="msg-body">
+                      <p>Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur?</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI message 5 -->
+              <div class="flex justify-start">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                    <span class="text-white/20">2:41 PM</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="msg-body">
+                      <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet.</p>
+                      <p>Consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem. Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur.</p>
+                      <p>Vel illum qui dolorem eum fugiat quo voluptas nulla pariatur. At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati.</p>
+                    </div>
+                  </div>
+                  <!-- Meta tags -->
+                  <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                      Haiku 4
+                    </span>
+                    <span class="meta-tag agent-researcher">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                      Researcher
+                    </span>
+                    <span class="meta-tag agent-web">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                      Web Search
+                    </span>
+                    <span class="meta-tag">
+                      <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                      920 tokens
+                    </span>
+                    <button class="action-btn ml-auto">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="action-btn">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Typing indicator -->
+              <div id="typingIndicator" class="flex justify-start hidden">
+                <div class="max-w-[80%]">
+                  <div class="msg-label">
+                    <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                      <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+                    </div>
+                    <span class="text-white/45">Grizon AI</span>
+                  </div>
+                  <div class="bubble-ai">
+                    <div class="flex items-center gap-1.5">
+                      <span class="typing-dot w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                      <span class="typing-dot w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                      <span class="typing-dot w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Gradient fade -->
+          <div class="chat-fade"></div>
+
+          <!-- Floating input -->
+          <div class="floating-input-wrap">
+            <div class="floating-input">
+              <!-- Model selector row -->
+              <div class="flex items-center justify-between px-4 pt-2.5 pb-0">
+                <button class="model-chip">
+                  <svg class="w-3.5 h-3.5 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  Opus 4.5
+                  <svg class="w-3 h-3 opacity-25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <span id="tokenCounter" class="text-[10px] text-white/20 font-mono tabular-nums">~88 tokens</span>
+              </div>
+              <div class="flex items-end gap-2 px-4 py-3">
+                <button class="w-8 h-8 rounded-lg flex items-center justify-center text-white/25 hover:text-white/45 hover:bg-white/[0.05] transition-all shrink-0 mb-0.5" aria-label="Attach file">
+                  <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <textarea
+                  id="chatInput"
+                  rows="3"
+                  placeholder="Message Grizon AI..."
+                  class="flex-1 bg-transparent text-[14px] text-white/90 placeholder-white/25 outline-none leading-relaxed py-1 min-h-[24px]"
+                  oninput="updateTokenCount()"
+                  onkeydown="handleKeyDown(event)"
+                >Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</textarea>
+                <div class="flex items-center gap-1 shrink-0 mb-0.5">
+                  <button id="sendBtn" onclick="sendMessage()" class="focus-ring w-8 h-8 rounded-lg bg-accent hover:bg-accent-hover text-white flex items-center justify-center transition-colors duration-150 disabled:opacity-25 disabled:cursor-not-allowed" aria-label="Send message">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="text-center text-[10px] text-white/15 mt-2">Grizon AI can make mistakes. Verify important information.</p>
+          </div>
+
+        </div>
+
+        <!-- DIVIDER between conversation and canvas -->
+        <div class="canvas-divider hidden" id="canvasDivider"></div>
+
+        <!-- RIGHT: Canvas panel (inline in chat area) -->
+        <div class="canvas-panel" id="canvasPanel">
+
+          <!-- Canvas header with view tabs -->
+          <div class="canvas-header">
+            <div class="flex items-center gap-1">
+              <button class="canvas-tab active" onclick="switchCanvasView('viewer', this)" data-view="viewer">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span>Viewer</span>
+              </button>
+              <button class="canvas-tab" onclick="switchCanvasView('files', this)" data-view="files">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <span>Files</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/25 font-mono leading-none">5</span>
+              </button>
+            </div>
+            <div class="flex items-center gap-0.5">
+              <button onclick="toggleCanvas()" class="doc-toolbar-btn" title="Close canvas" style="width:24px;height:24px;">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- ── FILES VIEW ── -->
+          <div id="canvasFilesView" class="flex-1 flex flex-col min-h-0 hidden">
+            <div class="file-browser flex-1 overflow-y-auto" style="border-bottom:none;">
+
+              <!-- Uploaded section -->
+              <div class="fb-section-label">Uploaded</div>
+              <div class="px-2 space-y-0.5">
+
+                <!-- Folder: documents (expanded) -->
+                <div class="fb-row folder" onclick="toggleFolder(this)">
+                  <svg class="fb-chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  <div class="fb-icon"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+                  <span class="fb-name">documents</span>
+                  <span class="fb-meta">2</span>
+                </div>
+                <div class="folder-children">
+                  <div class="fb-row nested" onclick="selectFileAndView(this,'pdf')" data-file="pdf">
+                    <div class="fb-icon" style="color:#f87171;"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                    <span class="fb-name">lorem_document.pdf</span>
+                    <span class="fb-meta">2.4 MB</span>
+                  </div>
+                  <div class="fb-row nested" onclick="selectFileAndView(this,'readme')" data-file="readme">
+                    <div class="fb-icon" style="color:#60a5fa;"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                    <span class="fb-name">README.md</span>
+                    <span class="fb-meta">1.2 KB</span>
+                  </div>
+                </div>
+
+                <!-- Single file: image -->
+                <div class="fb-row" onclick="selectFileAndView(this,'image')" data-file="image">
+                  <div style="width:12px;"></div>
+                  <div class="fb-icon" style="color:#a78bfa;"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+                  <span class="fb-name">diagram_overview.png</span>
+                  <span class="fb-meta">840 KB</span>
+                </div>
+              </div>
+
+              <!-- Generated section -->
+              <div class="fb-section-label" style="margin-top:6px;">Generated by AI</div>
+              <div class="px-2 space-y-0.5 pb-2">
+                <div class="fb-row selected" onclick="selectFileAndView(this,'code')" data-file="code">
+                  <div style="width:12px;"></div>
+                  <div class="fb-icon" style="color:#4ade80;"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+                  <span class="fb-name">ipsum_analysis.py</span>
+                  <span class="fb-meta">4.1 KB</span>
+                </div>
+                <div class="fb-row" onclick="selectFileAndView(this,'json')" data-file="json">
+                  <div style="width:12px;"></div>
+                  <div class="fb-icon" style="color:#fbbf24;"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                  <span class="fb-name">output.json</span>
+                  <span class="fb-meta">680 B</span>
+                </div>
+              </div>
+
+              <!-- Upload zone at bottom -->
+              <div class="px-3 pb-3 pt-1">
+                <div class="flex items-center justify-center gap-2 py-4 rounded-lg border border-dashed border-white/[0.06] hover:border-accent/20 hover:bg-accent/[0.03] transition-all cursor-pointer">
+                  <svg class="w-4 h-4 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span class="text-[11px] text-white/20 font-medium">Upload files</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- ── VIEWER VIEW ── -->
+          <div id="canvasViewerView" class="doc-viewer">
+
+            <!-- Toolbar with breadcrumb -->
+            <div class="doc-toolbar">
+              <div class="doc-breadcrumb" id="docBreadcrumb">
+                <span>Generated</span>
+                <span class="bc-sep">/</span>
+                <span class="bc-current">ipsum_analysis.py</span>
+              </div>
+              <div class="flex items-center gap-0.5">
+                <button class="doc-toolbar-btn" title="Copy contents">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <button class="doc-toolbar-btn" title="Download file">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <button class="doc-toolbar-btn" title="Open in new tab">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Code View (default — ipsum_analysis.py) -->
+            <div id="viewer-code" class="doc-content">
+              <div class="doc-code">
+<div class="code-line"><span class="ln"> 1</span><span class="lc"><span class="cm"># Lorem Ipsum Analysis Tool</span></span></div>
+<div class="code-line"><span class="ln"> 2</span><span class="lc"><span class="kw">import</span> lorem</span></div>
+<div class="code-line"><span class="ln"> 3</span><span class="lc"><span class="kw">import</span> json</span></div>
+<div class="code-line"><span class="ln"> 4</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln"> 5</span><span class="lc"><span class="kw">class</span> <span class="fn">IpsumAnalyzer</span>:</span></div>
+<div class="code-line"><span class="ln"> 6</span><span class="lc">    <span class="str">"""Analyze lorem ipsum text patterns."""</span></span></div>
+<div class="code-line"><span class="ln"> 7</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln"> 8</span><span class="lc">    <span class="kw">def</span> <span class="fn">__init__</span>(self, text: str):</span></div>
+<div class="code-line"><span class="ln"> 9</span><span class="lc">        self.text = text</span></div>
+<div class="code-line"><span class="ln">10</span><span class="lc">        self.words = text.split()</span></div>
+<div class="code-line"><span class="ln">11</span><span class="lc">        self.sentences = text.split(<span class="str">'.'</span>)</span></div>
+<div class="code-line"><span class="ln">12</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln">13</span><span class="lc">    <span class="kw">def</span> <span class="fn">word_count</span>(self) -> int:</span></div>
+<div class="code-line"><span class="ln">14</span><span class="lc">        <span class="str">"""Return total word count."""</span></span></div>
+<div class="code-line"><span class="ln">15</span><span class="lc">        <span class="kw">return</span> len(self.words)</span></div>
+<div class="code-line"><span class="ln">16</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln">17</span><span class="lc">    <span class="kw">def</span> <span class="fn">frequency_map</span>(self) -> dict:</span></div>
+<div class="code-line"><span class="ln">18</span><span class="lc">        <span class="str">"""Build word frequency distribution."""</span></span></div>
+<div class="code-line"><span class="ln">19</span><span class="lc">        freq = {}</span></div>
+<div class="code-line"><span class="ln">20</span><span class="lc">        <span class="kw">for</span> w <span class="kw">in</span> self.words:</span></div>
+<div class="code-line"><span class="ln">21</span><span class="lc">            w = w.lower().strip(<span class="str">',.'</span>)</span></div>
+<div class="code-line"><span class="ln">22</span><span class="lc">            freq[w] = freq.get(w, <span class="num">0</span>) + <span class="num">1</span></span></div>
+<div class="code-line"><span class="ln">23</span><span class="lc">        <span class="kw">return</span> dict(sorted(</span></div>
+<div class="code-line"><span class="ln">24</span><span class="lc">            freq.items(),</span></div>
+<div class="code-line"><span class="ln">25</span><span class="lc">            key=<span class="kw">lambda</span> x: x[<span class="num">1</span>],</span></div>
+<div class="code-line"><span class="ln">26</span><span class="lc">            reverse=True</span></div>
+<div class="code-line"><span class="ln">27</span><span class="lc">        ))</span></div>
+<div class="code-line"><span class="ln">28</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln">29</span><span class="lc">    <span class="kw">def</span> <span class="fn">export_json</span>(self, path: str):</span></div>
+<div class="code-line"><span class="ln">30</span><span class="lc">        <span class="str">"""Export analysis results to JSON."""</span></span></div>
+<div class="code-line"><span class="ln">31</span><span class="lc">        data = {</span></div>
+<div class="code-line"><span class="ln">32</span><span class="lc">            <span class="str">"word_count"</span>: self.word_count(),</span></div>
+<div class="code-line"><span class="ln">33</span><span class="lc">            <span class="str">"frequency"</span>: self.frequency_map(),</span></div>
+<div class="code-line"><span class="ln">34</span><span class="lc">        }</span></div>
+<div class="code-line"><span class="ln">35</span><span class="lc">        <span class="kw">with</span> open(path, <span class="str">"w"</span>) <span class="kw">as</span> f:</span></div>
+<div class="code-line"><span class="ln">36</span><span class="lc">            json.dump(data, f, indent=<span class="num">2</span>)</span></div>
+<div class="code-line"><span class="ln">37</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln">38</span><span class="lc"></span></div>
+<div class="code-line"><span class="ln">39</span><span class="lc"><span class="cm"># Entry point</span></span></div>
+<div class="code-line"><span class="ln">40</span><span class="lc"><span class="kw">if</span> __name__ == <span class="str">"__main__"</span>:</span></div>
+<div class="code-line"><span class="ln">41</span><span class="lc">    sample = lorem.text()</span></div>
+<div class="code-line"><span class="ln">42</span><span class="lc">    analyzer = <span class="fn">IpsumAnalyzer</span>(sample)</span></div>
+<div class="code-line"><span class="ln">43</span><span class="lc">    print(f<span class="str">"Words: {analyzer.word_count()}"</span>)</span></div>
+<div class="code-line"><span class="ln">44</span><span class="lc">    analyzer.export_json(<span class="str">"output.json"</span>)</span></div>
+              </div>
+            </div>
+
+            <!-- PDF / Rich Doc View -->
+            <div id="viewer-pdf" class="doc-content hidden">
+              <div class="doc-rich">
+                <h1>Lorem Ipsum</h1>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                <h2>Dolor Sit Amet</h2>
+                <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+                <h2>Sed Ut Perspiciatis</h2>
+                <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
+              </div>
+            </div>
+
+            <!-- JSON View -->
+            <div id="viewer-json" class="doc-content hidden">
+              <div class="doc-code">
+<div class="code-line"><span class="ln"> 1</span><span class="lc">{</span></div>
+<div class="code-line"><span class="ln"> 2</span><span class="lc">  <span class="str">"word_count"</span>: <span class="num">142</span>,</span></div>
+<div class="code-line"><span class="ln"> 3</span><span class="lc">  <span class="str">"frequency"</span>: {</span></div>
+<div class="code-line"><span class="ln"> 4</span><span class="lc">    <span class="str">"lorem"</span>: <span class="num">8</span>,</span></div>
+<div class="code-line"><span class="ln"> 5</span><span class="lc">    <span class="str">"ipsum"</span>: <span class="num">7</span>,</span></div>
+<div class="code-line"><span class="ln"> 6</span><span class="lc">    <span class="str">"dolor"</span>: <span class="num">6</span>,</span></div>
+<div class="code-line"><span class="ln"> 7</span><span class="lc">    <span class="str">"sit"</span>: <span class="num">5</span>,</span></div>
+<div class="code-line"><span class="ln"> 8</span><span class="lc">    <span class="str">"amet"</span>: <span class="num">5</span>,</span></div>
+<div class="code-line"><span class="ln"> 9</span><span class="lc">    <span class="str">"consectetur"</span>: <span class="num">3</span>,</span></div>
+<div class="code-line"><span class="ln">10</span><span class="lc">    <span class="str">"adipiscing"</span>: <span class="num">3</span></span></div>
+<div class="code-line"><span class="ln">11</span><span class="lc">  }</span></div>
+<div class="code-line"><span class="ln">12</span><span class="lc">}</span></div>
+              </div>
+            </div>
+
+            <!-- Image placeholder View -->
+            <div id="viewer-image" class="doc-content hidden">
+              <div class="flex flex-col items-center justify-center h-full gap-3 py-12" style="color:rgba(255,255,255,0.15);">
+                <svg class="w-12 h-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span class="text-[12px]">diagram_overview.png</span>
+                <span class="text-[10px]" style="color:rgba(255,255,255,0.1);">840 KB &middot; 1920 &times; 1080</span>
+                <div style="width:80%;max-width:280px;height:140px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.06);margin-top:8px;display:flex;align-items:center;justify-content:center;">
+                  <span class="text-[11px]" style="color:rgba(255,255,255,0.1);">Image Preview</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- README markdown View -->
+            <div id="viewer-readme" class="doc-content hidden">
+              <div class="doc-rich">
+                <h1>Lorem Ipsum Project</h1>
+                <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam.</p>
+                <h2>Installation</h2>
+                <p>Eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur.</p>
+                <h2>Usage</h2>
+                <p>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati.</p>
+              </div>
+            </div>
+
+            <!-- Status bar -->
+            <div class="doc-statusbar" id="docStatusbar">
+              <span>Python &middot; UTF-8</span>
+              <span>44 lines &middot; 4.1 KB</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div><!-- /canvas-wrapper -->
+
+    </div><!-- /chat-area -->
+
+    <!-- ===== 4. SETTINGS VIEW (replaces chat area when active) ===== -->
+    <div class="settings-view" id="settingsView">
+
+      <!-- Settings Sidebar -->
+      <aside class="settings-sidebar">
+        <div class="px-4 mb-4">
+          <h2 class="text-[15px] font-semibold text-white tracking-tight">Settings</h2>
+        </div>
+        <div class="flex flex-col gap-0.5">
+          <button class="settings-nav-item active" onclick="switchSettingsTab('general')" data-stab="general">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            General
+          </button>
+          <button class="settings-nav-item" onclick="switchSettingsTab('account')" data-stab="account">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Account
+          </button>
+          <button class="settings-nav-item" onclick="switchSettingsTab('usage')" data-stab="usage">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            Usage
+          </button>
+          <button class="settings-nav-item" onclick="switchSettingsTab('billing')" data-stab="billing">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            Billing
+          </button>
+          <button class="settings-nav-item" onclick="switchSettingsTab('privacy')" data-stab="privacy">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Privacy
+          </button>
+          <button class="settings-nav-item" onclick="switchSettingsTab('connections')" data-stab="connections">
+            <svg class="s-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            Connections
+          </button>
+        </div>
+      </aside>
+
+      <!-- Settings Content -->
+      <main class="settings-content">
+
+        <!-- ===== GENERAL TAB ===== -->
+        <section class="settings-section active" id="stab-general">
+          <h2 class="s-title">General</h2>
+          <p class="s-desc">Manage your profile information and account preferences.</p>
+
+          <!-- Profile Card -->
+          <div class="s-card">
+            <div class="s-card-label">Profile</div>
+            <div class="flex items-start gap-5 mb-6" style="flex-wrap: wrap;">
+              <!-- Avatar -->
+              <div class="s-avatar" onclick="document.getElementById('sAvatarInput').click()" title="Change photo">
+                <div class="w-full h-full bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center" id="sAvatarPlaceholder">
+                  <span class="text-[28px] font-semibold text-white/80" id="sAvatarInitials">JD</span>
+                </div>
+                <img src="" alt="Profile" class="absolute inset-0 w-full h-full object-cover" id="sAvatarImage" style="display:none;" />
+                <div class="s-avatar-overlay">
+                  <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </div>
+                <input type="file" id="sAvatarInput" accept="image/*" style="display:none;" onchange="sHandleAvatar(event)" />
+              </div>
+              <div class="flex-1 pt-1" style="min-width:200px;">
+                <h3 class="text-[16px] font-semibold text-white mb-1" id="sDisplayName">John Doe</h3>
+                <p class="text-[13px] text-white/35 mb-3">Your profile is visible to the Grizon AI team for support purposes.</p>
+                <button class="s-btn-secondary text-[12px]" style="padding:7px 14px;" onclick="document.getElementById('sAvatarInput').click()">Upload Photo</button>
+              </div>
+            </div>
+
+            <!-- Name fields -->
+            <div class="grid gap-4 mb-5" style="grid-template-columns: 1fr 1fr;">
+              <div>
+                <label class="s-field-label" for="sFirstName">First Name</label>
+                <input type="text" id="sFirstName" class="s-input" value="John" placeholder="First name" />
+              </div>
+              <div>
+                <label class="s-field-label" for="sLastName">Last Name</label>
+                <input type="text" id="sLastName" class="s-input" value="Doe" placeholder="Last name" />
+              </div>
+            </div>
+
+            <!-- About -->
+            <div class="mb-5">
+              <label class="s-field-label" for="sAboutMe">About Me</label>
+              <textarea id="sAboutMe" class="s-input" placeholder="Tell us a little about yourself...">Product designer based in San Francisco. I use Grizon AI for brainstorming, code reviews, and research.</textarea>
+              <p class="s-field-hint">Brief description for your profile. Max 200 characters.</p>
+            </div>
+
+            <button class="s-btn-primary" onclick="sSaveProfile()">Save Changes</button>
+          </div>
+
+          <!-- Contact Information -->
+          <div class="s-card">
+            <div class="s-card-label">Contact Information</div>
+            <div class="s-info-row">
+              <span class="s-info-label">Email</span>
+              <span class="s-info-value" id="sDisplayEmail">john.doe@example.com</span>
+              <button class="s-info-action" onclick="sOpenEdit('email')">Change</button>
+            </div>
+            <div class="s-info-row">
+              <span class="s-info-label">Phone</span>
+              <span class="s-info-value" id="sDisplayPhone">+91 98765 43210</span>
+              <button class="s-info-action" onclick="sOpenEdit('phone')">Change</button>
+            </div>
+            <div class="s-info-row">
+              <span class="s-info-label">Location</span>
+              <span class="s-info-value" id="sDisplayLocation">San Francisco, CA</span>
+              <button class="s-info-action" onclick="sOpenEdit('location')">Edit</button>
+            </div>
+          </div>
+
+          <!-- Edit Field (hidden by default) -->
+          <div class="s-card" id="sEditCard" style="display:none;">
+            <div class="s-card-label" id="sEditLabel">Edit Email</div>
+            <div class="mb-4">
+              <label class="s-field-label" id="sEditInputLabel" for="sEditInput">New email address</label>
+              <input type="text" id="sEditInput" class="s-input" placeholder="" />
+              <p class="s-field-hint" id="sEditHint"></p>
+            </div>
+            <div class="flex gap-3">
+              <button class="s-btn-primary" onclick="sSaveEdit()">Save</button>
+              <button class="s-btn-secondary" onclick="sCloseEdit()">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Password / Security -->
+          <div class="s-card">
+            <div class="s-card-label">Security</div>
+            <div class="mb-5">
+              <label class="s-field-label" for="sCurPassword">Current Password</label>
+              <div class="s-pw-wrapper">
+                <input type="password" id="sCurPassword" class="s-input" placeholder="Enter current password" />
+                <button type="button" class="s-pw-toggle" onclick="sTogglePw('sCurPassword',this)" aria-label="Show password">
+                  <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="mb-5">
+              <label class="s-field-label" for="sNewPassword">New Password</label>
+              <div class="s-pw-wrapper">
+                <input type="password" id="sNewPassword" class="s-input" placeholder="Create a new password" oninput="sUpdateStrength(this.value)" />
+                <button type="button" class="s-pw-toggle" onclick="sTogglePw('sNewPassword',this)" aria-label="Show password">
+                  <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+              <div class="s-strength-track">
+                <div class="s-strength-fill" id="sStrengthFill"></div>
+              </div>
+              <p class="s-field-hint" id="sStrengthLabel">Min 8 characters, one uppercase, one number</p>
+            </div>
+            <div class="mb-5">
+              <label class="s-field-label" for="sConfirmPassword">Confirm New Password</label>
+              <div class="s-pw-wrapper">
+                <input type="password" id="sConfirmPassword" class="s-input" placeholder="Re-enter new password" />
+                <button type="button" class="s-pw-toggle" onclick="sTogglePw('sConfirmPassword',this)" aria-label="Show password">
+                  <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+            <button class="s-btn-primary" onclick="sChangePassword()">Update Password</button>
+          </div>
+
+          <!-- Logout / Session -->
+          <div class="s-card" style="border-color: rgba(239,68,68,0.15);">
+            <div class="s-card-label" style="color: rgba(239,68,68,0.5);">Session</div>
+            <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 12px;">
+              <div>
+                <p class="text-[14px] text-white/70 font-medium mb-1">Log out of Grizon AI</p>
+                <p class="text-[12px] text-white/30">You'll need to sign in again to continue using Grizon AI.</p>
+              </div>
+              <button class="s-btn-danger" onclick="sOpenLogout()">
+                <span class="flex items-center gap-2">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                  Log Out
+                </span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== ACCOUNT TAB ===== -->
+        <section class="settings-section" id="stab-account">
+          <h2 class="s-title">Account</h2>
+          <p class="s-desc">Manage your account details and preferences.</p>
+          <div class="s-tab-placeholder">
+            <div class="s-tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <h3 class="text-[16px] font-medium text-white/60 mb-2">Account Settings</h3>
+            <p class="text-[13px] text-white/30 max-w-xs leading-relaxed">Manage your account type, subscription tier, and account-level preferences. This section is coming soon.</p>
+          </div>
+        </section>
+
+        <!-- ===== USAGE TAB ===== -->
+        <section class="settings-section" id="stab-usage">
+          <h2 class="s-title">Usage</h2>
+          <p class="s-desc">Monitor your Grizon AI usage and limits.</p>
+          <div class="s-tab-placeholder">
+            <div class="s-tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg></div>
+            <h3 class="text-[16px] font-medium text-white/60 mb-2">Usage Analytics</h3>
+            <p class="text-[13px] text-white/30 max-w-xs leading-relaxed">Track your message counts, token usage, and API calls. Detailed usage analytics are coming soon.</p>
+          </div>
+        </section>
+
+        <!-- ===== BILLING TAB ===== -->
+        <section class="settings-section" id="stab-billing">
+          <h2 class="s-title">Billing</h2>
+          <p class="s-desc">Manage your subscription and payment methods.</p>
+          <div class="s-tab-placeholder">
+            <div class="s-tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+            <h3 class="text-[16px] font-medium text-white/60 mb-2">Billing & Payments</h3>
+            <p class="text-[13px] text-white/30 max-w-xs leading-relaxed">View invoices, update payment methods, and manage your subscription plan. Billing management is coming soon.</p>
+          </div>
+        </section>
+
+        <!-- ===== PRIVACY TAB ===== -->
+        <section class="settings-section" id="stab-privacy">
+          <h2 class="s-title">Privacy</h2>
+          <p class="s-desc">Control how your data is used and stored.</p>
+          <div class="s-tab-placeholder">
+            <div class="s-tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+            <h3 class="text-[16px] font-medium text-white/60 mb-2">Privacy Controls</h3>
+            <p class="text-[13px] text-white/30 max-w-xs leading-relaxed">Manage data retention, conversation history, and privacy preferences. Privacy settings are coming soon.</p>
+          </div>
+        </section>
+
+        <!-- ===== CONNECTIONS TAB ===== -->
+        <section class="settings-section" id="stab-connections">
+          <h2 class="s-title">Connections</h2>
+          <p class="s-desc">Manage connected apps and integrations.</p>
+          <div class="s-tab-placeholder">
+            <div class="s-tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+            <h3 class="text-[16px] font-medium text-white/60 mb-2">Connected Services</h3>
+            <p class="text-[13px] text-white/30 max-w-xs leading-relaxed">Link third-party services like Google, GitHub, Slack, and more. Connection management is coming soon.</p>
+          </div>
+        </section>
+
+      </main>
+    </div><!-- /settings-view -->
+
+    <!-- ===== LOGOUT MODAL ===== -->
+    <div class="s-modal-overlay" id="sLogoutModal" onclick="if(event.target===this)sCloseLogout()">
+      <div class="s-modal-box text-center">
+        <div class="flex justify-center mb-5">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(239,68,68,0.1);">
+            <svg class="w-6 h-6" style="color:#f87171;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </div>
+        </div>
+        <h3 class="text-[18px] font-semibold text-white mb-2">Log out of Grizon AI?</h3>
+        <p class="text-[13px] text-white/35 mb-6 leading-relaxed">You'll be signed out of your account on this device. Any unsaved work will be preserved for your next session.</p>
+        <div class="flex gap-3 justify-center">
+          <button class="s-btn-secondary flex-1" onclick="sCloseLogout()">Cancel</button>
+          <button class="s-btn-danger flex-1" onclick="sHandleLogout()">
+            <span class="flex items-center justify-center gap-2">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Yes, Log Out
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ---- Token counter ----
+    function updateTokenCount() {
+      const input = document.getElementById('chatInput');
+      const counter = document.getElementById('tokenCounter');
+      const sendBtn = document.getElementById('sendBtn');
+      const text = input.value.trim();
+      const estimate = text.length === 0 ? 0 : Math.max(1, Math.round(text.length / 4));
+
+      if (estimate === 0) counter.textContent = '~0 tokens';
+      else if (estimate >= 1000) counter.textContent = `~${(estimate / 1000).toFixed(1)}K tokens`;
+      else counter.textContent = `~${estimate} tokens`;
+
+      sendBtn.disabled = text.length === 0;
+    }
+
+    // ---- Send message ----
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const container = document.getElementById('messagesContainer');
+
+      const userMsg = document.createElement('div');
+      userMsg.className = 'flex justify-end';
+      userMsg.innerHTML = `
+        <div class="max-w-[75%]">
+          <div class="msg-label justify-end">
+            <span class="text-white/25">Just now</span>
+            <span class="text-accent/70">John Doe</span>
+          </div>
+          <div class="bubble-user">
+            <div class="msg-body"><p>${escapeHtml(text)}</p></div>
+          </div>
+        </div>
+      `;
+      container.insertBefore(userMsg, document.getElementById('typingIndicator'));
+
+      input.value = '';
+      updateTokenCount();
+      input.style.height = 'auto';
+
+      document.getElementById('typingIndicator').classList.remove('hidden');
+      scrollToBottom();
+
+      setTimeout(() => {
+        document.getElementById('typingIndicator').classList.add('hidden');
+
+        const aiMsg = document.createElement('div');
+        aiMsg.className = 'flex justify-start';
+        aiMsg.innerHTML = `
+          <div class="max-w-[80%]">
+            <div class="msg-label">
+              <div class="w-5 h-5 rounded-md overflow-hidden shrink-0">
+                <img src="grizon_icon.png" alt="G" class="w-full h-full object-cover" />
+              </div>
+              <span class="text-white/45">Grizon AI</span>
+              <span class="text-white/20">Just now</span>
+            </div>
+            <div class="bubble-ai">
+              <div class="msg-body">
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-1.5 mt-2.5 ml-1 flex-wrap">
+              <span class="meta-tag">
+                <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Opus 4.5
+              </span>
+              <span class="meta-tag">
+                <svg class="w-3 h-3 tag-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                284 tokens
+              </span>
+              <button class="action-btn ml-auto">
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button class="action-btn">
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              </button>
+            </div>
+          </div>
+        `;
+        container.insertBefore(aiMsg, document.getElementById('typingIndicator'));
+        scrollToBottom();
+      }, 1800);
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function scrollToBottom() {
+      const el = document.getElementById('messagesScroll');
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+
+    // ---- Canvas (inline split view) ----
+    let canvasOpen = false;
+
+    function toggleCanvas() {
+      canvasOpen = !canvasOpen;
+      updateCanvasUI();
+    }
+
+    function setCanvasOpen(open) {
+      if (canvasOpen === open) return;
+      canvasOpen = open;
+      updateCanvasUI();
+    }
+
+    function updateCanvasUI() {
+      const panel = document.getElementById('canvasPanel');
+      const divider = document.getElementById('canvasDivider');
+      const toggleBtn = document.getElementById('canvasToggleBtn');
+
+      if (canvasOpen) {
+        panel.classList.add('open');
+        divider.classList.remove('hidden');
+        toggleBtn.classList.add('canvas-active');
+      } else {
+        panel.classList.remove('open');
+        divider.classList.add('hidden');
+        toggleBtn.classList.remove('canvas-active');
+      }
+    }
+
+    // Open file from chat message into canvas viewer
+    function openFileInCanvas(type) {
+      // Always open canvas (don't toggle — if already open, keep it open)
+      setCanvasOpen(true);
+      // Switch to viewer tab
+      switchCanvasView('viewer');
+      showViewer(type);
+      // Highlight in file browser
+      document.querySelectorAll('.fb-row[data-file]').forEach(r => {
+        r.classList.toggle('selected', r.dataset.file === type);
+      });
+    }
+
+    // Switch between Viewer and Files tabs in canvas
+    function switchCanvasView(view, clickedTab) {
+      const viewerView = document.getElementById('canvasViewerView');
+      const filesView = document.getElementById('canvasFilesView');
+      const tabs = document.querySelectorAll('.canvas-tab');
+
+      if (view === 'files') {
+        filesView.classList.remove('hidden');
+        viewerView.style.display = 'none';
+      } else {
+        filesView.classList.add('hidden');
+        viewerView.style.display = '';
+      }
+
+      // Update tab active state
+      tabs.forEach(t => {
+        t.classList.toggle('active', t.dataset.view === view);
+      });
+    }
+
+    // Select file from browser and jump to viewer
+    function selectFileAndView(el, type) {
+      document.querySelectorAll('.fb-row[data-file]').forEach(r => r.classList.remove('selected'));
+      el.classList.add('selected');
+      showViewer(type);
+      switchCanvasView('viewer');
+    }
+
+    // File data for breadcrumb + status bar
+    const fileData = {
+      code:   { breadcrumb: ['Generated', 'ipsum_analysis.py'], status: ['Python · UTF-8', '44 lines · 4.1 KB'] },
+      pdf:    { breadcrumb: ['documents', 'lorem_document.pdf'], status: ['PDF Document', '2.4 MB · 3 pages'] },
+      json:   { breadcrumb: ['Generated', 'output.json'], status: ['JSON · UTF-8', '12 lines · 680 B'] },
+      image:  { breadcrumb: ['Uploads', 'diagram_overview.png'], status: ['PNG Image', '1920×1080 · 840 KB'] },
+      readme: { breadcrumb: ['documents', 'README.md'], status: ['Markdown · UTF-8', '18 lines · 1.2 KB'] },
+    };
+
+    function showViewer(type) {
+      // Toggle viewer panels
+      ['code','pdf','json','image','readme'].forEach(v => {
+        const el = document.getElementById('viewer-' + v);
+        if (el) el.classList.toggle('hidden', v !== type);
+      });
+      // Update breadcrumb
+      const data = fileData[type];
+      if (data) {
+        const bc = document.getElementById('docBreadcrumb');
+        bc.innerHTML = data.breadcrumb.map((s, i) =>
+          i < data.breadcrumb.length - 1
+            ? `<span>${s}</span><span class="bc-sep">/</span>`
+            : `<span class="bc-current">${s}</span>`
+        ).join('');
+        // Update status bar
+        const sb = document.getElementById('docStatusbar');
+        sb.innerHTML = `<span>${data.status[0]}</span><span>${data.status[1]}</span>`;
+      }
+    }
+
+    function toggleFolder(el) {
+      const chevron = el.querySelector('.fb-chevron');
+      const children = el.nextElementSibling;
+      if (children && children.classList.contains('folder-children')) {
+        const isOpen = chevron.classList.contains('open');
+        chevron.classList.toggle('open', !isOpen);
+        children.style.display = isOpen ? 'none' : 'block';
+      }
+    }
+
+    // ---- Rail panel switching ----
+    // ---- Rail panel switching ----
+    function showPanel(name) {
+      document.querySelectorAll('.rail-btn').forEach(b => b.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    // ---- Canvas divider drag to resize ----
+    (function() {
+      const divider = document.getElementById('canvasDivider');
+      const panel = document.getElementById('canvasPanel');
+      let isDragging = false;
+      let startX, startWidth;
+
+      divider.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = panel.offsetWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const diff = startX - e.clientX;
+        const newWidth = Math.max(300, Math.min(800, startWidth + diff));
+        panel.style.width = newWidth + 'px';
+        panel.style.minWidth = newWidth + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        }
+      });
+    })();
+
+    scrollToBottom();
+
+    // ===== SETTINGS VIEW =====
+    let settingsOpen = false;
+
+    function toggleSettingsView() {
+      settingsOpen = !settingsOpen;
+      const chatArea = document.querySelector('.chat-area');
+      const threadPanel = document.querySelector('.thread-panel');
+      const settingsView = document.getElementById('settingsView');
+      const settingsBtn = document.getElementById('settingsRailBtn');
+
+      if (settingsOpen) {
+        chatArea.style.display = 'none';
+        threadPanel.style.display = 'none';
+        settingsView.classList.add('active');
+        // Update rail buttons
+        document.querySelectorAll('.rail-btn').forEach(b => b.classList.remove('active'));
+        settingsBtn.classList.add('active');
+      } else {
+        chatArea.style.display = '';
+        threadPanel.style.display = '';
+        settingsView.classList.remove('active');
+        // Restore first rail button as active
+        settingsBtn.classList.remove('active');
+        document.querySelector('.rail-btn').classList.add('active');
+      }
+    }
+
+    // Override showPanel to close settings when switching back to chat rail items
+    const _origShowPanel = showPanel;
+    showPanel = function(name) {
+      if (settingsOpen) {
+        settingsOpen = false;
+        document.querySelector('.chat-area').style.display = '';
+        document.querySelector('.thread-panel').style.display = '';
+        document.getElementById('settingsView').classList.remove('active');
+      }
+      _origShowPanel(name);
+    };
+
+    function switchSettingsTab(tab) {
+      document.querySelectorAll('.settings-nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelector('[data-stab="' + tab + '"]').classList.add('active');
+      document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('stab-' + tab).classList.add('active');
+      sCloseEdit();
+    }
+
+    // Avatar
+    function sHandleAvatar(event) {
+      var file = event.target.files[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { sToast('Please select an image file.', 'error'); return; }
+      if (file.size > 5 * 1024 * 1024) { sToast('Image must be smaller than 5MB.', 'error'); return; }
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var img = document.getElementById('sAvatarImage');
+        img.src = e.target.result;
+        img.style.display = 'block';
+        document.getElementById('sAvatarPlaceholder').style.display = 'none';
+        sToast('Profile photo updated!', 'success');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Save Profile
+    function sSaveProfile() {
+      var first = document.getElementById('sFirstName').value.trim();
+      var last = document.getElementById('sLastName').value.trim();
+      if (!first) { sToast('First name is required.', 'error'); return; }
+      var display = first + (last ? ' ' + last : '');
+      document.getElementById('sDisplayName').textContent = display;
+      var initials = first.charAt(0).toUpperCase();
+      if (last) initials += last.charAt(0).toUpperCase();
+      document.getElementById('sAvatarInitials').textContent = initials;
+      sToast('Profile saved successfully!', 'success');
+    }
+
+    // Edit Field
+    var sCurrentEdit = null;
+    function sOpenEdit(field) {
+      sCurrentEdit = field;
+      var card = document.getElementById('sEditCard');
+      card.style.display = '';
+      var lbl = document.getElementById('sEditLabel');
+      var ilbl = document.getElementById('sEditInputLabel');
+      var inp = document.getElementById('sEditInput');
+      var hint = document.getElementById('sEditHint');
+      if (field === 'email') {
+        lbl.textContent = 'Update Email'; ilbl.textContent = 'New email address';
+        inp.type = 'email'; inp.placeholder = 'you@example.com'; inp.value = '';
+        hint.textContent = 'A verification email will be sent to your new address.';
+      } else if (field === 'phone') {
+        lbl.textContent = 'Update Phone Number'; ilbl.textContent = 'New phone number';
+        inp.type = 'tel'; inp.placeholder = '+91 98765 43210'; inp.value = '';
+        hint.textContent = "You'll receive an OTP to verify your new number.";
+      } else if (field === 'location') {
+        lbl.textContent = 'Update Location'; ilbl.textContent = 'City, Country';
+        inp.type = 'text'; inp.placeholder = 'e.g. New York, US';
+        inp.value = document.getElementById('sDisplayLocation').textContent;
+        hint.textContent = 'This is shown on your profile for context.';
+      }
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function() { inp.focus(); }, 200);
+    }
+    function sSaveEdit() {
+      var val = document.getElementById('sEditInput').value.trim();
+      if (!val) { sToast('Please enter a value.', 'error'); return; }
+      if (sCurrentEdit === 'email') {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) { sToast('Please enter a valid email.', 'error'); return; }
+        document.getElementById('sDisplayEmail').textContent = val;
+        sToast('Verification email sent to ' + val, 'success');
+      } else if (sCurrentEdit === 'phone') {
+        document.getElementById('sDisplayPhone').textContent = val;
+        sToast('Phone number updated!', 'success');
+      } else if (sCurrentEdit === 'location') {
+        document.getElementById('sDisplayLocation').textContent = val;
+        sToast('Location updated!', 'success');
+      }
+      sCloseEdit();
+    }
+    function sCloseEdit() {
+      document.getElementById('sEditCard').style.display = 'none';
+      sCurrentEdit = null;
+    }
+
+    // Password
+    function sUpdateStrength(pw) {
+      var score = 0;
+      if (pw.length >= 8) score++;
+      if (/[A-Z]/.test(pw)) score++;
+      if (/[0-9]/.test(pw)) score++;
+      if (/[^A-Za-z0-9]/.test(pw)) score++;
+      var levels = [
+        { label: 'Too short', color: '#ef4444', width: '0%' },
+        { label: 'Weak', color: '#ef4444', width: '25%' },
+        { label: 'Fair', color: '#f59e0b', width: '50%' },
+        { label: 'Good', color: '#22c55e', width: '75%' },
+        { label: 'Strong', color: '#22c55e', width: '100%' }
+      ];
+      var bar = document.getElementById('sStrengthFill');
+      var lbl = document.getElementById('sStrengthLabel');
+      bar.style.width = levels[score].width;
+      bar.style.background = levels[score].color;
+      lbl.textContent = pw.length > 0 ? levels[score].label : 'Min 8 characters, one uppercase, one number';
+      lbl.style.color = pw.length > 0 ? levels[score].color : '';
+    }
+    function sChangePassword() {
+      var cur = document.getElementById('sCurPassword').value;
+      var np = document.getElementById('sNewPassword').value;
+      var cp = document.getElementById('sConfirmPassword').value;
+      if (!cur) { sToast('Please enter your current password.', 'error'); return; }
+      if (!np) { sToast('Please enter a new password.', 'error'); return; }
+      if (np.length < 8) { sToast('Password must be at least 8 characters.', 'error'); return; }
+      if (np !== cp) { sToast('New passwords do not match.', 'error'); return; }
+      document.getElementById('sCurPassword').value = '';
+      document.getElementById('sNewPassword').value = '';
+      document.getElementById('sConfirmPassword').value = '';
+      document.getElementById('sStrengthFill').style.width = '0%';
+      document.getElementById('sStrengthLabel').textContent = 'Min 8 characters, one uppercase, one number';
+      document.getElementById('sStrengthLabel').style.color = '';
+      sToast('Password updated successfully!', 'success');
+    }
+    function sTogglePw(id, btn) {
+      var inp = document.getElementById(id);
+      var isPw = inp.type === 'password';
+      inp.type = isPw ? 'text' : 'password';
+      var svg = btn.querySelector('svg');
+      if (isPw) {
+        svg.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" stroke="currentColor" fill="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" stroke="currentColor" fill="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" stroke="currentColor" fill="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>';
+      } else {
+        svg.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" fill="none" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" fill="none" stroke-width="1.75"/>';
+      }
+    }
+
+    // Logout
+    function sOpenLogout() { document.getElementById('sLogoutModal').classList.add('active'); }
+    function sCloseLogout() { document.getElementById('sLogoutModal').classList.remove('active'); }
+    function sHandleLogout() {
+      sCloseLogout();
+      sToast('Logged out successfully. Redirecting...', 'success');
+      setTimeout(function() { window.location.href = 'Home.html'; }, 1200);
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') sCloseLogout();
+    });
+
+    // Toast
+    function sToast(msg, type) {
+      var old = document.querySelector('.s-toast');
+      if (old) old.remove();
+      var t = document.createElement('div');
+      t.className = 's-toast s-toast-' + type;
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(function() {
+        t.style.opacity = '0';
+        t.style.transition = 'opacity 0.3s ease';
+        setTimeout(function() { t.remove(); }, 300);
+      }, 2500);
+    }
+  </script>
+
+</body>
+</html>

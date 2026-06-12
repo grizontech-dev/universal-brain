@@ -1,0 +1,72 @@
+import os
+import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Add the current directory to sys.path so we can import 'Brain'
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+import uvicorn
+from fastapi import FastAPI
+
+
+from fastapi.middleware.cors import CORSMiddleware
+from Brain.modules.chat.controller import router as brain_chat_router
+from Brain.modules.conversations.controller import brain_conversations_router
+from Brain.modules.sandbox.controller import router as brain_sandbox_router
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2")
+
+@app.on_event("startup")
+def startup():
+    from Brain.memory import models
+    from Brain.modules.conversations import models as conv_models
+    from Brain.config.database import Base, engine
+    import sqlalchemy
+    try:
+        Base.metadata.create_all(bind=engine)
+    except (sqlalchemy.exc.InvalidRequestError, sqlalchemy.exc.ProgrammingError) as e:
+        print(f"[startup] create_all warning (tables may already exist): {e}")
+
+    from Brain.memory.debug import router as memory_debug_router
+    app.include_router(memory_debug_router)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    print(f"Validation error for {request.url}")
+    print(f"Error details: {exc.errors()}")
+    print(f"Request body: {exc.body}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
+
+print("Grizon Brain Backend v2.5.2 starting up...")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include Routers
+app.include_router(brain_chat_router)
+app.include_router(brain_conversations_router)
+app.include_router(brain_sandbox_router)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "project-brain"}
+
+if __name__ == "__main__":
+    uvicorn.run("Brain.main:app", host="127.0.0.1", port=8001, reload=True)

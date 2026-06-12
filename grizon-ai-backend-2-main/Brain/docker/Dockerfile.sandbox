@@ -1,0 +1,21 @@
+FROM node:20-slim
+
+# Install basic tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -m sandboxuser
+
+# Set up working directory with correct permissions
+RUN mkdir -p /workspace && chown -R sandboxuser:sandboxuser /workspace
+WORKDIR /workspace
+
+USER sandboxuser
+
+# Default command
+CMD ["bash"]

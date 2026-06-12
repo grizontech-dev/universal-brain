@@ -1,0 +1,2457 @@
+{
+  "info": {
+    "_postman_id": "a49f6f5e-86b2-47f2-95e7-e711b286ce5d",
+    "name": "grizon-ai-backend-2",
+    "description": "Foundation routes + Module 1 Auth & Identity + Module 2 Plan & Subscription + Module 4 Credit Wallet + Module 7 Queue + Module 8 Conversation/File/Artifact API contracts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Foundation Routes",
+      "item": [
+        {
+          "name": "Root - GET /",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/"
+          }
+        },
+        {
+          "name": "Health - GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health"
+          }
+        },
+        {
+          "name": "User Ping - GET /api/v1/ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/ping"
+          }
+        },
+        {
+          "name": "User Error - GET /api/v1/error",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/error"
+          }
+        },
+        {
+          "name": "Admin Ping - GET /api/v1/admin/ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/ping"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 1 - User Auth Contracts",
+      "item": [
+        {
+          "name": "Check Email - POST /api/v1/auth/check-email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/check-email"
+          }
+        },
+        {
+          "name": "Register - POST /api/v1/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password1234\",\n  \"name\": \"Test User\",\n  \"bio\": \"Hello\",\n  \"locale\": \"en-IN\",\n  \"timezone\": \"Asia/Kolkata\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/register"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const upsertAuthVars = () => {",
+                  "  let body = {};",
+                  "  try {",
+                  "    body = pm.response.json();",
+                  "  } catch (e) {",
+                  "    body = {};",
+                  "  }",
+                  "  const payload = body.data ?? body;",
+                  "",
+                  "  if (payload.access_token) {",
+                  "    pm.collectionVariables.set('accessToken', payload.access_token);",
+                  "    pm.collectionVariables.set('adminAccessToken', payload.access_token);",
+                  "  }",
+                  "",
+                  "  if (payload.refresh_token) {",
+                  "    pm.collectionVariables.set('refreshToken', payload.refresh_token);",
+                  "  }",
+                  "",
+                  "  if (payload.user && payload.user.id) {",
+                  "    pm.collectionVariables.set('userId', payload.user.id);",
+                  "  }",
+                  "",
+                  "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "  const accessCookie = setCookie.match(/(?:^|;|,)\\s*access_token=([^;]+)/i);",
+                  "  const refreshCookie = setCookie.match(/(?:^|;|,)\\s*refresh_token=([^;]+)/i);",
+                  "",
+                  "  if (!payload.access_token && accessCookie && accessCookie[1]) {",
+                  "    pm.collectionVariables.set('accessToken', decodeURIComponent(accessCookie[1]));",
+                  "    pm.collectionVariables.set('adminAccessToken', decodeURIComponent(accessCookie[1]));",
+                  "  }",
+                  "",
+                  "  if (!payload.refresh_token && refreshCookie && refreshCookie[1]) {",
+                  "    pm.collectionVariables.set('refreshToken', decodeURIComponent(refreshCookie[1]));",
+                  "  }",
+                  "};",
+                  "",
+                  "upsertAuthVars();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - POST /api/v1/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const upsertAuthVars = () => {",
+                  "  let body = {};",
+                  "  try {",
+                  "    body = pm.response.json();",
+                  "  } catch (e) {",
+                  "    body = {};",
+                  "  }",
+                  "  const payload = body.data ?? body;",
+                  "",
+                  "  if (payload.access_token) {",
+                  "    pm.collectionVariables.set('accessToken', payload.access_token);",
+                  "    pm.collectionVariables.set('adminAccessToken', payload.access_token);",
+                  "  }",
+                  "",
+                  "  if (payload.refresh_token) {",
+                  "    pm.collectionVariables.set('refreshToken', payload.refresh_token);",
+                  "  }",
+                  "",
+                  "  if (payload.user && payload.user.id) {",
+                  "    pm.collectionVariables.set('userId', payload.user.id);",
+                  "  }",
+                  "",
+                  "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "  const accessCookie = setCookie.match(/(?:^|;|,)\\s*access_token=([^;]+)/i);",
+                  "  const refreshCookie = setCookie.match(/(?:^|;|,)\\s*refresh_token=([^;]+)/i);",
+                  "",
+                  "  if (!payload.access_token && accessCookie && accessCookie[1]) {",
+                  "    pm.collectionVariables.set('accessToken', decodeURIComponent(accessCookie[1]));",
+                  "    pm.collectionVariables.set('adminAccessToken', decodeURIComponent(accessCookie[1]));",
+                  "  }",
+                  "",
+                  "  if (!payload.refresh_token && refreshCookie && refreshCookie[1]) {",
+                  "    pm.collectionVariables.set('refreshToken', decodeURIComponent(refreshCookie[1]));",
+                  "  }",
+                  "};",
+                  "",
+                  "upsertAuthVars();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google Auth - POST /api/v1/auth/google",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{googleIdToken}}\",\n  \"name\": \"Google User\",\n  \"timezone\": \"Asia/Kolkata\",\n  \"locale\": \"en-IN\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/google"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const upsertAuthVars = () => {",
+                  "  let body = {};",
+                  "  try {",
+                  "    body = pm.response.json();",
+                  "  } catch (e) {",
+                  "    body = {};",
+                  "  }",
+                  "  const payload = body.data ?? body;",
+                  "",
+                  "  if (payload.access_token) {",
+                  "    pm.collectionVariables.set('accessToken', payload.access_token);",
+                  "    pm.collectionVariables.set('adminAccessToken', payload.access_token);",
+                  "  }",
+                  "",
+                  "  if (payload.refresh_token) {",
+                  "    pm.collectionVariables.set('refreshToken', payload.refresh_token);",
+                  "  }",
+                  "",
+                  "  if (payload.user && payload.user.id) {",
+                  "    pm.collectionVariables.set('userId', payload.user.id);",
+                  "  }",
+                  "",
+                  "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "  const accessCookie = setCookie.match(/(?:^|;|,)\\s*access_token=([^;]+)/i);",
+                  "  const refreshCookie = setCookie.match(/(?:^|;|,)\\s*refresh_token=([^;]+)/i);",
+                  "",
+                  "  if (!payload.access_token && accessCookie && accessCookie[1]) {",
+                  "    pm.collectionVariables.set('accessToken', decodeURIComponent(accessCookie[1]));",
+                  "    pm.collectionVariables.set('adminAccessToken', decodeURIComponent(accessCookie[1]));",
+                  "  }",
+                  "",
+                  "  if (!payload.refresh_token && refreshCookie && refreshCookie[1]) {",
+                  "    pm.collectionVariables.set('refreshToken', decodeURIComponent(refreshCookie[1]));",
+                  "  }",
+                  "};",
+                  "",
+                  "upsertAuthVars();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh - POST /api/v1/auth/refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/refresh"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const upsertAuthVars = () => {",
+                  "  let body = {};",
+                  "  try {",
+                  "    body = pm.response.json();",
+                  "  } catch (e) {",
+                  "    body = {};",
+                  "  }",
+                  "  const payload = body.data ?? body;",
+                  "",
+                  "  if (payload.access_token) {",
+                  "    pm.collectionVariables.set('accessToken', payload.access_token);",
+                  "    pm.collectionVariables.set('adminAccessToken', payload.access_token);",
+                  "  }",
+                  "",
+                  "  if (payload.refresh_token) {",
+                  "    pm.collectionVariables.set('refreshToken', payload.refresh_token);",
+                  "  }",
+                  "",
+                  "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "  const accessCookie = setCookie.match(/(?:^|;|,)\\s*access_token=([^;]+)/i);",
+                  "  const refreshCookie = setCookie.match(/(?:^|;|,)\\s*refresh_token=([^;]+)/i);",
+                  "",
+                  "  if (!payload.access_token && accessCookie && accessCookie[1]) {",
+                  "    pm.collectionVariables.set('accessToken', decodeURIComponent(accessCookie[1]));",
+                  "    pm.collectionVariables.set('adminAccessToken', decodeURIComponent(accessCookie[1]));",
+                  "  }",
+                  "",
+                  "  if (!payload.refresh_token && refreshCookie && refreshCookie[1]) {",
+                  "    pm.collectionVariables.set('refreshToken', decodeURIComponent(refreshCookie[1]));",
+                  "  }",
+                  "};",
+                  "",
+                  "upsertAuthVars();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout - POST /api/v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  pm.collectionVariables.unset('accessToken');",
+                  "  pm.collectionVariables.unset('adminAccessToken');",
+                  "  pm.collectionVariables.unset('refreshToken');",
+                  "  pm.collectionVariables.unset('sessionId');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout All - POST /api/v1/auth/logout-all",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout-all"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  pm.collectionVariables.unset('accessToken');",
+                  "  pm.collectionVariables.unset('adminAccessToken');",
+                  "  pm.collectionVariables.unset('refreshToken');",
+                  "  pm.collectionVariables.unset('sessionId');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Me - GET /api/v1/auth/me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Update Me - PATCH /api/v1/auth/me",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated User\",\n  \"bio\": \"Updated bio\",\n  \"avatar_url\": null,\n  \"locale\": \"en-IN\",\n  \"timezone\": \"Asia/Kolkata\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Google Link - POST /api/v1/auth/google/link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{googleIdToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/google/link"
+          }
+        },
+        {
+          "name": "Google Unlink - DELETE /api/v1/auth/google/link",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/google/link"
+          }
+        },
+        {
+          "name": "Change Password - POST /api/v1/auth/password/change",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"OldPassword1234\",\n  \"new_password\": \"NewPassword1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/password/change"
+          }
+        },
+        {
+          "name": "Forgot Password - POST /api/v1/auth/password/forgot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/password/forgot"
+          }
+        },
+        {
+          "name": "Reset Password - POST /api/v1/auth/password/reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{passwordResetToken}}\",\n  \"new_password\": \"NewPassword1234\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/password/reset"
+          }
+        },
+        {
+          "name": "Email Verify Request - POST /api/v1/auth/email/verify/request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/email/verify/request"
+          }
+        },
+        {
+          "name": "Email Verify Confirm - POST /api/v1/auth/email/verify/confirm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{emailVerifyToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/email/verify/confirm"
+          }
+        },
+        {
+          "name": "List Sessions - GET /api/v1/auth/sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/sessions"
+          }
+        },
+        {
+          "name": "Delete Session - DELETE /api/v1/auth/sessions/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/sessions/{{sessionId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 1 - Admin Auth Contracts",
+      "item": [
+        {
+          "name": "Admin Login - POST /api/v1/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@grizonai.com\",\n  \"password\": \"Grizon@2026\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let body = {};",
+                  "try {",
+                  "  body = pm.response.json();",
+                  "} catch (e) {",
+                  "  body = {};",
+                  "}",
+                  "const payload = body.data ?? body;",
+                  "",
+                  "if (payload.access_token) {",
+                  "  pm.collectionVariables.set('adminAccessToken', payload.access_token);",
+                  "}",
+                  "",
+                  "if (payload.refresh_token) {",
+                  "  pm.collectionVariables.set('refreshToken', payload.refresh_token);",
+                  "  pm.collectionVariables.set('adminRefreshToken', payload.refresh_token);",
+                  "}",
+                  "",
+                  "if (payload.user && payload.user.id) {",
+                  "  pm.collectionVariables.set('userId', payload.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Logout - POST /api/v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{adminRefreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  pm.collectionVariables.unset('adminAccessToken');",
+                  "  pm.collectionVariables.unset('adminRefreshToken');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Logout All - POST /api/v1/auth/logout-all",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout-all"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  pm.collectionVariables.unset('adminAccessToken');",
+                  "  pm.collectionVariables.unset('adminRefreshToken');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Users - GET /api/v1/admin/auth/users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/auth/users"
+          }
+        },
+        {
+          "name": "Get User - GET /api/v1/admin/auth/users/:id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}"
+          }
+        },
+        {
+          "name": "Update User - PATCH /api/v1/admin/auth/users/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated User\",\n  \"status\": \"active\",\n  \"role\": \"user\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}"
+          }
+        },
+        {
+          "name": "Ban User - POST /api/v1/admin/auth/users/:id/ban",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Policy violation\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}/ban"
+          }
+        },
+        {
+          "name": "Unban User - POST /api/v1/admin/auth/users/:id/unban",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}/unban"
+          }
+        },
+        {
+          "name": "Force Logout User - POST /api/v1/admin/auth/users/:id/force-logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Security action\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}/force-logout"
+          }
+        },
+        {
+          "name": "Reset Password User - POST /api/v1/admin/auth/users/:id/reset-password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notify\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}/reset-password"
+          }
+        },
+        {
+          "name": "Impersonate User - POST /api/v1/admin/auth/users/:id/impersonate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Investigating user issue\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/users/{{userId}}/impersonate"
+          }
+        },
+        {
+          "name": "Audit Log - GET /api/v1/admin/auth/audit",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/auth/audit"
+          }
+        },
+        {
+          "name": "List Sessions - GET /api/v1/admin/auth/sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/auth/sessions"
+          }
+        },
+        {
+          "name": "Delete Session - DELETE /api/v1/admin/auth/sessions/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Admin session revoke\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/auth/sessions/{{sessionId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 2 - User Plan Contracts",
+      "item": [
+        {
+          "name": "List Plans - GET /api/v1/plans",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/plans?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "Get Subscription - GET /api/v1/subscription",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subscription"
+          }
+        },
+        {
+          "name": "Upgrade - POST /api/v1/subscription/upgrade",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": \"{{planId}}\",\n  \"billingCycle\": \"monthly\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/subscription/upgrade"
+          }
+        },
+        {
+          "name": "Cancel graceful - POST /api/v1/subscription/cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"immediate\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/subscription/cancel"
+          }
+        },
+        {
+          "name": "Cancel immediate - POST /api/v1/subscription/cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"immediate\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/subscription/cancel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 2 - Admin Plan Contracts",
+      "item": [
+        {
+          "name": "List Plans - GET /api/v1/admin/plans",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/plans?page=1&pageSize=50"
+          }
+        },
+        {
+          "name": "Create Plan - POST /api/v1/admin/plans",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"plan_pro_v1\",\n  \"name\": \"Pro\",\n  \"slug\": \"pro\",\n  \"isPublic\": false,\n  \"pricing\": {\n    \"monthly\": 49900,\n    \"annual\": 479900,\n    \"currency\": \"inr\"\n  },\n  \"credits\": {\n    \"included\": 10000,\n    \"rollover\": true,\n    \"maxRollover\": 2000,\n    \"topupEnabled\": false,\n    \"topupPackages\": []\n  },\n  \"limits\": {\n    \"hourly\": 100,\n    \"daily\": 500,\n    \"weekly\": 2000,\n    \"monthly\": 8000,\n    \"maxContextMessages\": 50,\n    \"maxFileSize\": 10485760,\n    \"maxFilesPerChat\": 10,\n    \"maxArtifactVersions\": 5\n  },\n  \"modelAccess\": [\n    \"gpt-4o-mini\"\n  ],\n  \"agentAccess\": [],\n  \"featureFlags\": {\n    \"webSearch\": true,\n    \"codeExecution\": false\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/plans"
+          }
+        },
+        {
+          "name": "Patch Plan - PATCH /api/v1/admin/plans/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isPublic\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/plans/{{planId}}"
+          }
+        },
+        {
+          "name": "Archive Plan - POST /api/v1/admin/plans/:id/archive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/plans/{{planId}}/archive"
+          }
+        },
+        {
+          "name": "Publish Plan - POST /api/v1/admin/plans/:id/publish",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/plans/{{planId}}/publish"
+          }
+        },
+        {
+          "name": "Plan Subscribers - GET /api/v1/admin/plans/:id/subscribers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/plans/{{planId}}/subscribers?status=active&page=1&pageSize=50"
+          }
+        },
+        {
+          "name": "List Subscriptions - GET /api/v1/admin/subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/subscriptions?page=1&pageSize=50"
+          }
+        },
+        {
+          "name": "Adjust Subscription [SA] - PATCH /api/v1/admin/subscriptions/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Support adjustment per ticket #123\",\n  \"creditsGranted\": 1000\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/subscriptions/{{subscriptionId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 4 - User Wallet Contracts",
+      "item": [
+        {
+          "name": "Wallet Snapshot - GET /api/v1/wallet",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallet"
+          }
+        },
+        {
+          "name": "Wallet Transactions - GET /api/v1/wallet/transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallet/transactions?page=1&page_size=25"
+          }
+        },
+        {
+          "name": "Wallet Transaction By Id - GET /api/v1/wallet/transactions/:id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/wallet/transactions/{{walletTransactionId}}"
+          }
+        },
+        {
+          "name": "Topup Init - POST /api/v1/wallet/topup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"packageId\": \"1000_49900\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/wallet/topup"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 4 - Admin Wallet Contracts",
+      "item": [
+        {
+          "name": "Adjust User Wallet - POST /api/v1/admin/users/:id/wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": 200,\n  \"reason\": \"Support credit adjustment\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users/{{userId}}/wallet"
+          }
+        },
+        {
+          "name": "List Wallets - GET /api/v1/admin/wallets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/wallets?page=1&page_size=25"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 5 - Admin RateLimit Contracts",
+      "item": [
+        {
+          "name": "Active User Limits - GET /api/v1/admin/ratelimits/users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/users?page=1&page_size=25"
+          }
+        },
+        {
+          "name": "Reset Rate Limit Window - POST /api/v1/admin/ratelimits/:userId/reset-window",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"window\": \"hourly\",\n  \"reason\": \"Support reset hourly rate limit window\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/{{userId}}/reset-window"
+          }
+        },
+        {
+          "name": "RateLimit Events - GET /api/v1/admin/ratelimits/events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/events?page=1&page_size=25"
+          }
+        },
+        {
+          "name": "Clear User Limits - POST /api/v1/admin/ratelimits/:userId/clear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Support cleared rate-limit windows\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/{{userId}}/clear"
+          }
+        },
+        {
+          "name": "Apply Cooldown - POST /api/v1/admin/ratelimits/:userId/cooldown",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"apply\",\n  \"duration\": 900,\n  \"reason\": \"Apply cooldown for abuse check\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/{{userId}}/cooldown"
+          }
+        },
+        {
+          "name": "Flagged Users - GET /api/v1/admin/ratelimits/flagged",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/flagged"
+          }
+        },
+        {
+          "name": "Resolve Flagged - PATCH /api/v1/admin/ratelimits/flagged/:userId",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"resolve_no_action\",\n  \"notes\": \"Reviewed and accepted pattern\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/ratelimits/flagged/{{userId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 6 - User Usage Contracts",
+      "item": [
+        {
+          "name": "Usage Summary - GET /api/v1/usage/summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/usage/summary"
+          }
+        },
+        {
+          "name": "Usage History - GET /api/v1/usage/history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/usage/history?days=30"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 6 - Admin Analytics Contracts",
+      "item": [
+        {
+          "name": "Analytics Overview - GET /api/v1/admin/analytics/overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/overview"
+          }
+        },
+        {
+          "name": "Analytics Users - GET /api/v1/admin/analytics/users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/users?sort=requests_desc&limit=20"
+          }
+        },
+        {
+          "name": "Analytics Models - GET /api/v1/admin/analytics/models",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/models"
+          }
+        },
+        {
+          "name": "Analytics Costs Overview - GET /api/v1/admin/analytics/costs/overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/overview"
+          }
+        },
+        {
+          "name": "Analytics Costs Cache ROI - GET /api/v1/admin/analytics/costs/cache-roi",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/cache-roi?days=30"
+          }
+        },
+        {
+          "name": "Analytics Live Metrics - GET /api/v1/admin/analytics/live",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/live"
+          }
+        },
+        {
+          "name": "Analytics Errors - GET /api/v1/admin/analytics/errors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/errors"
+          }
+        },
+        {
+          "name": "Analytics RateLimits - GET /api/v1/admin/analytics/ratelimits",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/ratelimits"
+          }
+        },
+        {
+          "name": "Analytics Tool Invocations - GET /api/v1/admin/analytics/tool-invocations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/tool-invocations?page=1&page_size=50&tool_name=web_search"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.data).to.have.property('items');",
+                  "pm.expect(body.data).to.have.property('pagination');",
+                  "if (Array.isArray(body.data.items) && body.data.items.length > 0) {",
+                  "  const first = body.data.items[0];",
+                  "  pm.expect(first).to.have.property('tool_mode');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Module 23 - Admin Costs Contracts",
+      "item": [
+        {
+          "name": "Costs Overview - GET /api/v1/admin/analytics/costs/overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/overview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data).to.have.property('today_usd');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Costs By Model - GET /api/v1/admin/analytics/costs/by-model",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/by-model"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data).to.be.an('array');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Costs By Agent - GET /api/v1/admin/analytics/costs/by-agent",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/by-agent"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data).to.be.an('array');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Costs Cache ROI - GET /api/v1/admin/analytics/costs/cache-roi",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/costs/cache-roi?days=30"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const d = pm.response.json().data;",
+                  "pm.expect(d).to.have.property('period');",
+                  "pm.expect(d).to.have.property('semantic');",
+                  "pm.expect(d).to.have.property('promptCache');",
+                  "pm.expect(d).to.have.property('summary');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analytics Live - GET /api/v1/admin/analytics/live",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics/live"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "const d = pm.response.json().data;",
+                  "pm.expect(d).to.have.property('cache');",
+                  "pm.expect(d).to.have.property('providers');",
+                  "pm.expect(d).to.have.property('agents');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Module 7 - User Chat Contracts",
+      "item": [
+        {
+          "name": "Chat Enqueue - POST /api/v1/chat",
+          "request": {
+            "description": "On a new idempotency key (`clientMessageId`), the API persists a `messages` row with `role=user` in the same DB transaction as `chat_jobs`, then enqueues the worker. Replays with the same `(conversationId, clientMessageId)` within 24h return the existing `jobId` without inserting another user message. Optional `modelId` pins routing when `plan.featureFlags.modelPicker` is true and the id is listed in `plan.modelAccess` (see migration 037 / admin plans). Otherwise omit `modelId` for auto-selection.",
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/chat",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"f6b1d6f8-9a3f-4f03-a1ce-91d78f9b9d11\",\n  \"clientMessageId\": \"8d2a56d1-6e7e-4d8b-9a43-6bdab06f4c72\",\n  \"content\": \"Hello from module 7\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat Stream - GET /api/v1/chat/stream/:jobId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/chat/stream/{{jobId}}"
+          }
+        },
+        {
+          "name": "Chat Job Status - GET /api/v1/chat/job/:jobId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/chat/job/{{jobId}}"
+          }
+        },
+        {
+          "name": "Chat Cancel - POST /api/v1/chat/:conversationId/cancel",
+          "request": {
+            "method": "POST",
+            "description": "Queued jobs: job marked cancelled and hold released in API. Active jobs: sets cancel_requested + Redis publish chat:cancel:{jobId}; worker aborts stream, releases hold, writes usage, finalises assistant.",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/chat/{{conversationId}}/cancel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 18 - User Memory Contracts",
+      "item": [
+        {
+          "name": "Memory List - GET /api/v1/memory",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/memory?page=1&limit=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data.facts).to.be.an('array');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Memory Delete One - DELETE /api/v1/memory/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/memory/{{memoryFactId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data.deleted).to.eql(true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Memory Purge All - DELETE /api/v1/memory",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "web"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/memory"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "pm.expect(pm.response.json().data.purged).to.eql(true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Module 7 - Admin Queues Contracts",
+      "item": [
+        {
+          "name": "System Health - GET /api/v1/admin/system/health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/system/health"
+          }
+        },
+        {
+          "name": "Queues Snapshot - GET /api/v1/admin/system/queues",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/system/queues"
+          }
+        },
+        {
+          "name": "Retry Failed Queue Jobs - POST /api/v1/admin/system/queues/:name/retry-failed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              {
+                "key": "x-platform",
+                "value": "admin"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/system/queues/chat/retry-failed",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"transient outage\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 8 - User Conversation Contracts",
+      "item": [
+        {
+          "name": "List Conversations - GET /api/v1/conversations",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations"
+          }
+        },
+        {
+          "name": "Create Conversation - POST /api/v1/conversations",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations",
+            "body": { "mode": "raw", "raw": "{\n  \"tags\": [\"module8\"]\n}" }
+          }
+        },
+        {
+          "name": "Get Conversation - GET /api/v1/conversations/:id",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations/{{conversationId}}"
+          }
+        },
+        {
+          "name": "Archive Conversation - DELETE /api/v1/conversations/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations/{{conversationId}}"
+          }
+        },
+        {
+          "name": "Summarise Conversation - POST /api/v1/conversations/:id/summarise",
+          "request": {
+            "description": "202 Accepted — enqueues BullMQ job `summarise` on the chat queue; worker runs deterministic summariser when ≥8 non-summarised messages exist (Module 8).",
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations/{{conversationId}}/summarise"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 8 - User File Contracts",
+      "item": [
+        {
+          "name": "Upload File - POST /api/v1/files/upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/v1/files/upload",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"fileName\": \"sample.txt\",\n  \"fileType\": \"text/plain\",\n  \"fileSize\": 8,\n  \"contentBase64\": \"aGVsbG8K\"\n}"
+            }
+          }
+        },
+        {
+          "name": "File Status - GET /api/v1/files/:id",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Module 8 - User Artifact Contracts",
+      "item": [
+        {
+          "name": "List Artifacts - GET /api/v1/artifacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/artifacts"
+          }
+        },
+        {
+          "name": "Get Artifact - GET /api/v1/artifacts/:id",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/artifacts/{{artifactId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.response.to.have.status(200);",
+                  "// For markdown artifacts, previewHtml should be non-empty",
+                  "const data = pm.response.json().data || {};",
+                  "if (data.artifact && data.artifact.type === 'markdown') {",
+                  "  pm.expect(data.artifact.previewHtml).to.be.a('string').and.not.empty;",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Artifact Versions - GET /api/v1/artifacts/:id/versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/artifacts/{{artifactId}}/versions"
+          }
+        },
+        {
+          "name": "Fork Artifact - POST /api/v1/artifacts/:id/fork",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/v1/artifacts/{{artifactId}}/fork",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Forked artifact\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Manual Scenario - File Ingestion Flow",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "x-platform", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Manual checklist:",
+                  "// 1) Upload file => processing_status pending/processing",
+                  "// 2) Poll GET /api/v1/files/:id until ready",
+                  "// 3) Start document agent chat with fileId attached",
+                  "// 4) Verify response uses ingested file content"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Module 8 - Admin Conversation Contracts",
+      "item": [
+        {
+          "name": "List User Conversations - GET /api/v1/admin/users/:id/conversations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              },
+              { "key": "x-platform", "value": "admin" }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{userId}}/conversations"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "adminAccessToken",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    },
+    {
+      "key": "adminRefreshToken",
+      "value": ""
+    },
+    {
+      "key": "googleIdToken",
+      "value": ""
+    },
+    {
+      "key": "passwordResetToken",
+      "value": ""
+    },
+    {
+      "key": "emailVerifyToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "planId",
+      "value": "plan_pro_v1"
+    },
+    {
+      "key": "subscriptionId",
+      "value": ""
+    },
+    {
+      "key": "walletTransactionId",
+      "value": ""
+    },
+    {
+      "key": "jobId",
+      "value": ""
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "fileId",
+      "value": ""
+    },
+    {
+      "key": "artifactId",
+      "value": ""
+    }
+  ]
+}

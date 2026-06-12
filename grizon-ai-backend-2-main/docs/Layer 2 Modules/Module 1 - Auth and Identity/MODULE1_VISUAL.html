@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Module 1 — Auth &amp; Identity · Visual Spec</title>
+<style>
+  :root {
+    --bg:        #0d0f14;
+    --surface:   #151820;
+    --card:      #1c2030;
+    --border:    #2a3050;
+    --accent:    #4f8ef7;
+    --accent2:   #a78bfa;
+    --accent3:   #34d399;
+    --accent4:   #f59e0b;
+    --accent5:   #f87171;
+    --accent6:   #38bdf8;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --pill:      #0f172a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+
+  header {
+    background: linear-gradient(135deg, #1a1f35 0%, #0d0f14 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 40px;
+  }
+  header h1 { font-size: 22px; font-weight: 700; color: var(--accent); letter-spacing: -0.3px; }
+  header p  { color: var(--muted); margin-top: 4px; }
+  .badge {
+    display: inline-block; padding: 2px 10px;
+    background: var(--pill); border: 1px solid var(--border);
+    border-radius: 20px; font-size: 11px; color: var(--muted);
+    margin-top: 8px; margin-right: 6px;
+  }
+
+  main { padding: 32px 40px; max-width: 1440px; margin: 0 auto; }
+
+  .section-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 16px; margin-top: 36px;
+  }
+  .section-title:first-child { margin-top: 0; }
+
+  /* ── Lifecycle bar ── */
+  .lifecycle {
+    display: flex; align-items: stretch; gap: 0;
+    overflow-x: auto; padding-bottom: 8px;
+    margin-bottom: 36px;
+  }
+  .step { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; }
+  .step-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; min-width: 140px;
+    text-align: center;
+  }
+  .step-box .num {
+    font-size: 10px; font-weight: 700; color: var(--accent);
+    background: rgba(79,142,247,0.12);
+    border-radius: 4px; padding: 1px 6px;
+    display: inline-block; margin-bottom: 6px;
+  }
+  .step-box .label { font-weight: 600; font-size: 12px; }
+  .step-box .sub   { color: var(--muted); font-size: 10px; margin-top: 3px; }
+  .step-arrow { flex: 0 0 28px; display: flex; align-items: center; justify-content: center; color: var(--border); font-size: 18px; }
+  .step-box.token   { border-color: var(--accent); }
+  .step-box.bl      { border-color: var(--accent5); }
+  .step-box.verify  { border-color: var(--accent3); }
+  .step-box.user    { border-color: var(--accent2); }
+  .step-box.session { border-color: var(--accent6); }
+  .step-box.role    { border-color: var(--accent4); }
+  .step-box.platform{ border-color: #e879f9; }
+
+  /* ── Two-col grid ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 36px; }
+  @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* ── File card grid ── */
+  .file-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px; margin-bottom: 36px;
+  }
+  .file-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; transition: border-color .2s;
+  }
+  .file-card:hover { border-color: var(--accent); }
+  .file-card .ftype { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .file-card .fname { font-family: monospace; font-size: 12px; color: var(--text); margin: 4px 0 6px; word-break: break-all; }
+  .file-card .fdesc { color: var(--muted); font-size: 11px; }
+  .file-card.mw    { border-left: 3px solid var(--accent); }
+  .file-card.svc   { border-left: 3px solid var(--accent2); }
+  .file-card.route { border-left: 3px solid var(--accent3); }
+  .file-card.cfg   { border-left: 3px solid var(--accent4); }
+  .file-card.db    { border-left: 3px solid var(--accent6); }
+  .file-card.util  { border-left: 3px solid #e879f9; }
+
+  /* ── API tables ── */
+  .api-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 36px; }
+  @media (max-width: 1100px) { .api-split { grid-template-columns: 1fr; } }
+  .api-col { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .api-col-header { padding: 12px 18px; font-weight: 700; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .api-col-header.user  { background: rgba(79,142,247,0.08); color: var(--accent); }
+  .api-col-header.admin { background: rgba(167,139,250,0.08); color: var(--accent2); }
+  .api-routes { padding: 8px 14px; }
+  .route-item {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 6px 0; border-bottom: 1px solid rgba(42,48,80,0.4);
+    font-size: 11px;
+  }
+  .route-item:last-child { border-bottom: none; }
+  .method { font-weight: 700; font-family: monospace; width: 50px; flex-shrink: 0; font-size: 10px; }
+  .method.GET    { color: #34d399; }
+  .method.POST   { color: #4f8ef7; }
+  .method.PATCH  { color: #f59e0b; }
+  .method.DELETE { color: #f87171; }
+  .route-path { font-family: monospace; color: var(--text); flex: 1; }
+  .gate {
+    background: rgba(167,139,250,0.12); color: var(--accent2);
+    border-radius: 3px; padding: 0 5px; font-size: 9px;
+    margin-left: auto;
+  }
+  .gate.pub { background: rgba(52,211,153,0.12); color: var(--accent3); }
+  .gate.ent { background: rgba(245,158,11,0.12); color: var(--accent4); }
+  .gate.sa  { background: rgba(248,113,113,0.12); color: var(--accent5); }
+
+  /* ── RBAC matrix ── */
+  .matrix-wrap {
+    border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; margin-bottom: 36px; background: var(--card);
+  }
+  .matrix-wrap table { width: 100%; border-collapse: collapse; }
+  .matrix-wrap thead th {
+    background: var(--surface); padding: 12px 16px;
+    text-align: left; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  .matrix-wrap thead th:first-child { color: var(--text); }
+  .matrix-wrap thead th:not(:first-child) { text-align: center; }
+  .matrix-wrap tbody td {
+    padding: 9px 16px; border-bottom: 1px solid rgba(42,48,80,0.4);
+    font-size: 12px;
+  }
+  .matrix-wrap tbody td:not(:first-child) { text-align: center; }
+  .matrix-wrap tbody tr:last-child td { border-bottom: none; }
+  .matrix-wrap tbody tr:hover td { background: rgba(79,142,247,0.04); }
+  .check { color: #34d399; font-size: 14px; font-weight: 700; }
+  .cross { color: #4b5563; font-size: 14px; }
+
+  /* ── Refresh rotation flow ── */
+  .rotation {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 36px;
+  }
+  .rotation .legend { color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+  .timeline {
+    display: flex; align-items: center; gap: 0;
+    overflow-x: auto; padding-bottom: 8px;
+  }
+  .tick {
+    flex: 0 0 auto; min-width: 130px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; text-align: center;
+  }
+  .tick .label { font-weight: 600; font-size: 11px; color: var(--text); }
+  .tick .desc  { color: var(--muted); font-size: 10px; margin-top: 3px; }
+  .tick.ok    { border-color: var(--accent3); }
+  .tick.rotate{ border-color: var(--accent); }
+  .tick.reuse { border-color: var(--accent5); background: rgba(248,113,113,0.06); }
+  .tick.kill  { border-color: var(--accent5); }
+  .arrow { flex: 0 0 24px; text-align: center; color: var(--border); }
+
+  /* ── Schema cards ── */
+  .schema-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px; margin-bottom: 36px;
+  }
+  .schema-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  .schema-head {
+    padding: 10px 14px; font-family: monospace;
+    background: rgba(79,142,247,0.08); color: var(--accent);
+    font-weight: 700; font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .schema-body { padding: 8px 14px; }
+  .col-row {
+    display: flex; gap: 10px; padding: 4px 0;
+    border-bottom: 1px solid rgba(42,48,80,0.4);
+    font-size: 11px;
+  }
+  .col-row:last-child { border-bottom: none; }
+  .col-name { font-family: monospace; color: var(--text); flex: 0 0 130px; }
+  .col-type { color: var(--muted); font-family: monospace; font-size: 10px; flex: 1; text-align: right; }
+
+  /* ── Events strip ── */
+  .events-strip {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 36px;
+  }
+  .event-pill {
+    background: rgba(56,189,248,0.10); border: 1px solid rgba(56,189,248,0.28);
+    color: var(--accent6); border-radius: 16px;
+    padding: 4px 12px; font-size: 11px; font-family: monospace;
+  }
+
+  /* ── Stats ── */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 36px;
+  }
+  .stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .stat-num { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-top: 4px; }
+
+  footer { padding: 24px 40px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Module 1 — Auth &amp; Identity</h1>
+  <p>Layer 2 API Gateway · the front door that establishes <em>who, from where, with what authority</em>.</p>
+  <div style="margin-top: 10px;">
+    <span class="badge">Express / TypeScript</span>
+    <span class="badge">PostgreSQL · Redis</span>
+    <span class="badge">JWT RS256 · argon2id</span>
+    <span class="badge">Last updated 2026-04-28</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- STATS -->
+  <div class="stats-row">
+    <div class="stat-card"><div class="stat-num">18</div><div class="stat-label">User endpoints</div></div>
+    <div class="stat-card"><div class="stat-num">11</div><div class="stat-label">Admin endpoints</div></div>
+    <div class="stat-card"><div class="stat-num">7</div><div class="stat-label">DB tables</div></div>
+    <div class="stat-card"><div class="stat-num">2</div><div class="stat-label">Middleware</div></div>
+    <div class="stat-card"><div class="stat-num">6</div><div class="stat-label">Services</div></div>
+    <div class="stat-card"><div class="stat-num">13</div><div class="stat-label">Domain events</div></div>
+  </div>
+
+  <!-- LIFECYCLE -->
+  <div class="section-title">Request Lifecycle (auth-only steps)</div>
+  <div class="lifecycle">
+    <div class="step"><div class="step-box token"><span class="num">1</span><div class="label">Bearer Token</div><div class="sub">read header</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box bl"><span class="num">2</span><div class="label">Blacklist</div><div class="sub">Redis: jti?</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box verify"><span class="num">3</span><div class="label">JWT Verify</div><div class="sub">RS256 · iss · aud · exp</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box user"><span class="num">4</span><div class="label">Load User</div><div class="sub">DB · status check</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box session"><span class="num">5</span><div class="label">Load Session</div><div class="sub">refresh-token row</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box role"><span class="num">6</span><div class="label">Role Check</div><div class="sub">admin? superadmin?</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box platform"><span class="num">7</span><div class="label">Platform Guard</div><div class="sub">x-platform header</div></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-box" style="border-color: var(--accent3);"><span class="num">→</span><div class="label">next()</div><div class="sub">downstream modules</div></div></div>
+  </div>
+
+  <!-- FILE STRUCTURE -->
+  <div class="section-title">File Structure</div>
+  <div class="file-grid">
+    <div class="file-card cfg">
+      <div class="ftype">Config</div>
+      <div class="fname">src/config/auth.ts</div>
+      <div class="fdesc">JWT keys, TTLs, argon2 params, lockout policy</div>
+    </div>
+    <div class="file-card mw">
+      <div class="ftype">Middleware</div>
+      <div class="fname">src/gateway/auth.middleware.ts</div>
+      <div class="fdesc">Bearer JWT verify + req.user load</div>
+    </div>
+    <div class="file-card mw">
+      <div class="ftype">Middleware</div>
+      <div class="fname">src/gateway/admin.middleware.ts</div>
+      <div class="fdesc">requireAdmin / requireSuperadmin</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/auth.service.ts</div>
+      <div class="fdesc">register / login / refresh / logout / change-pw</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/token.service.ts</div>
+      <div class="fdesc">sign / verify / rotate / blacklist</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/password.service.ts</div>
+      <div class="fdesc">argon2id hash + verify + needsRehash</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/oauth.service.ts</div>
+      <div class="fdesc">Google ID-token verify · sign-in / sign-up / link / unlink</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/profile.service.ts</div>
+      <div class="fdesc">read / update name, bio, avatar, locale, tz</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/audit.service.ts</div>
+      <div class="fdesc">append-only auth_audit writer</div>
+    </div>
+    <div class="file-card svc">
+      <div class="ftype">Service</div>
+      <div class="fname">src/services/session.service.ts</div>
+      <div class="fdesc">multi-device refresh-token CRUD; one row per device</div>
+    </div>
+    <div class="file-card route">
+      <div class="ftype">Route</div>
+      <div class="fname">src/routes/user/auth.routes.ts</div>
+      <div class="fdesc">/api/v1/auth/* · 14 endpoints</div>
+    </div>
+    <div class="file-card route">
+      <div class="ftype">Route</div>
+      <div class="fname">src/routes/admin/auth.routes.ts</div>
+      <div class="fdesc">/api/v1/admin/auth/* · 11 endpoints</div>
+    </div>
+    <div class="file-card db">
+      <div class="ftype">DB</div>
+      <div class="fname">src/db/migrations/001-007.sql</div>
+      <div class="fdesc">users, refresh_tokens, blacklist, audit, reset, verify, oauth_accounts</div>
+    </div>
+    <div class="file-card util">
+      <div class="ftype">Util</div>
+      <div class="fname">src/utils/fingerprint.ts</div>
+      <div class="fdesc">SHA-256(UA + ip-prefix + lang)</div>
+    </div>
+    <div class="file-card util">
+      <div class="ftype">Util</div>
+      <div class="fname">src/utils/jwt.ts</div>
+      <div class="fdesc">jose wrapper · sign/verify/JWKS</div>
+    </div>
+    <div class="file-card util">
+      <div class="ftype">Util</div>
+      <div class="fname">src/events/auth.events.ts</div>
+      <div class="fdesc">typed emitter: auth.login, auth.banned, …</div>
+    </div>
+  </div>
+
+  <!-- API SPLIT -->
+  <div class="section-title">API Surface — User vs Admin</div>
+  <div class="api-split">
+    <div class="api-col">
+      <div class="api-col-header user">/api/v1/auth · User API (18)</div>
+      <div class="api-routes">
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/check-email  · routing decision</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/register</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/login</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/google  · sign-in OR sign-up</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/google/link</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method DELETE">DELETE</span><span class="route-path">/auth/google/link</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/refresh</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/logout</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/logout-all</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/auth/me</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/auth/me  · name, bio, avatar</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/password/change</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/password/forgot</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/password/reset</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/email/verify/request</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/auth/email/verify/confirm</span><span class="gate pub">PUBLIC</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/auth/sessions  · multi-device list</span><span class="gate">JWT</span></div>
+        <div class="route-item"><span class="method DELETE">DELETE</span><span class="route-path">/auth/sessions/:id</span><span class="gate">JWT</span></div>
+      </div>
+    </div>
+    <div class="api-col">
+      <div class="api-col-header admin">/api/v1/admin/auth · Admin API (11)</div>
+      <div class="api-routes">
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/auth/users</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/auth/users/:id</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method PATCH">PATCH</span><span class="route-path">/admin/auth/users/:id</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/auth/users/:id/ban</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/auth/users/:id/unban</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/auth/users/:id/force-logout</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/auth/users/:id/reset-password</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method POST">POST</span><span class="route-path">/admin/auth/users/:id/impersonate</span><span class="gate sa">SA</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/auth/audit</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method GET">GET</span><span class="route-path">/admin/auth/sessions</span><span class="gate">ADMIN</span></div>
+        <div class="route-item"><span class="method DELETE">DELETE</span><span class="route-path">/admin/auth/sessions/:id</span><span class="gate">ADMIN</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RBAC MATRIX -->
+  <div class="section-title">Role-Based Access Control</div>
+  <div class="matrix-wrap">
+    <table>
+      <thead>
+        <tr><th>Action</th><th>user</th><th>admin</th><th>superadmin</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Login / refresh / logout (own)</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>View / edit own profile</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>List own active devices (multi-device)</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Revoke a specific own device</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Edit profile (name · bio · avatar)</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>List all users / view audit</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Ban / unban a user</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Force-logout a user</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Admin-initiated password reset</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Promote / demote admin role</td><td><span class="cross">—</span></td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Impersonate any user</td><td><span class="cross">—</span></td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Rotate JWT signing key</td><td><span class="cross">—</span></td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- REFRESH ROTATION -->
+  <div class="section-title">Refresh Rotation &amp; Reuse Detection</div>
+  <div class="rotation">
+    <div class="legend">Each refresh rotates the token (sliding 30-day window). If a previously-rotated token is ever presented again → entire <code>family_id</code> is killed.</div>
+    <div class="timeline">
+      <div class="tick ok"><div class="label">Login</div><div class="desc">issue T₁<br/>family_id = F</div></div>
+      <div class="arrow">→</div>
+      <div class="tick rotate"><div class="label">Refresh</div><div class="desc">T₁ revoked<br/>issue T₂ (family F)</div></div>
+      <div class="arrow">→</div>
+      <div class="tick rotate"><div class="label">Refresh</div><div class="desc">T₂ revoked<br/>issue T₃ (family F)</div></div>
+      <div class="arrow">→</div>
+      <div class="tick reuse"><div class="label">⚠ T₁ presented again</div><div class="desc">REUSE DETECTED</div></div>
+      <div class="arrow">→</div>
+      <div class="tick kill"><div class="label">Family F revoked</div><div class="desc">all access JTIs blacklisted<br/>user must re-login</div></div>
+    </div>
+  </div>
+
+  <!-- DB SCHEMA -->
+  <div class="section-title">Database Schema</div>
+  <div class="schema-grid">
+    <div class="schema-card">
+      <div class="schema-head">users (identity + profile)</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">email</span><span class="col-type">text uniq</span></div>
+        <div class="col-row"><span class="col-name">password_hash</span><span class="col-type">argon2id</span></div>
+        <div class="col-row"><span class="col-name">role / status</span><span class="col-type">enum</span></div>
+        <div class="col-row" style="border-top: 2px solid var(--border); padding-top: 6px; margin-top: 4px;"><span class="col-name" style="color: var(--accent3);">name</span><span class="col-type">text · 1–60</span></div>
+        <div class="col-row"><span class="col-name" style="color: var(--accent3);">bio</span><span class="col-type">text · 0–500</span></div>
+        <div class="col-row"><span class="col-name" style="color: var(--accent3);">avatar_url</span><span class="col-type">text</span></div>
+        <div class="col-row"><span class="col-name" style="color: var(--accent3);">locale / timezone</span><span class="col-type">text</span></div>
+        <div class="col-row" style="border-top: 1px dashed var(--border); padding-top: 6px; margin-top: 4px;"><span class="col-name">email_verified_at</span><span class="col-type">tz</span></div>
+        <div class="col-row"><span class="col-name">password_changed_at</span><span class="col-type">tz</span></div>
+        <div class="col-row"><span class="col-name">failed_login_attempts</span><span class="col-type">int</span></div>
+        <div class="col-row"><span class="col-name">locked_until</span><span class="col-type">tz</span></div>
+        <div class="col-row"><span class="col-name">mfa_secret</span><span class="col-type">future</span></div>
+        <div class="col-row"><span class="col-name">banned_at / by / reason</span><span class="col-type">audit</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">refresh_tokens (one row = one device)</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK</span></div>
+        <div class="col-row"><span class="col-name">token_hash</span><span class="col-type">sha256 uniq</span></div>
+        <div class="col-row"><span class="col-name">family_id</span><span class="col-type">uuid · reuse group</span></div>
+        <div class="col-row" style="border-top: 2px solid var(--border); padding-top: 6px; margin-top: 4px;"><span class="col-name" style="color: var(--accent6);">platform</span><span class="col-type">web · admin · ios · android</span></div>
+        <div class="col-row"><span class="col-name" style="color: var(--accent6);">device_name / type</span><span class="col-type">"iPhone 15"</span></div>
+        <div class="col-row"><span class="col-name" style="color: var(--accent6);">os / browser / app_ver</span><span class="col-type">text</span></div>
+        <div class="col-row"><span class="col-name">fingerprint / ip / ua</span><span class="col-type">device</span></div>
+        <div class="col-row"><span class="col-name">issued_at / expires_at</span><span class="col-type">tz</span></div>
+        <div class="col-row"><span class="col-name">revoked_at / reason</span><span class="col-type">tz · text</span></div>
+        <div class="col-row"><span class="col-name">replaced_by_id</span><span class="col-type">uuid FK self</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">token_blacklist</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">jti</span><span class="col-type">text PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK</span></div>
+        <div class="col-row"><span class="col-name">reason</span><span class="col-type">text</span></div>
+        <div class="col-row"><span class="col-name">expires_at</span><span class="col-type">tz · = jwt exp</span></div>
+        <div class="col-row"><span class="col-name">created_at</span><span class="col-type">tz</span></div>
+        <div class="col-row" style="color: var(--muted);"><span class="col-name">↑ mirrored in</span><span class="col-type">Redis</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">oauth_accounts (Google today)</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK</span></div>
+        <div class="col-row"><span class="col-name">provider</span><span class="col-type">'google'</span></div>
+        <div class="col-row"><span class="col-name">provider_user_id</span><span class="col-type">Google sub</span></div>
+        <div class="col-row"><span class="col-name">provider_email</span><span class="col-type">text</span></div>
+        <div class="col-row"><span class="col-name">email_verified</span><span class="col-type">bool</span></div>
+        <div class="col-row"><span class="col-name">raw_profile</span><span class="col-type">jsonb</span></div>
+        <div class="col-row"><span class="col-name">linked_at / last_used_at</span><span class="col-type">tz</span></div>
+        <div class="col-row" style="color: var(--muted);"><span class="col-name">UNIQUE</span><span class="col-type">(provider, provider_user_id)</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">auth_audit</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK · nullable</span></div>
+        <div class="col-row"><span class="col-name">actor_id</span><span class="col-type">FK · admin</span></div>
+        <div class="col-row"><span class="col-name">event_type</span><span class="col-type">text</span></div>
+        <div class="col-row"><span class="col-name">ip / ua / fingerprint</span><span class="col-type">device</span></div>
+        <div class="col-row"><span class="col-name">success</span><span class="col-type">bool</span></div>
+        <div class="col-row"><span class="col-name">metadata</span><span class="col-type">jsonb</span></div>
+        <div class="col-row"><span class="col-name">created_at</span><span class="col-type">tz</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">password_reset_tokens</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK</span></div>
+        <div class="col-row"><span class="col-name">token_hash</span><span class="col-type">sha256 uniq</span></div>
+        <div class="col-row"><span class="col-name">expires_at</span><span class="col-type">+30 min</span></div>
+        <div class="col-row"><span class="col-name">used_at</span><span class="col-type">tz · single-use</span></div>
+        <div class="col-row"><span class="col-name">ip</span><span class="col-type">inet</span></div>
+      </div>
+    </div>
+
+    <div class="schema-card">
+      <div class="schema-head">email_verification_tokens</div>
+      <div class="schema-body">
+        <div class="col-row"><span class="col-name">id</span><span class="col-type">uuid PK</span></div>
+        <div class="col-row"><span class="col-name">user_id</span><span class="col-type">FK</span></div>
+        <div class="col-row"><span class="col-name">token_hash</span><span class="col-type">sha256 uniq</span></div>
+        <div class="col-row"><span class="col-name">expires_at</span><span class="col-type">+24 h</span></div>
+        <div class="col-row"><span class="col-name">used_at</span><span class="col-type">tz · single-use</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FRONTEND ENTRY -->
+  <div class="section-title">Frontend Entry · Email-First Routing</div>
+  <div class="rotation">
+    <div class="legend">User types email → frontend hits <code>/auth/check-email</code> → server returns the screen to show next.</div>
+    <div class="timeline">
+      <div class="tick" style="border-color: var(--accent2);"><div class="label">Type email</div><div class="desc">frontend collects address</div></div>
+      <div class="arrow">→</div>
+      <div class="tick rotate"><div class="label">POST /auth/check-email</div><div class="desc">{ exists, has_password,<br/>has_google, suggested_action }</div></div>
+      <div class="arrow">→</div>
+      <div class="tick ok"><div class="label">login</div><div class="desc">password screen</div></div>
+      <div class="tick ok" style="margin-left: 6px;"><div class="label">login_with_google</div><div class="desc">"Continue with Google" button</div></div>
+      <div class="tick ok" style="margin-left: 6px;"><div class="label">register</div><div class="desc">sign-up form</div></div>
+    </div>
+  </div>
+
+  <!-- GOOGLE -->
+  <div class="section-title">Google Sign-In · Three Outcomes from One Endpoint</div>
+  <div class="rotation">
+    <div class="legend">Frontend obtains a Google ID token (web GIS or native SDK) and calls <code>POST /auth/google</code>. The server picks one of three branches based on what already exists.</div>
+    <div class="timeline">
+      <div class="tick rotate"><div class="label">id_token</div><div class="desc">verify · aud · iss<br/>email_verified</div></div>
+      <div class="arrow">→</div>
+      <div class="tick ok"><div class="label">① logged_in</div><div class="desc">sub already linked<br/>just issue tokens</div></div>
+      <div class="tick ok" style="margin-left: 6px;"><div class="label">② linked_existing</div><div class="desc">email matches user<br/>add oauth_accounts row</div></div>
+      <div class="tick ok" style="margin-left: 6px;"><div class="label">③ registered</div><div class="desc">create user + oauth row<br/>password_hash = NULL</div></div>
+      <div class="arrow">→</div>
+      <div class="tick" style="border-color: var(--accent2);"><div class="label">{ access, refresh, outcome }</div><div class="desc">same shape as /auth/login</div></div>
+    </div>
+  </div>
+
+  <!-- MULTI-DEVICE -->
+  <div class="section-title">Multi-Device Sessions (one user · many concurrent devices)</div>
+  <div class="rotation">
+    <div class="legend">A user signs in from any combination of platforms. Each device = one <code>refresh_tokens</code> row. Sessions are listed, revoked, or kept independently.</div>
+    <div class="timeline">
+      <div class="tick ok"><div class="label">Web · Chrome</div><div class="desc">platform=web<br/>row₁ · family F1</div></div>
+      <div class="arrow">+</div>
+      <div class="tick ok"><div class="label">iPhone 15</div><div class="desc">platform=mobile-ios<br/>row₂ · family F2</div></div>
+      <div class="arrow">+</div>
+      <div class="tick ok"><div class="label">Pixel Tablet</div><div class="desc">platform=mobile-android<br/>row₃ · family F3</div></div>
+      <div class="arrow">+</div>
+      <div class="tick rotate"><div class="label">Admin Console</div><div class="desc">platform=admin<br/>row₄ · family F4</div></div>
+      <div class="arrow">→</div>
+      <div class="tick" style="border-color: var(--accent2);"><div class="label">GET /auth/sessions</div><div class="desc">returns all 4<br/>is_current marked</div></div>
+    </div>
+  </div>
+
+  <!-- EVENTS -->
+  <div class="section-title">Domain Events Emitted</div>
+  <div class="events-strip">
+    <span class="event-pill">auth.registered</span>
+    <span class="event-pill">auth.login</span>
+    <span class="event-pill">auth.login_new_device</span>
+    <span class="event-pill">auth.logout</span>
+    <span class="event-pill">auth.logout_all</span>
+    <span class="event-pill">auth.profile_updated</span>
+    <span class="event-pill">auth.password_changed</span>
+    <span class="event-pill">auth.google_linked</span>
+    <span class="event-pill">auth.google_unlinked</span>
+    <span class="event-pill">auth.email_check</span>
+    <span class="event-pill">auth.banned</span>
+    <span class="event-pill">auth.unbanned</span>
+    <span class="event-pill">auth.impersonated</span>
+  </div>
+
+  <!-- DEPENDENCIES -->
+  <div class="section-title">Module Touchpoints</div>
+  <div class="grid-2">
+    <div class="api-col">
+      <div class="api-col-header user">Provides to downstream</div>
+      <div class="api-routes">
+        <div class="route-item"><span class="route-path">req.user</span><span class="route-desc" style="color: var(--muted);">id, name, bio, role, status, plan_id</span></div>
+        <div class="route-item"><span class="route-path">req.session</span><span class="route-desc" style="color: var(--muted);">id, platform, device_name, fingerprint</span></div>
+        <div class="route-item"><span class="route-path">req.platform</span><span class="route-desc" style="color: var(--muted);">web · admin · ios · android</span></div>
+        <div class="route-item"><span class="route-path">req.token</span><span class="route-desc" style="color: var(--muted);">jti, exp</span></div>
+        <div class="route-item"><span class="route-path">req.actor</span><span class="route-desc" style="color: var(--muted);">admin id (impersonation)</span></div>
+      </div>
+    </div>
+    <div class="api-col">
+      <div class="api-col-header admin">Consumed by</div>
+      <div class="api-routes">
+        <div class="route-item"><span class="route-path">Module 2</span><span class="route-desc" style="color: var(--muted);">Plan resolver</span></div>
+        <div class="route-item"><span class="route-path">Module 3</span><span class="route-desc" style="color: var(--muted);">Feature flags</span></div>
+        <div class="route-item"><span class="route-path">Module 4</span><span class="route-desc" style="color: var(--muted);">Credit wallet</span></div>
+        <div class="route-item"><span class="route-path">Module 5</span><span class="route-desc" style="color: var(--muted);">Rate limit (4-tier)</span></div>
+        <div class="route-item"><span class="route-path">Module 6</span><span class="route-desc" style="color: var(--muted);">Usage tracker</span></div>
+        <div class="route-item"><span class="route-path">Module 7</span><span class="route-desc" style="color: var(--muted);">BullMQ chat queue</span></div>
+        <div class="route-item"><span class="route-path">Module 8</span><span class="route-desc" style="color: var(--muted);">Conversation ownership</span></div>
+        <div class="route-item"><span class="route-path">Module 9</span><span class="route-desc" style="color: var(--muted);">Sanitiser plan-scoped limits</span></div>
+        <div class="route-item"><span class="route-path">Module 10</span><span class="route-desc" style="color: var(--muted);">Smart router model/agent access</span></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Module 1 · Auth &amp; Identity · single source of truth in <code>docs/Layer 2 Modules/Module 1 - Auth and Identity/</code>.
+</footer>
+
+</body>
+</html>

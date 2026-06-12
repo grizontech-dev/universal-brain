@@ -1,0 +1,29 @@
+---
+description: Enforce strict implementation against project documentation
+alwaysApply: true
+---
+
+# Follow Project Documents Exactly
+
+Treat the project docs as the source of truth and implement behavior exactly as specified.
+
+## Source Priority
+
+1. Module docs under `docs/Layer 2 Modules/` for module-level contracts.
+2. Foundation docs under `docs/Project Foundation/` for cross-cutting standards.
+3. Architecture docs under `docs/PROJECT_ARCHITECTURE.md` and `docs/LAYER2_API_GATEWAY.md` for system constraints.
+
+If documents conflict, call it out explicitly before coding and ask for resolution.
+
+## Implementation Rules
+
+- Do not invent or alter API paths, request/response shapes, status codes, auth rules, or error codes beyond the docs.
+- Keep naming, route hierarchy, and middleware behavior aligned with documented contracts.
+- Preserve documented non-functional constraints (security, logging, rate limiting, and audit expectations).
+- When updating code, also update related artifacts (status report and Postman collection) to stay in sync with docs.
+
+## Definition of Done
+
+- Code behavior matches docs.
+- Any deviations are documented and approved.
+- Supporting artifacts remain consistent with the implemented/documented API surface.

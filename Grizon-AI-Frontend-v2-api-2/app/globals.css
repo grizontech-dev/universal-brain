@@ -1,0 +1,771 @@
+@import "tailwindcss";
+
+/* 
+  Grizon AI - Premium Design System 
+  Fixing Font Inheritance & Glassmorphism
+  Strictly aligned with index6.html / index7.html
+*/
+
+/*
+  THEME FRAMEWORK
+  --------------------------------------------------------------------------
+  A "theme" is a palette of CSS custom properties (--c-*) applied via a
+  `data-theme="<id>"` attribute on <html>. Tailwind utilities resolve to those
+  runtime variables through `@theme inline` below, so switching the attribute
+  repaints the whole app with zero component re-render.
+
+  To add a theme:
+    1. Add a `:root[data-theme="<id>"] { ... }` palette block (see below).
+    2. Add a matching entry to lib/themes.ts (THEMES array).
+  No component edits required.
+*/
+@theme inline {
+  /* Surfaces */
+  --color-app: var(--c-app);
+  --color-sidebar: var(--c-sidebar);
+  --color-chat: var(--c-chat);
+  --color-card: var(--c-card);
+  --color-elevated: var(--c-elevated);
+  --color-input: var(--c-input);
+
+  /* Surface scale (back-compat with existing bg-surface-* usage) */
+  --color-surface-0: var(--c-surface-0);
+  --color-surface-1: var(--c-surface-1);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-surface-4: var(--c-surface-4);
+  --color-surface-5: var(--c-surface-5);
+
+  /* Borders */
+  --color-border-subtle: var(--c-border-subtle);
+  --color-border-default: var(--c-border-default);
+  --color-border-strong: var(--c-border-strong);
+
+  /* Text */
+  --color-text-primary: var(--c-text-primary);
+  --color-text-secondary: var(--c-text-secondary);
+  --color-text-muted: var(--c-text-muted);
+  --color-text-faint: var(--c-text-faint);
+
+  /* Accent + state */
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-success: var(--c-success);
+  --color-warning: var(--c-warning);
+  --color-danger: var(--c-danger);
+
+  /* Chat bubbles */
+  --color-bubble-user: var(--c-bubble-user);
+  --color-bubble-user-border: var(--c-bubble-user-border);
+  --color-bubble-ai: var(--c-bubble-ai);
+  --color-bubble-ai-border: var(--c-bubble-ai-border);
+
+  /* Font Families - Mapping to variables from layout.tsx */
+  --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace;
+
+  /* Shadows */
+  --shadow-premium: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 4px 12px rgba(151, 109, 248, 0.25);
+}
+
+/* ===========================================================================
+   THEME PALETTES
+   =========================================================================== */
+
+/* Midnight — default dark (identical to the original look). */
+:root,
+:root[data-theme="midnight"] {
+  --c-app: #09090b;
+  --c-sidebar: #09090b;
+  --c-chat: #0d0c14;
+  --c-card: #0c0c0e;
+  --c-elevated: #18181b;
+  --c-input: #18181b;
+
+  --c-surface-0: #09090b;
+  --c-surface-1: #0f0f12;
+  --c-surface-2: #16161a;
+  --c-surface-3: #1c1c22;
+  --c-surface-4: #24242c;
+  --c-surface-5: #2e2e38;
+
+  --c-border-subtle: rgba(255, 255, 255, 0.05);
+  --c-border-default: rgba(255, 255, 255, 0.10);
+  --c-border-strong: rgba(255, 255, 255, 0.18);
+
+  --c-text-primary: #ffffff;
+  --c-text-secondary: rgba(255, 255, 255, 0.60);
+  --c-text-muted: rgba(255, 255, 255, 0.40);
+  --c-text-faint: rgba(255, 255, 255, 0.20);
+
+  --c-accent: #976df8;
+  --c-accent-hover: #8559e8;
+  --c-accent-soft: rgba(151, 109, 248, 0.10);
+  --c-success: #34d399;
+  --c-warning: #fbbf24;
+  --c-danger: #f87171;
+
+  --c-bubble-user: rgba(151, 109, 248, 0.10);
+  --c-bubble-user-border: rgba(151, 109, 248, 0.15);
+  --c-bubble-ai: rgba(255, 255, 255, 0.04);
+  --c-bubble-ai-border: rgba(255, 255, 255, 0.06);
+}
+
+/* Daylight — light bg, dark text. Overlays flip to black-alpha. */
+:root[data-theme="daylight"] {
+  --c-app: #f7f7f8;
+  --c-sidebar: #ffffff;
+  --c-chat: #f4f4f6;
+  --c-card: #ffffff;
+  --c-elevated: #f0f0f3;
+  --c-input: #ffffff;
+
+  --c-surface-0: #ffffff;
+  --c-surface-1: #f7f7f8;
+  --c-surface-2: #f0f0f3;
+  --c-surface-3: #e7e7ec;
+  --c-surface-4: #dddde4;
+  --c-surface-5: #d2d2db;
+
+  --c-border-subtle: rgba(0, 0, 0, 0.06);
+  --c-border-default: rgba(0, 0, 0, 0.12);
+  --c-border-strong: rgba(0, 0, 0, 0.20);
+
+  --c-text-primary: #18181b;
+  --c-text-secondary: rgba(0, 0, 0, 0.62);
+  --c-text-muted: rgba(0, 0, 0, 0.45);
+  --c-text-faint: rgba(0, 0, 0, 0.30);
+
+  --c-accent: #7c54e8;
+  --c-accent-hover: #6a44d6;
+  --c-accent-soft: rgba(124, 84, 232, 0.10);
+  --c-success: #15a06b;
+  --c-warning: #c98a07;
+  --c-danger: #dc4c4c;
+
+  --c-bubble-user: rgba(124, 84, 232, 0.10);
+  --c-bubble-user-border: rgba(124, 84, 232, 0.22);
+  --c-bubble-ai: #ffffff;
+  --c-bubble-ai-border: rgba(0, 0, 0, 0.08);
+}
+
+/* Twilight — dark/light hybrid: dark sidebar, lighter slate content. */
+:root[data-theme="twilight"] {
+  --c-app: #1b1f2a;
+  --c-sidebar: #11141c;
+  --c-chat: #232838;
+  --c-card: #272d40;
+  --c-elevated: #2f3650;
+  --c-input: #2f3650;
+
+  --c-surface-0: #11141c;
+  --c-surface-1: #1b1f2a;
+  --c-surface-2: #232838;
+  --c-surface-3: #272d40;
+  --c-surface-4: #2f3650;
+  --c-surface-5: #3a4360;
+
+  --c-border-subtle: rgba(255, 255, 255, 0.07);
+  --c-border-default: rgba(255, 255, 255, 0.12);
+  --c-border-strong: rgba(255, 255, 255, 0.20);
+
+  --c-text-primary: #eef1f8;
+  --c-text-secondary: rgba(238, 241, 248, 0.66);
+  --c-text-muted: rgba(238, 241, 248, 0.45);
+  --c-text-faint: rgba(238, 241, 248, 0.28);
+
+  --c-accent: #5ea9ff;
+  --c-accent-hover: #4a97f0;
+  --c-accent-soft: rgba(94, 169, 255, 0.12);
+  --c-success: #34d399;
+  --c-warning: #fbbf24;
+  --c-danger: #f87171;
+
+  --c-bubble-user: rgba(94, 169, 255, 0.12);
+  --c-bubble-user-border: rgba(94, 169, 255, 0.22);
+  --c-bubble-ai: rgba(255, 255, 255, 0.05);
+  --c-bubble-ai-border: rgba(255, 255, 255, 0.08);
+}
+
+/* Parchment — warm low-contrast sepia, easy on the eyes for long reading. */
+:root[data-theme="parchment"] {
+  --c-app: #f3ecde;
+  --c-sidebar: #ece2cf;
+  --c-chat: #f6efe2;
+  --c-card: #fbf6ec;
+  --c-elevated: #efe6d4;
+  --c-input: #fbf6ec;
+
+  --c-surface-0: #fbf6ec;
+  --c-surface-1: #f6efe2;
+  --c-surface-2: #efe6d4;
+  --c-surface-3: #e7dbc4;
+  --c-surface-4: #ddceb2;
+  --c-surface-5: #d0bd9b;
+
+  --c-border-subtle: rgba(70, 55, 30, 0.10);
+  --c-border-default: rgba(70, 55, 30, 0.18);
+  --c-border-strong: rgba(70, 55, 30, 0.28);
+
+  --c-text-primary: #3a3326;
+  --c-text-secondary: rgba(58, 51, 38, 0.72);
+  --c-text-muted: rgba(58, 51, 38, 0.52);
+  --c-text-faint: rgba(58, 51, 38, 0.36);
+
+  --c-accent: #b07b3e;
+  --c-accent-hover: #9c6a31;
+  --c-accent-soft: rgba(176, 123, 62, 0.12);
+  --c-success: #5b8c3e;
+  --c-warning: #c08a2e;
+  --c-danger: #c0563e;
+
+  --c-bubble-user: rgba(176, 123, 62, 0.12);
+  --c-bubble-user-border: rgba(176, 123, 62, 0.24);
+  --c-bubble-ai: rgba(120, 95, 55, 0.06);
+  --c-bubble-ai-border: rgba(120, 95, 55, 0.12);
+}
+
+/* Base Overrides */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    height: 100%;
+    background-color: var(--c-app);
+    overflow-x: hidden;
+    position: relative;
+    touch-action: manipulation;
+  }
+
+  body {
+    background-color: var(--c-app);
+    color: var(--c-text-primary);
+    margin: 0;
+    height: 100%;
+    overflow-x: hidden;
+    position: relative;
+    font-family: var(--c-font-body, var(--font-inter)), sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--c-font-body, var(--font-inter)), sans-serif;
+    font-weight: 700;
+  }
+
+  /* Minimal Scrollbar system */
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    ::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  }
+}
+
+/* Premium Component Definitions */
+@layer components {
+
+  /* Glass Containers (Used in Hero & Chat) */
+  .glass-container,
+  .floating-input {
+    background: color-mix(in srgb, var(--c-surface-1) 94%, transparent);
+    /* index6.html surface-1 matching */
+    backdrop-filter: blur(40px) saturate(1.5);
+    -webkit-backdrop-filter: blur(40px) saturate(1.5);
+    border-radius: 24px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .floating-input {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .glass-container:focus-within,
+  .floating-input:focus-within {
+    border-color: color-mix(in srgb, var(--c-accent) 35%, transparent);
+    background: color-mix(in srgb, var(--c-surface-2) 96%, transparent);
+    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px color-mix(in srgb, var(--c-accent) 12%, transparent);
+  }
+
+  /* Model Selector Button */
+  .model-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    max-width: 200px;
+  }
+
+  .model-selector-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 640px) {
+    .model-selector-btn {
+      max-width: 140px;
+      padding: 4px 8px;
+    }
+  }
+
+  /* Chat Bubbles */
+  .bubble-user {
+    background: var(--c-bubble-user);
+    border: 1px solid var(--c-bubble-user-border);
+    border-radius: 20px 20px 6px 20px;
+    padding: 12px 18px;
+    font-size: 14px;
+    line-height: 1.62;
+  }
+
+  .bubble-ai {
+    background: var(--c-bubble-ai);
+    border: 1px solid var(--c-bubble-ai-border);
+    border-radius: 20px 20px 20px 6px;
+    padding: 14px 20px;
+    font-size: 14px;
+    line-height: 1.62;
+  }
+
+  /* Premium Buttons */
+  .premium-send-btn {
+    background: var(--c-accent);
+    color: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    border: none;
+    cursor: pointer;
+  }
+
+  @media (max-width: 640px) {
+
+    .glass-container,
+    .floating-input {
+      border-radius: 16px;
+    }
+  }
+}
+
+/* Animations & Utilities */
+@layer utilities {
+  @keyframes fadeSlideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Syntax Highlighting - Premium Dark Theme */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em;
+  background: transparent;
+  color: #e4e4e7;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #71717a;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #976df8;
+  /* Accent color */
+  font-weight: 700;
+}
+
+.hljs-function .hljs-keyword {
+  color: #976df8;
+}
+
+.hljs-string,
+.hljs-addition,
+.hljs-attribute,
+.hljs-symbol,
+.hljs-bullet {
+  color: #34d399;
+  /* Emerald */
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-number,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-class .hljs-title {
+  color: #fbbf24;
+  /* Amber */
+}
+
+.hljs-title,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-meta,
+.hljs-subst {
+  color: #60a5fa;
+  /* Blue */
+}
+
+.hljs-params,
+.hljs-regexp,
+.hljs-tag,
+.hljs-attr {
+  color: #f472b6;
+  /* Pink */
+}
+
+.hljs-doctag,
+.hljs-strong {
+  font-weight: bold;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-deletion {
+  color: #f87171;
+  /* Red */
+}
+
+/* Markdown Specific Overrides for Premium feel */
+.markdown-content {
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+  word-break: break-word;
+  line-height: 1;
+}
+
+.markdown-content p, 
+.markdown-content li, 
+.markdown-content td, 
+.markdown-content th, 
+.markdown-content blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Tighten spacing inside list items where paragraphs are nested */
+.markdown-content li p {
+  margin-bottom: 0 !important;
+  display: inline; /* Keep content compact */
+}
+
+/* Tighten block spacing across the bubble — keep prose dense like Anthropic Desktop. */
+.markdown-content > :first-child { margin-top: 0 !important; }
+.markdown-content > :last-child { margin-bottom: 0 !important; }
+.markdown-content > * + * { margin-top: 0.375rem; }
+.markdown-content > h1 + *,
+.markdown-content > h2 + *,
+.markdown-content > h3 + *,
+.markdown-content > h4 + * { margin-top: 0.25rem; }
+
+.markdown-content a {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content table {
+  border-spacing: 0;
+  border-collapse: separate;
+}
+
+/* Fenced code / ASCII diagrams: never inherit prose line-height (breaks grid alignment) */
+.markdown-content pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  word-break: normal;
+}
+
+.markdown-content pre code {
+  font-family: var(--font-mono), "JetBrains Mono", monospace !important;
+  background: transparent !important;
+  padding: 0 !important;
+  /* line-height and white-space are managed by component for flexibility */
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+  letter-spacing: normal !important;
+  font-variant-ligatures: none !important;
+}
+
+/* Keep syntax-highlight tokens on the same grid as the rest of the block */
+.markdown-content pre code span {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  display: inline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  white-space: inherit !important;
+}
+
+.markdown-content code:not(pre code) {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(200%);
+  }
+}
+
+@keyframes toastProgress {
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.animate-toast-progress {
+  animation: toastProgress linear forwards;
+}
+
+@keyframes premium-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px) scale(0.95);
+    filter: blur(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes premium-toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(20px) scale(0.95);
+    filter: blur(5px);
+  }
+}
+
+.animate-premium-toast-in {
+  animation: premium-toast-in 0.5s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+.animate-premium-toast-out {
+  animation: premium-toast-out 0.4s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+/* Siri Voice Orb Animations */
+@keyframes siri-pulse {
+  0% { transform: scale(1); opacity: 0.8; box-shadow: 0 0 20px rgba(151, 109, 248, 0.4); }
+  50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 40px rgba(151, 109, 248, 0.7); }
+  100% { transform: scale(1); opacity: 0.8; box-shadow: 0 0 20px rgba(151, 109, 248, 0.4); }
+}
+
+@keyframes siri-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.voice-orb {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #976df8, #60a5fa, #34d399, #f472b6, #976df8);
+  filter: blur(8px);
+  animation: siri-rotate 4s linear infinite;
+  transition: all 0.3s ease;
+}
+
+.voice-orb-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.voice-orb-active {
+  animation: siri-rotate 2s linear infinite, siri-pulse 1.5s ease-in-out infinite;
+  filter: blur(4px) saturate(1.5);
+}
+
+/* ── Streaming agent activity UI ── */
+@keyframes stream-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(151, 109, 248, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(151, 109, 248, 0);
+  }
+}
+
+.stream-glow {
+  animation: stream-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes stream-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.stream-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(151, 109, 248, 0.16),
+    transparent
+  );
+  animation: stream-sweep 2.2s ease-in-out infinite;
+}
+
+@keyframes stream-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(20%);
+  }
+  100% {
+    transform: translateX(110%);
+  }
+}
+
+.stream-progress-bar {
+  animation: stream-progress 1.6s ease-in-out infinite;
+}
+
+@keyframes stream-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.stream-caret {
+  animation: stream-caret 1s steps(1) infinite;
+}
+
+@keyframes stream-orb {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.5;
+  }
+}
+
+.stream-orb {
+  animation: stream-orb 1.4s ease-in-out infinite;
+}
