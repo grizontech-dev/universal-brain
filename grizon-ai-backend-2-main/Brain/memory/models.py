@@ -123,7 +123,7 @@ class SkillPerformance(Base):
 class ArchitecturePattern(Base):
     __tablename__ = "memory_architecture_patterns"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    pattern_name = Column(String, nullable=False, name="pattern_name")
+    pattern_name = Column(String, nullable=False, unique=True, name="pattern_name")
     frontend = Column(String)
     backend = Column(String)
     database = Column(String)
