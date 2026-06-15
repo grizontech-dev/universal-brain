@@ -386,6 +386,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             const payload = await fetchResumePayload(conversationId, framework);
             if (!payload) {
+                console.warn('[Brain] No resume payload — workspace not found or backend unreachable');
+                setMessages(prev => [...prev, {
+                    id: `resume-error-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build state could not be restored on reload. The backend workspace may have been cleaned up. Please start a new build.',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
                 resumeAfterReloadRef.current = false;
                 return;
             }
@@ -467,6 +474,12 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 );
             } catch (e) {
                 console.error('[Brain] resume stream failed:', e);
+                setMessages(prev => [...prev, {
+                    id: `resume-stream-error-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build resume stream failed. The backend may be unavailable. Please try starting a new build.',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
             } finally {
                 setIsLoading(false);
                 setIsBuildSyncing(false);
@@ -479,6 +492,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             appendBuildActivities,
             completeRunnerBuild,
             ingestSandboxStreamEvent,
+            setMessages,
         ]
     );
 
@@ -1445,7 +1459,12 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     }
 
                     // Handle generic error
-                    if (event.error) chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + "Error: " + event.error;
+                    if (event.error) {
+                        chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + "Error: " + event.error;
+                        if (isBuildMode && !buildFinishedAt) {
+                            completeRunnerBuild();
+                        }
+                    }
 
                     // --- Robust Fallback ---
                     // If chunkUpdate is still empty, try to extract any textual data from the event
@@ -1522,6 +1541,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             setAgentStep('idle');
             setIsLoading(false);
+            if (isBuildMode && !buildFinishedAt) {
+                completeRunnerBuild();
+            }
             refreshBalance();
 
             if (autoClarifyEnabled && pendingAutoClarifyRef.current) {
@@ -1544,6 +1566,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             }
             setAgentStep('idle');
             setIsLoading(false);
+            if (isBuildMode && !buildFinishedAt) {
+                completeRunnerBuild();
+            }
         }
     };
 

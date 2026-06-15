@@ -8,7 +8,10 @@ export const brainApi = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        if (!response || !response.ok) throw new Error(`Brain conversation creation failed: ${response?.status}`);
+        if (!response || !response.ok) {
+            if (!response) throw new Error('Brain conversation creation failed: no response (network error or timeout)');
+            throw new Error(`Brain conversation creation failed: ${response.status}`);
+        }
         return await response.json();
     },
     streamChat: async (data: { 
@@ -32,8 +35,14 @@ export const brainApi = {
         });
 
         if (!response || !response.ok) {
-            const error = await response?.json().catch(() => ({ error: 'Brain stream initiation failed' }));
-            throw new Error(error?.error || `Server returned ${response?.status}`);
+            let errorMessage = 'Brain stream initiation failed';
+            if (response) {
+                try {
+                    const error = await response.json();
+                    errorMessage = error?.error || `Server returned ${response.status}`;
+                } catch {}
+            }
+            throw new Error(errorMessage);
         }
 
         const reader = response.body?.getReader();
@@ -74,7 +83,10 @@ export const brainApi = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
         });
-        if (!response || !response.ok) throw new Error(`Brain stop request failed: ${response?.status}`);
+        if (!response || !response.ok) {
+            if (!response) throw new Error('Brain stop request failed: no response (network error or timeout)');
+            throw new Error(`Brain stop request failed: ${response.status}`);
+        }
         return await response.json();
     }
 };
