@@ -72,7 +72,7 @@ class ExecutionMemory:
             text("SELECT status, COUNT(*) as count, SUM(token_count) as total_tokens FROM memory_execution_logs WHERE project_id = :pid GROUP BY status"),
             {"pid": project_id}
         )
-        return [dict(row) for row in result]
+        return [dict(row._mapping) for row in result]
 
     def close(self):
         self.db.close()

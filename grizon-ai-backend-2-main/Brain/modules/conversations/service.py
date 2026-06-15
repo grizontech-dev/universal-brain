@@ -208,7 +208,11 @@ class ConversationService:
                 extra_metadata=metadata,
                 createdAt=datetime.utcnow()
             )
-            print(f"DEBUG: Saving message to DB - Conv: {conversation_id}, Role: {role}, Content Snippet: {content[:30]}")
+            try:
+                print(f"DEBUG: Saving message to DB - Conv: {conversation_id}, Role: {role}, Content Snippet: {content[:30]}")
+            except UnicodeEncodeError:
+                safe_content = content[:30].encode('ascii', errors='replace').decode('ascii')
+                print(f"DEBUG: Saving message to DB - Conv: {conversation_id}, Role: {role}, Content Snippet: {safe_content}")
             db.add(msg)
             db.commit()
             print("DEBUG: Message saved successfully.")

@@ -43,7 +43,7 @@ class ErrorMemory:
             """),
             {"pattern": error_pattern, "framework": framework}
         )
-        return [dict(row) for row in results]
+        return [dict(row._mapping) for row in results]
 
     def mark_fix_success(self, error_id: str):
         err = self.db.query(KnownError).filter(KnownError.id == error_id).first()

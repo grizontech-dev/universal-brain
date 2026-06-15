@@ -18,6 +18,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from Brain.modules.chat.controller import router as brain_chat_router
 from Brain.modules.conversations.controller import brain_conversations_router
+from Brain.memory.debug import router as brain_memory_router
+from Brain.modules.projects.controller import router as brain_projects_router
 try:
     from Brain.modules.sandbox.controller import router as brain_sandbox_router
 except ModuleNotFoundError:
@@ -53,6 +55,8 @@ app.add_middleware(
 # Include Routers
 app.include_router(brain_chat_router)
 app.include_router(brain_conversations_router)
+app.include_router(brain_projects_router)
+app.include_router(brain_memory_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)
 

@@ -98,7 +98,7 @@ const normalizeClarificationQuestions = (raw: any) => {
 export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesProps) {
     const router = useRouter();
     const pathname = usePathname();
-    const { isAuthenticated, openAuthModal, user } = useAuth();
+    const { isAuthenticated, openAuthModal, user, isLoading: isAuthLoading } = useAuth();
     const { currentConversationId, conversations, addConversation, touchConversation, fetchConversations, setConversationId } = useConversations();
     const { selectedModel } = useModels();
     const { balance, refreshBalance } = useCredits();
@@ -643,6 +643,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         const fetchHistory = async () => {
             if (!currentConversationId || !pathname.startsWith('/brain/')) return;
 
+            if (isAuthLoading) {
+                return;
+            }
+
+            if (!isAuthenticated) {
+                if (currentConversationId && currentConversationId !== 'new') {
+                    openAuthModal('signin-email');
+                }
+                return;
+            }
+
             // If we are currently loading, don't fetch history to avoid interrupting the active stream/state.
             if (isLoading) {
                 return;
@@ -890,7 +901,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 );
             }
         })();
-    }, [currentConversationId, pathname, resumeBrainAfterReload, selectedFramework]);
+    }, [currentConversationId, pathname, resumeBrainAfterReload, selectedFramework, isAuthenticated, isAuthLoading, openAuthModal]);
 
     useEffect(() => {
         const handleApprove = () => {

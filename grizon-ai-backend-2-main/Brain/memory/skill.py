@@ -50,7 +50,7 @@ class SkillMemory:
             """),
             {"lim": limit}
         )
-        return [dict(row) for row in results]
+        return [dict(row._mapping) for row in results]
 
     def close(self):
         self.db.close()

@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 
+import { env } from '../config/env.js';
 import { getPool } from '../db/pool.js';
 import { Errors } from '../utils/errors.js';
 import { tokenService } from '../services/token.service.js';
@@ -27,7 +28,8 @@ function isFoundationPublicPath(path: string) {
     path === '/api/v1/error' ||
     path === '/api/v1/plans' ||
     path === '/health' ||
-    path === '/'
+    path === '/' ||
+    path === '/debug/memory'
   );
 }
 
@@ -53,7 +55,10 @@ export const authMiddleware: RequestHandler = async (req, res, next) => {
     return next();
   }
 
-  const rawPlatformHeader = req.header('x-platform') ?? undefined;
+  let rawPlatformHeader = req.header('x-platform') ?? undefined;
+  if (!rawPlatformHeader && env.NODE_ENV === 'development') {
+    rawPlatformHeader = 'web';
+  }
 
   const platform = parsePlatform(rawPlatformHeader);
   if (!platform) {

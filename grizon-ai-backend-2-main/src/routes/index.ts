@@ -15,6 +15,24 @@ rootRouter.get("/health", (_req, res) => {
   ok(res, { status: "ok" }, "Service is healthy.");
 });
 
+rootRouter.get("/debug/memory", (_req, res) => {
+  const mem = process.memoryUsage();
+  ok(res, {
+    process: {
+      rss: `${Math.round(mem.rss / 1024 / 1024 * 100) / 100} MB`,
+      heapTotal: `${Math.round(mem.heapTotal / 1024 / 1024 * 100) / 100} MB`,
+      heapUsed: `${Math.round(mem.heapUsed / 1024 / 1024 * 100) / 100} MB`,
+      external: `${Math.round(mem.external / 1024 / 1024 * 100) / 100} MB`,
+      arrayBuffers: `${Math.round(mem.arrayBuffers / 1024 / 1024 * 100) / 100} MB`,
+    },
+    system: {
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+    }
+  }, "Memory stats retrieved successfully.");
+});
+
 // Payment webhooks — no auth middleware, verified by HMAC internally
 rootRouter.use("/payments", phonePeWebhookRouter);
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, JSON, Text, Boolean, Float, ARRAY
+from sqlalchemy import Column, String, Integer, DateTime, JSON, Text, Boolean, Float, ARRAY, ForeignKey
 from Brain.config.database import Base
 from datetime import datetime
 import uuid
