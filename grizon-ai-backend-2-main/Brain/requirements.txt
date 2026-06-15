@@ -20,3 +20,4 @@ langchain-postgres
 langchain-text-splitters
 qdrant-client
 openai
+PyJWT
