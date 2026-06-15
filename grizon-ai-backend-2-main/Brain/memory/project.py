@@ -15,10 +15,13 @@ class ProjectMemory:
             frontend=project_data.get("frontend"),
             backend=project_data.get("backend"),
             database=project_data.get("database"),
-            css_framework=project_data.get("cssFramework"),
-            auth_method=project_data.get("authMethod"),
+            css_framework=project_data.get("cssFramework") or project_data.get("css_framework"),
+            auth_method=project_data.get("authMethod") or project_data.get("auth_method"),
+            folder_structure=project_data.get("folder_structure") or project_data.get("folderStructure"),
             requirements=project_data.get("requirements", []),
-            status="active"
+            roadmap=project_data.get("roadmap"),
+            owner_id=project_data.get("owner_id"),
+            status=project_data.get("status", "active")
         )
         self.db.add(project)
         self.db.commit()
