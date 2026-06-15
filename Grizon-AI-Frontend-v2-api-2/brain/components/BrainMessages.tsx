@@ -15,7 +15,8 @@ import BrainAgentStatus, { type AgentStep } from './BrainAgentStatus';
 import BrainPlanCanvas from './BrainPlanCanvas';
 import { useExecutionStore } from '../store/execution-store';
 import { useStream } from '../lib/streaming/useStream';
-import { fetchSession, type SessionState, workflowPhaseLabel, workflowPhaseColor } from '../lib/brainSession';
+import { fetchSession, type SessionState, workflowPhaseLabel, workflowPhaseColor, updateSessionField } from '../lib/brainSession';
+import { createProject, getProject, appendRequirement, updateProjectStack } from '../lib/projectMemory';
 import BrainEditorCanvas from './BrainEditorCanvas';
 import BrainFrameworkSelector from './BrainFrameworkSelector';
 import { DEFAULT_BRAIN_FRAMEWORK, type BrainFrameworkId } from '../constants/frameworks';
@@ -145,6 +146,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         isNavigatingToNewRef.current = value;
     };
     const pendingMessageHandledRef = useRef(false);
+    const projectIdRef = useRef<string | null>(null);
     const latestJobRef = useRef<{ streamUrl: string, jobId: string, todoList?: any[], syncUrl?: string } | null>(null);
     const pendingAutoClarifyRef = useRef<string | null>(null);
     const autoClarifyRoundsRef = useRef(0);
@@ -170,6 +172,31 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const resumeAfterReloadRef = useRef(false);
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
+
+    // Persist project_id to sessionStorage whenever currentConversationId is known
+    useEffect(() => {
+        if (projectIdRef.current && currentConversationId) {
+            sessionStorage.setItem(`brain_project_${currentConversationId}`, projectIdRef.current);
+        }
+    }, [currentConversationId]);
+
+    const ensureProjectForConversation = useCallback(async (convId: string, title: string): Promise<string | null> => {
+        try {
+            const project = await createProject({
+                name: title,
+                description: `Brain project for conversation: ${convId}`,
+                owner_id: user?.id || 'anonymous',
+                status: 'active',
+            });
+            projectIdRef.current = project.id;
+            sessionStorage.setItem(`brain_project_${convId}`, project.id);
+            await updateSessionField(convId, 'project_id', project.id);
+            return project.id;
+        } catch (err) {
+            console.warn('Failed to create project memory:', err);
+            return null;
+        }
+    }, [user]);
 
     useEffect(() => {
         if (!isBuildMode || !buildStartedAt || buildFinishedAt) return;
@@ -529,6 +556,15 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         fetchSession(currentConversationId).then((res) => {
             if (!cancelled && res?.exists) {
                 setSessionState(res.data);
+                if (res.data?.project_id) {
+                    projectIdRef.current = res.data.project_id as string;
+                }
+            }
+            if (!cancelled && !projectIdRef.current) {
+                const stored = sessionStorage.getItem(`brain_project_${currentConversationId}`);
+                if (stored) {
+                    projectIdRef.current = stored;
+                }
             }
         });
         return () => { cancelled = true; };
@@ -902,6 +938,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 
                 const pending = JSON.parse(pendingStr);
                 console.log('[Brain] New component picked up pending message:', pending);
+                if (pending.projectId) {
+                    projectIdRef.current = pending.projectId;
+                }
                 sessionStorage.removeItem('brainPendingMessage');
                 
                 // Small delay to ensure component is fully settled
@@ -1038,6 +1077,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     });
 
                     setConversationId(activeId);
+
+                    // Create project memory for this conversation
+                    await ensureProjectForConversation(activeId, title);
+
                     // Store the pending message for the new component to pick up
                     sessionStorage.setItem('brainPendingMessage', JSON.stringify({
                         userText,
@@ -1048,7 +1091,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         modelId: selectedModel?.id || 'deepseek-chat',
                         framework: selectedFramework,
                         questionRounds,
-                        userId: user?.id || 'anonymous'
+                        userId: user?.id || 'anonymous',
+                        projectId: projectIdRef.current,
                     }));
                     // router.replace returns a Promise that resolves when navigation completes
                     await router.replace(`/brain/${activeId}`);
@@ -1153,7 +1197,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 approved_plan: isApproval ? approvedPlanContent : undefined,
                 question_rounds: questionRounds,
                 framework: selectedFramework,
-                temperature: temperature
+                temperature: temperature,
+                project_id: projectIdRef.current || undefined,
             }, (event) => {
                 const eventKeys = Object.keys(event || {});
                 if (eventKeys.length === 0) return;
@@ -1283,6 +1328,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             },
                         ]);
                         chunkUpdate = event.create_tasks.report || chunkUpdate;
+
+                        // Persist user's requirement to project memory when tasks are generated
+                        if (projectIdRef.current && userText && !isApproval) {
+                            appendRequirement(projectIdRef.current, userText).catch((err) =>
+                                console.warn('Failed to persist requirement:', err)
+                            );
+                        }
 
                         execStore.setPhase('SYNCING');
                         execStore.addTimelineEvent(`Generated ${tasks.length} execution tasks`, 'SUCCESS');
@@ -1466,6 +1518,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             }
                         } else if (!currentPlanContentRef.current) {
                             currentPlanContentRef.current = report;
+                        }
+
+                        // Update project memory with build results
+                        if (projectIdRef.current && isApproval && userText) {
+                            appendRequirement(projectIdRef.current, userText).catch((err) =>
+                                console.warn('Failed to persist requirement to project memory:', err)
+                            );
+                            updateProjectStack(projectIdRef.current, {
+                                framework: selectedFramework,
+                            }).catch((err) =>
+                                console.warn('Failed to update project stack:', err)
+                            );
                         }
                     }
 

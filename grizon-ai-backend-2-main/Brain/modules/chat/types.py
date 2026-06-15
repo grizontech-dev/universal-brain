@@ -19,6 +19,7 @@ class BrainChatRequest(BaseModel):
     framework: Optional[str] = "react"
     question_rounds: Optional[int] = 0
     resume_build: Optional[bool] = False
+    project_id: Optional[str] = None
 
 class BrainChatResponse(BaseModel):
     conversation_id: str

@@ -26,6 +26,7 @@ export const brainApi = {
         framework?: string;
         question_rounds?: number;
         resume_build?: boolean;
+        project_id?: string;
     }, onChunk: (chunk: any) => void, signal?: AbortSignal) => {
         const response = await brainApiFetch('chat/stream', {
             method: 'POST',

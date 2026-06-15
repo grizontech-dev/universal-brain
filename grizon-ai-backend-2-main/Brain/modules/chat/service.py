@@ -725,7 +725,25 @@ class BrainChatService:
                 mg.close_all()
             yield "event: end\ndata: {}\n\n"
 
-    def _get_or_create_project_id(self, conv_id: str) -> str:
+    def _get_or_create_project_id(self, conv_id: str, request_project_id: Optional[str] = None) -> str:
+        if request_project_id:
+            if conv_id and conv_id != "new":
+                try:
+                    uuid.UUID(conv_id)
+                    db = SessionLocal()
+                    bp = db.query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
+                    if not bp:
+                        bp = BrainProject(
+                            id=request_project_id,
+                            conversationId=conv_id,
+                            status="ACTIVE",
+                        )
+                        db.add(bp)
+                        db.commit()
+                    db.close()
+                except (ValueError, AttributeError):
+                    pass
+            return request_project_id
         if conv_id and conv_id != "new":
             try:
                 uuid.UUID(conv_id)
@@ -747,7 +765,7 @@ class BrainChatService:
             plan = latest_todo_list_from_messages(messages)
             current_index, _ = compute_resume_index(plan)
 
-        project_id = self._get_or_create_project_id(conv_id)
+        project_id = self._get_or_create_project_id(conv_id, request.get("project_id"))
         session_id = conv_id if conv_id != "new" else str(uuid.uuid4())
         mg = MemoryGateway(project_id=project_id, session_id=session_id)
 
