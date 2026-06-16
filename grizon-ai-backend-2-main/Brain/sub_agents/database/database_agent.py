@@ -70,9 +70,17 @@ class DatabaseAgent(BaseAgent):
         if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
         session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
 
+        active_decisions = state.get("active_decisions", {})
+        decisions_context = ""
+        if active_decisions:
+            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
+            decisions_context = "[Approved Decisions - CRITICAL - Must Follow]\n" + "\n".join(decisions_lines)
+
         messages = [SystemMessage(content=system_prompt)]
         if session_context:
             messages.append(SystemMessage(content=session_context))
+        if decisions_context:
+            messages.append(SystemMessage(content=decisions_context))
         messages.append(
             HumanMessage(
                 content=f"Execute task: {task.get('title')}\nPlan: {json.dumps(plan, default=str)[:3000]}"

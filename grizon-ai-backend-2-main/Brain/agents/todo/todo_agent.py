@@ -101,7 +101,9 @@ class TodoAgent(BaseAgent):
         plan = state.get("project_plan", {})
         framework = normalize_framework(state.get("framework"))
 
-        session_state = state.get("memory_context", {}).get("session_state", {})
+        memory_context = state.get("memory_context", {})
+        session_state = memory_context.get("session_state", {})
+        active_decisions = memory_context.get("decisions", {})
         wf_state = session_state.get("workflow_state", "")
         cur_agent = session_state.get("current_agent", "")
         task_idx = session_state.get("task_index", "")
@@ -111,6 +113,11 @@ class TodoAgent(BaseAgent):
         if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
         if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
         session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+
+        decisions_context = ""
+        if active_decisions:
+            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
+            decisions_context = "[Approved Decisions - MUST FOLLOW]\n" + "\n".join(decisions_lines)
 
         system_prompt = f"""
         You are the Todo Agent. Convert the approved project plan into executable tasks that produce a **fully connected** app in preview.
@@ -156,6 +163,8 @@ class TodoAgent(BaseAgent):
         ]
         if session_context:
             messages.append(SystemMessage(content=session_context))
+        if decisions_context:
+            messages.append(SystemMessage(content=decisions_context))
         messages.append(HumanMessage(content=f"Approved Plan: {json.dumps(plan)}"))
 
         response_content = await self.chat(messages, model_id="deepseek-chat")

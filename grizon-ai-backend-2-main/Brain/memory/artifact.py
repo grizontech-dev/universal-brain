@@ -15,8 +15,14 @@ class ArtifactMemory:
 
         if existing:
             existing.version += 1
+            existing.name = artifact.get("name", existing.name)
+            existing.artifact_type = artifact.get("type", existing.artifact_type)
             existing.content_hash = artifact.get("contentHash")
-            existing.dependencies = artifact.get("dependencies", [])
+            existing.dependencies = artifact.get("dependencies", existing.dependencies)
+            existing.exports = artifact.get("exports", existing.exports)
+            existing.language = artifact.get("language", existing.language)
+            existing.size_bytes = artifact.get("sizeBytes", existing.size_bytes)
+            existing.created_by = artifact.get("createdBy", existing.created_by)
             from datetime import datetime
             existing.updated_at = datetime.utcnow()
             self.db.commit()
@@ -60,6 +66,25 @@ class ArtifactMemory:
             Artifact.name == name,
             Artifact.is_active == True
         ).all()
+
+    def get_by_type(self, project_id: str, artifact_type: str) -> list:
+        return self.db.query(Artifact).filter(
+            Artifact.project_id == project_id,
+            Artifact.artifact_type == artifact_type,
+            Artifact.is_active == True
+        ).all()
+
+    def get_all(self, project_id: str) -> list:
+        return self.db.query(Artifact).filter(
+            Artifact.project_id == project_id,
+            Artifact.is_active == True
+        ).order_by(Artifact.created_at.desc()).all()
+
+    def deactivate(self, artifact_id: str):
+        self.db.query(Artifact).filter(Artifact.id == artifact_id).update({
+            "is_active": False
+        })
+        self.db.commit()
 
     def close(self):
         self.db.close()

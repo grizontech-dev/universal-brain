@@ -118,10 +118,13 @@ class BuilderAgent(BaseAgent):
         
         category = current_task.get("category", "backend")
         print(f"DEBUG: Builder routing to {category} agent...")
+
+        active_decisions = state.get("memory_context", {}).get("decisions", {})
         build_state = {
             **state,
             "build_standards": FULL_STACK_BUILD_STANDARDS,
             "current_build_task": current_task,
+            "active_decisions": active_decisions,
         }
         if category == "frontend":
             result = await self.frontend.execute(current_task, build_state)

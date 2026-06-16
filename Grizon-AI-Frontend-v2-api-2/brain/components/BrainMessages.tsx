@@ -19,6 +19,9 @@ import { fetchSession, type SessionState, workflowPhaseLabel, workflowPhaseColor
 import { createProject, getProject, appendRequirement, updateProjectStack } from '../lib/projectMemory';
 import BrainEditorCanvas from './BrainEditorCanvas';
 import BrainFrameworkSelector from './BrainFrameworkSelector';
+import BrainDecisionView from './BrainDecisionView';
+import BrainExecutionView from './BrainExecutionView';
+import BrainArtifactView from './BrainArtifactView';
 import { DEFAULT_BRAIN_FRAMEWORK, type BrainFrameworkId } from '../constants/frameworks';
 import {
     type BuildActivity,
@@ -1991,6 +1994,22 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                             <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce" />
                                         </div>
                                     </div>
+                                </div>
+                            )}
+                            {projectIdRef.current && (messages.some(m => m.planApproved) || buildTodos.length > 0) && (
+                                <div className="px-4 mb-4 space-y-3">
+                                    <BrainDecisionView
+                                        projectId={projectIdRef.current}
+                                        onDecisionOverride={(key, newVal) => {
+                                            console.log(`Decision overridden: ${key} → ${newVal}`);
+                                        }}
+                                    />
+                                    <BrainExecutionView
+                                        projectId={projectIdRef.current}
+                                    />
+                                    <BrainArtifactView
+                                        projectId={projectIdRef.current}
+                                    />
                                 </div>
                             )}
                             <div ref={messagesEndRef} className="h-40 shrink-0" />

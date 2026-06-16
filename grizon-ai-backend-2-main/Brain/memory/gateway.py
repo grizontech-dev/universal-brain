@@ -52,13 +52,24 @@ class MemoryGateway:
         exec_summary = self.execution.get_project_summary(self.project_id)
         session_state = await self.session.get_all()
 
+        artifact_components = self.artifacts.get_all_components(self.project_id)
+        all_artifacts = self.artifacts.get_all(self.project_id)
+
         return {
             "conversation": recent,
             "decisions": active_decisions,
             "project": project_info,
             "known_errors": recent_errors,
             "execution_status": exec_summary,
-            "session_state": session_state
+            "session_state": session_state,
+            "artifact_components": [
+                {"name": a.name, "file_path": a.file_path, "type": a.artifact_type, "version": a.version}
+                for a in artifact_components
+            ],
+            "registered_artifacts": [
+                {"name": a.name, "file_path": a.file_path, "type": a.artifact_type, "version": a.version}
+                for a in all_artifacts
+            ]
         }
 
     async def analyze_change_impact(self, change_request: str) -> dict:

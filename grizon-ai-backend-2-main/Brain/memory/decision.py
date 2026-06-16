@@ -38,6 +38,13 @@ class DecisionMemory:
         ).all()
         return {r.decision_key: r.decision_val for r in rows}
 
+    def get_active_decisions_raw(self, project_id: str) -> list:
+        project_id = str(project_id)
+        return self.db.query(ProjectDecision).filter(
+            ProjectDecision.project_id == project_id,
+            ProjectDecision.is_active == True
+        ).all()
+
     def override_decision(self, project_id: str, key: str, new_val: str, reason: str = None):
         project_id = str(project_id)
         self.db.query(ProjectDecision).filter(
