@@ -36,7 +36,9 @@ class PlannerAgent(BaseAgent):
         feedback = state.get("plan_feedback", "")
         current_plan = state.get("project_plan", {})
 
-        session_state = state.get("memory_context", {}).get("session_state", {})
+        memory_context = state.get("memory_context", {})
+        session_state = memory_context.get("session_state", {})
+        active_decisions = memory_context.get("decisions", {})
         wf_state = session_state.get("workflow_state", "")
         cur_agent = session_state.get("current_agent", "")
         task_idx = session_state.get("task_index", "")
@@ -46,6 +48,11 @@ class PlannerAgent(BaseAgent):
         if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
         if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
         session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+
+        decisions_context = ""
+        if active_decisions:
+            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
+            decisions_context = "[Approved Decisions - MUST FOLLOW]\n" + "\n".join(decisions_lines)
 
         # Build a clean context summary from history
         context_summary = self._build_context_summary(history, prompt)
@@ -77,6 +84,8 @@ class PlannerAgent(BaseAgent):
         messages = [SystemMessage(content=system_prompt)]
         if session_context:
             messages.append(SystemMessage(content=session_context))
+        if decisions_context:
+            messages.append(SystemMessage(content=decisions_context))
 
         # Inject the clean context summary as the primary input
         messages.append(HumanMessage(content=f"Project Context (including Q&A answers):\n{context_summary}"))

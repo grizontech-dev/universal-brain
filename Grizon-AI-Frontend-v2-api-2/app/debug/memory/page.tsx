@@ -16,6 +16,128 @@ export default function DebugMemoryPage() {
   const [wfAgent, setWfAgent] = useState('BuilderAgent');
   const [writeMsg, setWriteMsg] = useState('');
 
+  const [ownerId, setOwnerId] = useState('');
+  const [projects, setProjects] = useState<any[]>([]);
+  const [projectDetail, setProjectDetail] = useState<any>(null);
+  const [projectIdInput, setProjectIdInput] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [newProjectOwner, setNewProjectOwner] = useState('');
+  const [requirementText, setRequirementText] = useState('');
+  const [stackFrontend, setStackFrontend] = useState('');
+  const [stackBackend, setStackBackend] = useState('');
+  const [projectLoading, setProjectLoading] = useState(false);
+
+  const listProjects = useCallback(async () => {
+    if (!ownerId.trim()) return;
+    setProjectLoading(true);
+    setError('');
+    setWriteMsg('');
+    try {
+      const res = await fetch(`${BRAIN_API}/brain/projects?owner_id=${encodeURIComponent(ownerId.trim())}`);
+      if (!res.ok) throw new Error(`List projects failed: ${res.status}`);
+      const data = await res.json();
+      setProjects(Array.isArray(data) ? data : data.projects || []);
+      setWriteMsg(`Found ${Array.isArray(data) ? data.length : (data.projects || []).length} projects`);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectLoading(false);
+    }
+  }, [ownerId]);
+
+  const getProject = useCallback(async () => {
+    if (!projectIdInput.trim()) return;
+    setProjectLoading(true);
+    setError('');
+    setWriteMsg('');
+    try {
+      const res = await fetch(`${BRAIN_API}/brain/projects/${projectIdInput.trim()}`);
+      if (!res.ok) throw new Error(`Get project failed: ${res.status}`);
+      const data = await res.json();
+      setProjectDetail(data);
+      setWriteMsg('Project loaded');
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectLoading(false);
+    }
+  }, [projectIdInput]);
+
+  const createProject = useCallback(async () => {
+    if (!newProjectName.trim() || !newProjectOwner.trim()) return;
+    setProjectLoading(true);
+    setError('');
+    setWriteMsg('');
+    try {
+      const res = await fetch(`${BRAIN_API}/brain/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newProjectName.trim(),
+          description: newProjectDesc.trim(),
+          owner_id: newProjectOwner.trim(),
+        }),
+      });
+      if (!res.ok) throw new Error(`Create project failed: ${res.status}`);
+      const data = await res.json();
+      setProjectDetail(data);
+      setProjectIdInput(data.id || '');
+      setWriteMsg(`Project created: ${data.id}`);
+      if (ownerId.trim()) listProjects();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectLoading(false);
+    }
+  }, [newProjectName, newProjectDesc, newProjectOwner, ownerId, listProjects]);
+
+  const appendRequirement = useCallback(async () => {
+    if (!projectIdInput.trim() || !requirementText.trim()) return;
+    setProjectLoading(true);
+    setError('');
+    setWriteMsg('');
+    try {
+      const res = await fetch(`${BRAIN_API}/brain/projects/${projectIdInput.trim()}/requirements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement: requirementText.trim() }),
+      });
+      if (!res.ok) throw new Error(`Append requirement failed: ${res.status}`);
+      setWriteMsg('Requirement appended');
+      setRequirementText('');
+      getProject();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectLoading(false);
+    }
+  }, [projectIdInput, requirementText, getProject]);
+
+  const updateStack = useCallback(async () => {
+    if (!projectIdInput.trim()) return;
+    setProjectLoading(true);
+    setError('');
+    setWriteMsg('');
+    try {
+      const body: Record<string, string> = {};
+      if (stackFrontend.trim()) body.frontend = stackFrontend.trim();
+      if (stackBackend.trim()) body.backend = stackBackend.trim();
+      const res = await fetch(`${BRAIN_API}/brain/projects/${projectIdInput.trim()}/stack`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Update stack failed: ${res.status}`);
+      setWriteMsg('Stack updated');
+      getProject();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectLoading(false);
+    }
+  }, [projectIdInput, stackFrontend, stackBackend, getProject]);
+
   const fetchMemory = useCallback(async () => {
     if (!sessionId.trim()) return;
     setLoading(true);
@@ -125,6 +247,102 @@ export default function DebugMemoryPage() {
       {writeMsg && (
         <div className="bg-green-900/30 border border-green-500/30 rounded p-3 text-sm mb-4">{writeMsg}</div>
       )}
+
+      <div className="mb-8 mt-2 pt-6 border-t border-white/10">
+        <h2 className="text-lg font-bold mb-4">Project Memory</h2>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          {/* ─── Create ─── */}
+          <div className="bg-[#1a1a2e] border border-white/10 rounded p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Create Project</h3>
+            <div className="space-y-2">
+              <input value={newProjectName} onChange={e => setNewProjectName(e.target.value)}
+                placeholder="name *" className="w-full bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+              <input value={newProjectDesc} onChange={e => setNewProjectDesc(e.target.value)}
+                placeholder="description" className="w-full bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+              <input value={newProjectOwner} onChange={e => setNewProjectOwner(e.target.value)}
+                placeholder="owner_id *" className="w-full bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+              <button onClick={createProject} disabled={!newProjectName.trim() || !newProjectOwner.trim() || projectLoading}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 px-3 py-1.5 rounded text-xs font-medium w-full">
+                {projectLoading ? '...' : 'POST /brain/projects'}
+              </button>
+            </div>
+          </div>
+
+          {/* ─── List / Get ─── */}
+          <div className="bg-[#1a1a2e] border border-white/10 rounded p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">List & Get</h3>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input value={ownerId} onChange={e => { setOwnerId(e.target.value); setProjects([]); }}
+                  placeholder="owner_id" className="flex-1 bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+                <button onClick={listProjects} disabled={!ownerId.trim() || projectLoading}
+                  className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap">
+                  List
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input value={projectIdInput} onChange={e => { setProjectIdInput(e.target.value); setProjectDetail(null); }}
+                  placeholder="project_id" className="flex-1 bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+                <button onClick={getProject} disabled={!projectIdInput.trim() || projectLoading}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap">
+                  Get
+                </button>
+              </div>
+              {projects.length > 0 && (
+                <div className="max-h-40 overflow-y-auto space-y-1 mt-2">
+                  {projects.map((p: any) => (
+                    <div key={p.id} className="flex items-center gap-2 bg-white/5 rounded px-2 py-1">
+                      <span className="text-xs font-mono text-gray-300 truncate flex-1">{p.name}</span>
+                      <button onClick={() => { setProjectIdInput(p.id); getProject(); }}
+                        className="text-[10px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap">
+                        {p.id?.substring(0, 8)}...
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ─── Mutate ─── */}
+          <div className="bg-[#1a1a2e] border border-white/10 rounded p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">Mutate Project</h3>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input value={requirementText} onChange={e => setRequirementText(e.target.value)}
+                  placeholder="requirement text" className="flex-1 bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+                <button onClick={appendRequirement} disabled={!projectIdInput.trim() || !requirementText.trim() || projectLoading}
+                  className="bg-amber-600 hover:bg-amber-700 disabled:opacity-40 px-3 py-1.5 rounded text-xs font-medium whitespace-nowrap">
+                  + Req
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input value={stackFrontend} onChange={e => setStackFrontend(e.target.value)}
+                  placeholder="frontend (e.g. React)" className="flex-1 bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+                <input value={stackBackend} onChange={e => setStackBackend(e.target.value)}
+                  placeholder="backend (e.g. Node)" className="flex-1 bg-[#0d0c14] border border-white/10 rounded px-3 py-1.5 text-sm" />
+              </div>
+              <button onClick={updateStack} disabled={!projectIdInput.trim() || projectLoading}
+                className="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 px-3 py-1.5 rounded text-xs font-medium w-full">
+                PATCH stack
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        {/* ─── Project Detail ─── */}
+        {projectDetail && (
+          <div className="bg-[#1a1a2e] border border-white/10 rounded p-4 mt-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Project Detail</h3>
+            <pre className="text-xs text-gray-300 whitespace-pre-wrap break-all max-h-80 overflow-y-auto">
+              {JSON.stringify(projectDetail, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

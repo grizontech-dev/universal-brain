@@ -25,7 +25,9 @@ class QuestionsAgent(BaseAgent):
         if not isinstance(missing, list):
             missing = [str(missing)]
 
-        session_state = state.get("memory_context", {}).get("session_state", {})
+        memory_context = state.get("memory_context", {})
+        session_state = memory_context.get("session_state", {})
+        active_decisions = memory_context.get("decisions", {})
         wf_state = session_state.get("workflow_state", "")
         cur_agent = session_state.get("current_agent", "")
         task_idx = session_state.get("task_index", "")
@@ -35,6 +37,11 @@ class QuestionsAgent(BaseAgent):
         if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
         if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
         session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+
+        decisions_context = ""
+        if active_decisions:
+            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
+            decisions_context = "[Already Approved Decisions - Do NOT ask about these]\n" + "\n".join(decisions_lines)
 
         system_prompt = """
         You are the Questions Agent, a Senior Technical Architect. 
@@ -69,6 +76,8 @@ class QuestionsAgent(BaseAgent):
         ]
         if session_context:
             messages.append(SystemMessage(content=session_context))
+        if decisions_context:
+            messages.append(SystemMessage(content=decisions_context))
         
         # Add history for context
         if history:

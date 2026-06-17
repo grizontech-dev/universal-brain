@@ -20,6 +20,9 @@ from Brain.modules.chat.controller import router as brain_chat_router
 from Brain.modules.conversations.controller import brain_conversations_router
 from Brain.memory.debug import router as brain_memory_router
 from Brain.modules.projects.controller import router as brain_projects_router
+from Brain.modules.projects.decisions import router as brain_decisions_router
+from Brain.modules.projects.execution import router as brain_execution_router
+from Brain.modules.projects.artifacts import router as brain_artifacts_router
 try:
     from Brain.modules.sandbox.controller import router as brain_sandbox_router
 except ModuleNotFoundError:
@@ -56,6 +59,9 @@ app.add_middleware(
 app.include_router(brain_chat_router)
 app.include_router(brain_conversations_router)
 app.include_router(brain_projects_router)
+app.include_router(brain_decisions_router)
+app.include_router(brain_execution_router)
+app.include_router(brain_artifacts_router)
 app.include_router(brain_memory_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)

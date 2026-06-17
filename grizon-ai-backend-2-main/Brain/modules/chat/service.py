@@ -428,15 +428,51 @@ class BrainChatService:
             except RuntimeError:
                 pass
 
+            # Log execution for every agent phase (not builder — that's per-todo)
+            if node_name not in ("execute_sandbox", "init_sandbox"):
+                try:
+                    task_label = {
+                        "analyze_ingress": "Analyze user intent",
+                        "recursive_clarify": "Ask clarifying questions",
+                        "strategic_plan": "Generate strategic plan",
+                        "create_tasks": "Break plan into tasks",
+                    }.get(node_name, f"Phase: {node_name}")
+                    log = mg.execution.start_task(
+                        mg.project_id, task_label, agent or "unknown"
+                    )
+                    mg.execution.complete_task(log.id)
+                except Exception:
+                    pass
+
         # Store decisions in memory when plan is approved
         if mg and node_name == "strategic_plan" and state.get("plan_approved"):
             project_plan = state.get("project_plan") or {}
-            fp = project_plan.get("frontend") or project_plan.get("framework") or state.get("framework", "react")
+            plan_json = project_plan if isinstance(project_plan, dict) else {}
+            tech_stack = plan_json.get("tech_stack", []) or []
+            plan_content = plan_json.get("markdown_plan", "") or ""
+
+            fp = plan_json.get("frontend") or plan_json.get("framework") or state.get("framework", "react")
             decisions = {
                 "frontend": fp,
-                "backend": project_plan.get("backend") or "node",
-                "database": project_plan.get("database") or "supabase",
+                "backend": plan_json.get("backend") or "node",
+                "database": plan_json.get("database") or "supabase",
+                "theme": plan_json.get("theme") or "dark",
+                "auth": plan_json.get("auth") or "jwt",
+                "css": plan_json.get("css") or plan_json.get("css_framework") or "tailwind",
+                "api_style": "rest",
             }
+            for t in tech_stack:
+                tl = t.lower()
+                if "react" in tl: decisions["frontend"] = "React"
+                elif "vue" in tl: decisions["frontend"] = "Vue"
+                elif "angular" in tl: decisions["frontend"] = "Angular"
+                elif "express" in tl or "fastify" in tl: decisions["backend"] = t
+                elif "supabase" in tl: decisions["database"] = "Supabase"
+                elif "postgres" in tl: decisions["database"] = "PostgreSQL"
+                elif "mongodb" in tl: decisions["database"] = "MongoDB"
+                elif "tailwind" in tl: decisions["css"] = "Tailwind"
+                elif "jwt" in tl: decisions["auth"] = "JWT"
+                elif "oauth" in tl: decisions["auth"] = "OAuth"
             mg.decisions.store_approved_decisions(mg.project_id, decisions)
 
             # Store plan in long-term memory
@@ -664,6 +700,13 @@ class BrainChatService:
                         continue
                     t["status"] = "completed"
                 
+                # Log runner execution
+                if mg:
+                    runner_log = mg.execution.start_task(
+                        mg.project_id, "Runner: Start dev servers & finalize", "RunnerAgent"
+                    )
+                    mg.execution.complete_task(runner_log.id)
+
                 # Mark session as complete
                 if mg:
                     import asyncio as _asyncio4

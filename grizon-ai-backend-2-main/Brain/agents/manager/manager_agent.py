@@ -80,7 +80,9 @@ class ManagerAgent(BaseAgent):
         is_post_answers = self._is_answering_questions(history)
 
         # Extract session state for context injection
-        session_state = state.get("memory_context", {}).get("session_state", {})
+        memory_context = state.get("memory_context", {})
+        session_state = memory_context.get("session_state", {})
+        active_decisions = memory_context.get("decisions", {})
         wf_state = session_state.get("workflow_state", "")
         cur_agent = session_state.get("current_agent", "")
         task_idx = session_state.get("task_index", "")
@@ -90,6 +92,11 @@ class ManagerAgent(BaseAgent):
         if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
         if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
         session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+
+        decisions_context = ""
+        if active_decisions:
+            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
+            decisions_context = "[Approved Decisions - MUST FOLLOW]\n" + "\n".join(decisions_lines)
 
         # === POST-ANSWER PATH: User answered questions, re-evaluate with their answers ===
         if is_post_answers:
@@ -143,6 +150,8 @@ class ManagerAgent(BaseAgent):
             ]
             if session_context:
                 re_eval_messages.append(SystemMessage(content=session_context))
+            if decisions_context:
+                re_eval_messages.append(SystemMessage(content=decisions_context))
             re_eval_messages.append(HumanMessage(content=f"User answers: {user_answers}"))
 
             print(f"DEBUG: ManagerAgent re-evaluating post-answers with {self.model_id}")
@@ -196,6 +205,8 @@ class ManagerAgent(BaseAgent):
         messages = [SystemMessage(content=system_prompt)]
         if session_context:
             messages.append(SystemMessage(content=session_context))
+        if decisions_context:
+            messages.append(SystemMessage(content=decisions_context))
 
         for msg in history:
             role = msg.get("role", "USER")
