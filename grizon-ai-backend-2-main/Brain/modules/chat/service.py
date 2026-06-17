@@ -452,6 +452,23 @@ class BrainChatService:
         initial_state["conversation_id"] = conv_id
         initial_state["messages"] = conversation_service.get_messages(conv_id)
 
+        # Generate title for new conversation based on first message
+        is_new = not request.get("conversation_id") or request.get("conversation_id") == "new"
+        if is_new:
+            async def _bg_title_gen():
+                try:
+                    from Brain.agents.leader_agent import LeaderAgent
+                    prompt = initial_state.get("content") or ""
+                    model_id = initial_state.get("model_id", "gpt-4o-mini")
+                    title = await LeaderAgent.generate_title(prompt, model_id)
+                    if title:
+                        conversation_service.update_titles(conv_id, title)
+                        print(f"DEBUG: Generated title for new conversation {conv_id}: {title}")
+                except Exception as e:
+                    print(f"ERROR: Failed to generate title for new conversation: {e}")
+            
+            asyncio.create_task(_bg_title_gen())
+
         mg: MemoryGateway = initial_state.get("memory_gateway")
         if mg:
             initial_state["memory_context"] = await mg.build_agent_context("Leader")

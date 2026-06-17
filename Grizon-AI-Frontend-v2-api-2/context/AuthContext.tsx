@@ -116,9 +116,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const me = await authMe(access);
         if (cancelled) return;
         setUser(mapProfileToUser(me));
-      } catch {
+      } catch (e) {
         if (!cancelled) {
-          clearSession();
+          if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
+            clearSession();
+          }
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -133,8 +135,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const u = await loadMeWithRefresh(accessRef);
       setUser(u);
-    } catch {
-      clearSession();
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
+        clearSession();
+      }
     }
   }, [clearSession]);
 

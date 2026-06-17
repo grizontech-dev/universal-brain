@@ -65,4 +65,4 @@ async def health_check():
     return {"status": "healthy", "service": "project-brain"}
 
 if __name__ == "__main__":
-    uvicorn.run("Brain.main:app", host="127.0.0.1", port=8001, reload=True)
+    uvicorn.run("Brain.main:app", host="127.0.0.1", port=8002, reload=True)

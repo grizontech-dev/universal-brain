@@ -16,6 +16,7 @@ const listQuery = z.object({
 });
 
 const createBody = z.object({
+  title: z.string().trim().min(1).max(120).optional(),
   defaultAgentSlug: z.string().nullable().optional(),
   defaultModelId: z.string().nullable().optional(),
   tags: z.array(z.string().min(1).max(40)).max(20).optional(),
@@ -57,6 +58,7 @@ export const conversationController = {
       const conversation = await conversationService.create({
         userId: req.user.id,
         platform: req.platform,
+        title: body.title,
         defaultAgentSlug: body.defaultAgentSlug,
         defaultModelId: body.defaultModelId,
         tags: body.tags,

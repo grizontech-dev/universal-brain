@@ -75,6 +75,8 @@ export const brainApi = {
                     }
                 }
             }
+        } catch (e: any) {
+            if (e.name !== 'AbortError') throw e;
         } finally {
             reader.releaseLock();
         }

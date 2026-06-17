@@ -8,6 +8,8 @@ interface ClarificationQuestion {
     text: string;
     options: string[];
     category?: string;
+    type?: 'single' | 'multi';
+    allowAll?: boolean;
 }
 
 interface BrainClarificationCardProps {
@@ -20,15 +22,20 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
     const [currentPage, setCurrentPage] = useState(0);
     const [answers, setAnswers] = useState<string[]>([]);
     const [selectedOption, setSelectedOption] = useState<string | null>(null);
+    const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+    const [allSelected, setAllSelected] = useState(false);
     const [customInput, setCustomInput] = useState('');
     const [isCustom, setIsCustom] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const question = questions[currentPage];
+    const isMulti = question?.type === 'multi';
 
-    // Clear selection when page changes
+    // Clear state when page changes
     useEffect(() => {
         setSelectedOption(null);
+        setMultiSelected(new Set());
+        setAllSelected(false);
         setCustomInput('');
         setIsCustom(false);
     }, [currentPage]);
@@ -45,17 +52,57 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
         return null;
     }
 
-    const handleAnswer = (val: string) => {
+    const handleSingleAnswer = (val: string) => {
         const newAnswers = [...answers];
         newAnswers[currentPage] = val;
         setAnswers(newAnswers);
         setSelectedOption(val);
-        // No auto-advance — user must click Next/Submit
+    };
+
+    const handleMultiToggle = (val: string) => {
+        const next = new Set(multiSelected);
+        if (next.has(val)) {
+            next.delete(val);
+            if (question.allowAll && allSelected) setAllSelected(false);
+        } else {
+            next.add(val);
+            if (question.allowAll && next.size === question.options.length) {
+                setAllSelected(true);
+            }
+        }
+        const newAnswers = [...answers];
+        newAnswers[currentPage] = Array.from(next).join(', ');
+        setAnswers(newAnswers);
+        setMultiSelected(next);
+    };
+
+    const handleAllToggle = () => {
+        if (allSelected) {
+            setMultiSelected(new Set());
+            setAllSelected(false);
+            const newAnswers = [...answers];
+            newAnswers[currentPage] = '';
+            setAnswers(newAnswers);
+        } else {
+            const all = new Set(question.options);
+            setMultiSelected(all);
+            setAllSelected(true);
+            const newAnswers = [...answers];
+            newAnswers[currentPage] = Array.from(all).join(', ');
+            setAnswers(newAnswers);
+        }
     };
 
     const handleNext = () => {
         const currentAnswers = [...answers];
-        const currentAnswer = currentAnswers[currentPage] || selectedOption;
+        let currentAnswer: string;
+
+        if (isMulti) {
+            currentAnswer = currentAnswers[currentPage] || '';
+        } else {
+            currentAnswer = currentAnswers[currentPage] || selectedOption || '';
+        }
+
         if (!currentAnswer) return;
         currentAnswers[currentPage] = currentAnswer;
         setAnswers(currentAnswers);
@@ -63,7 +110,6 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
         if (currentPage < questions.length - 1) {
             setCurrentPage(p => p + 1);
         } else {
-            // Last question — submit all answers
             setIsSubmitting(true);
             const summary = currentAnswers.map((ans, i) => `${questions[i].text}: ${ans}`).join('\n');
             onSelect(summary);
@@ -71,67 +117,90 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
     };
 
     const handleCustomSubmit = () => {
-        if (customInput.trim()) handleAnswer(customInput.trim());
+        if (!customInput.trim()) return;
+        if (isMulti) {
+            handleMultiToggle(customInput.trim());
+        } else {
+            handleSingleAnswer(customInput.trim());
+        }
+        setCustomInput('');
+        setIsCustom(false);
     };
 
     const categoryLabel = question.category
         ? question.category.charAt(0).toUpperCase() + question.category.slice(1)
         : `Question ${currentPage + 1}`;
 
-    const hasAnswer = !!answers[currentPage];
+    const hasAnswer = isMulti
+        ? multiSelected.size > 0 || !!answers[currentPage]
+        : !!answers[currentPage] || !!selectedOption;
 
     return (
         <div className="w-full max-w-lg animate-in fade-in slide-in-from-bottom-2 duration-400 mb-6">
             <div className="bg-[#141414] border border-white/[0.1] rounded-2xl overflow-hidden shadow-2xl">
-
-                {/* Header row: badge + category + counter */}
                 <div className="flex items-center justify-between px-5 pt-4 pb-3">
                     <div className="flex items-center gap-2.5">
-                        {/* Numbered blue badge */}
                         <span className="w-6 h-6 rounded-md bg-[#3b82f6] flex items-center justify-center text-[12px] font-bold text-white shrink-0">
                             {currentPage + 1}
                         </span>
                         <span className="text-[15px] font-semibold text-white/90 tracking-tight">
                             {categoryLabel}
                         </span>
+                        {isMulti && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/30 bg-white/5 px-2 py-0.5 rounded">
+                                Select all that apply
+                            </span>
+                        )}
                     </div>
-                    {/* n/total counter */}
                     <span className="text-[13px] text-white/30 tabular-nums font-medium">
                         {currentPage + 1}/{questions.length}
                     </span>
                 </div>
 
-                {/* Question text */}
                 <div className="px-5 pb-4">
                     <p className="text-[14px] text-white/60 leading-relaxed">
                         {question.text}
                     </p>
                 </div>
 
-                {/* Options list */}
                 <div className="px-4 pb-2 space-y-1">
                     {question.options.map((opt, i) => {
-                        const isSelected = selectedOption === opt || answers[currentPage] === opt;
+                        const isSelected = isMulti
+                            ? multiSelected.has(opt)
+                            : selectedOption === opt || answers[currentPage] === opt;
                         return (
                             <button
                                 key={i}
-                                onClick={() => handleAnswer(opt)}
+                                onClick={() => isMulti ? handleMultiToggle(opt) : handleSingleAnswer(opt)}
                                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all duration-150 group ${
                                     isSelected
                                         ? 'bg-white/[0.07]'
                                         : 'hover:bg-white/[0.04]'
                                 }`}
                             >
-                                {/* Radio circle */}
-                                <span className={`w-[18px] h-[18px] shrink-0 rounded-full border-2 flex items-center justify-center transition-all ${
-                                    isSelected
-                                        ? 'border-white/60 bg-white/60'
-                                        : 'border-white/20 group-hover:border-white/40'
-                                }`}>
-                                    {isSelected && (
-                                        <span className="w-[7px] h-[7px] rounded-full bg-[#141414]" />
-                                    )}
-                                </span>
+                                {isMulti ? (
+                                    <span className={`w-[18px] h-[18px] shrink-0 rounded border-2 flex items-center justify-center transition-all ${
+                                        isSelected
+                                            ? 'border-white/60 bg-white/60'
+                                            : 'border-white/20 group-hover:border-white/40'
+                                    }`}>
+                                        {isSelected && (
+                                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                                                <path d="M2 5L4 7L8 3" stroke="#141414" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                            </svg>
+                                        )}
+                                    </span>
+                                ) : (
+                                    <span className={`w-[18px] h-[18px] shrink-0 rounded-full border-2 flex items-center justify-center transition-all ${
+                                        isSelected
+                                            ? 'border-white/60 bg-white/60'
+                                            : 'border-white/20 group-hover:border-white/40'
+                                    }`}>
+                                        {isSelected && (
+                                            <span className="w-[7px] h-[7px] rounded-full bg-[#141414]" />
+                                        )}
+                                    </span>
+                                )}
                                 <span className={`text-[13.5px] font-medium leading-snug transition-colors ${
                                     isSelected ? 'text-white/90' : 'text-white/50 group-hover:text-white/70'
                                 }`}>
@@ -141,7 +210,32 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
                         );
                     })}
 
-                    {/* "Something else" custom input */}
+                    {isMulti && question.allowAll && (
+                        <button
+                            onClick={handleAllToggle}
+                            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all duration-150 group ${
+                                allSelected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'
+                            }`}
+                        >
+                            <span className={`w-[18px] h-[18px] shrink-0 rounded border-2 flex items-center justify-center transition-all ${
+                                allSelected
+                                    ? 'border-white/60 bg-white/60'
+                                    : 'border-white/20 group-hover:border-white/40'
+                            }`}>
+                                {allSelected && (
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                                        <path d="M2 5L4 7L8 3" stroke="#141414" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                    </svg>
+                                )}
+                            </span>
+                            <span className={`text-[13.5px] font-semibold leading-snug transition-colors ${
+                                allSelected ? 'text-white/90' : 'text-white/40 group-hover:text-white/60'
+                            }`}>
+                                All of the above
+                            </span>
+                        </button>
+                    )}
+
                     {!isCustom ? (
                         <button
                             onClick={() => setIsCustom(true)}
@@ -180,16 +274,13 @@ export default function BrainClarificationCard({ questions, onSelect, onSkip }: 
                     )}
                 </div>
 
-                {/* Footer: Skip + Next */}
                 <div className="flex items-center gap-2 px-4 py-3.5 border-t border-white/[0.06] mt-1">
-                    {/* Skip button */}
                     <button
                         onClick={onSkip}
                         className="flex-1 py-2 text-[13px] font-semibold text-white/60 hover:text-white/80 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl transition-all"
                     >
                         Skip
                     </button>
-                    {/* Next / Submit button */}
                     <button
                         onClick={handleNext}
                         disabled={!hasAnswer}

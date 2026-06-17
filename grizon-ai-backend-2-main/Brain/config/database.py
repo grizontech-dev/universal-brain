@@ -4,18 +4,18 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
-print("Loading .env...")
-load_dotenv()
-print(".env loaded")
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env'))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-print(f"DATABASE_URL: {DATABASE_URL}")
 engine = create_engine(DATABASE_URL)
-print("Engine created")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-print("SessionLocal created")
 Base = declarative_base()
-print("Base created")
+
+# Import models so they are registered with Base.metadata
+import Brain.memory.models  # noqa: E402, F401
+
+# Create all tables on startup
+Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()

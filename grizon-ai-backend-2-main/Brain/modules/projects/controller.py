@@ -48,7 +48,7 @@ class ProjectResponse(BaseModel):
 
 def _to_response(project) -> ProjectResponse:
     return ProjectResponse(
-        id=project.id,
+        id=str(project.id),
         name=project.name,
         description=project.description,
         frontend=project.frontend,

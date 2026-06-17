@@ -48,8 +48,10 @@ export async function refreshAccessToken(): Promise<string | null> {
       const bundle = await authRefresh(rt);
       setTokenPair(bundle.access_token, bundle.refresh_token);
       return bundle.access_token;
-    } catch {
-      clearAll();
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
+        clearAll();
+      }
       return null;
     } finally {
       refreshPromise = null;

@@ -48,6 +48,7 @@ export const conversationService = {
   async create(args: {
     userId: string;
     platform: string;
+    title?: string | null;
     defaultAgentSlug?: string | null;
     defaultModelId?: string | null;
     tags?: string[];
@@ -55,11 +56,11 @@ export const conversationService = {
     const pool = getPool();
     const res = await pool.query(
       `
-      INSERT INTO conversations (user_id, platform, default_agent_slug, default_model_id, tags)
-      VALUES ($1,$2,$3,$4,$5)
+      INSERT INTO conversations (user_id, platform, title, default_agent_slug, default_model_id, tags)
+      VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING *
     `,
-      [args.userId, args.platform, args.defaultAgentSlug ?? null, args.defaultModelId ?? null, args.tags ?? []],
+      [args.userId, args.platform, args.title ?? 'New Conversation', args.defaultAgentSlug ?? null, args.defaultModelId ?? null, args.tags ?? []],
     );
     const conversation = mapConversation(res.rows[0] as Row);
     conversationEvents.emit("conversation.created", {

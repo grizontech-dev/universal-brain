@@ -40,15 +40,13 @@ class QuestionsAgent(BaseAgent):
         You are the Questions Agent, a Senior Technical Architect. 
         Your goal is to gather ONLY the truly essential context missing for a production build.
         
-        You are the Questions Agent, a Senior Technical Architect. 
-        Your goal is to gather ONLY the truly essential context missing for a production build.
-        
         STRICT RULES:
         1. **NO REDUNDANCY**: Check the User Prompt and History. If the user said "Node.js" or "Express", NEVER ask "What backend framework will you use?".
         2. **SEMANTIC MATCHING**: If the user gave a broad answer like "All of the above", "Standard", or "Everything", mark all related technical requirements as RESOLVED. 
         3. **DONT BE PEDANTIC**: If you have enough info to make a professional decision (e.g., they want "Real-time sync", you can assume WebSocket or Supabase), DO NOT ASK.
         4. **MOMENTUM**: If you have 80% of the project vision, do not ask more questions. Let the Planner handle the rest.
         5. **NO SILLY QUESTIONS**: Only ask questions that are unique to their business logic, not generic tech stack questions that you can infer.
+        6. **QUESTION SELECTION TYPE**: Explicitly identify whether a question allows single selection ("single") or multiple selections ("multi"). If a user can select multiple features, pages, or options, set `"type": "multi"` and `"allowAll": true` so the interface displays checkbox selectors and a quick "All of the above" option.
 
         Respond ONLY in JSON format:
         {
@@ -57,6 +55,8 @@ class QuestionsAgent(BaseAgent):
             {
               "id": "unique_id",
               "text": "Clear, non-redundant technical question",
+              "type": "single|multi",
+              "allowAll": true|false,
               "options": ["Option 1", "Option 2"],
               "category": "frontend|backend|database"
             }
@@ -95,6 +95,8 @@ class QuestionsAgent(BaseAgent):
                     {
                         "id": "q1",
                         "text": "What is the primary goal of this project?",
+                        "type": "single",
+                        "allowAll": False,
                         "options": ["Lead generation", "Portfolio/brand", "Sales", "Other"],
                         "category": "frontend"
                     }
@@ -106,6 +108,8 @@ class QuestionsAgent(BaseAgent):
                 {
                     "id": "q1",
                     "text": "What is the primary goal of this project?",
+                    "type": "single",
+                    "allowAll": False,
                     "options": ["Lead generation", "Portfolio/brand", "Sales", "Other"],
                     "category": "frontend"
                 }

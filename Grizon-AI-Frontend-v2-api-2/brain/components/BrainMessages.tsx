@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useConversations } from '@/context/ConversationContext';
 import { useModels } from '@/context/ModelContext';
 import { useCredits } from '@/context/CreditContext';
+import { useThreadList } from '@/context/ThreadListContext';
 import BrainUserMessage from './BrainUserMessage';
 import BrainAgentMessage from './BrainAgentMessage';
 import BrainClarificationCard from './BrainClarificationCard';
@@ -49,6 +50,8 @@ interface ClarificationQuestion {
     id: string;
     text: string;
     options: string[];
+    type?: 'single' | 'multi';
+    allowAll?: boolean;
 }
 
 interface Message {
@@ -76,7 +79,6 @@ interface BrainMessagesProps {
 }
 
 const normalizeClarificationQuestions = (raw: any) => {
-    // Handle case where raw is the whole payload object { preamble, questions }
     const questions = Array.isArray(raw) ? raw : (raw?.questions || []);
 
     if (!Array.isArray(questions)) return [];
@@ -91,7 +93,9 @@ const normalizeClarificationQuestions = (raw: any) => {
         return {
             id: q?.id || `q${index}`,
             text,
-            options
+            options,
+            type: q?.type || q?.mode || 'single',
+            allowAll: q?.allowAll ?? true,
         };
     }).filter((q: any) => q.text);
 };
@@ -103,6 +107,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const { currentConversationId, conversations, addConversation, touchConversation, fetchConversations, setConversationId } = useConversations();
     const { selectedModel } = useModels();
     const { balance, refreshBalance } = useCredits();
+    const { setThreadListOpen } = useThreadList();
     const [messages, setMessages] = useState<Message[]>([]);
 
     const userCredits = balance?.available || balance?.total || 0;
@@ -132,7 +137,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             activeConvIdRef.current = currentConversationId;
         }
     }, [currentConversationId]);
-    
+
     // Use sessionStorage to track navigation state across component instances
     const isNavigatingToNewRef = useRef(false);
     const getNavigatingFlag = () => {
@@ -173,6 +178,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
 
+    // Close the chat history sidebar when build mode starts
+    useEffect(() => {
+        if (isBuildMode) {
+            setThreadListOpen(false);
+        }
+    }, [isBuildMode, setThreadListOpen]);
+
     // Persist project_id to sessionStorage whenever currentConversationId is known
     useEffect(() => {
         if (projectIdRef.current && currentConversationId) {
@@ -186,7 +198,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 name: title,
                 description: `Brain project for conversation: ${convId}`,
                 owner_id: user?.id || 'anonymous',
-                status: 'active',
             });
             projectIdRef.current = project.id;
             sessionStorage.setItem(`brain_project_${convId}`, project.id);
@@ -1526,7 +1537,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 console.warn('Failed to persist requirement to project memory:', err)
                             );
                             updateProjectStack(projectIdRef.current, {
-                                framework: selectedFramework,
+                                frontend: selectedFramework,
                             }).catch((err) =>
                                 console.warn('Failed to update project stack:', err)
                             );
@@ -1630,8 +1641,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             }
 
         } catch (err: any) {
-            console.error('Brain chat error:', err);
             if (err.name !== 'AbortError') {
+                console.error('Brain chat error:', err);
                 setMessages(prev => [...prev, {
                     id: `error_${Date.now()}`,
                     role: 'agent',
@@ -1721,7 +1732,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             <header className="h-[52px] shrink-0 border-b border-white/5 flex items-center justify-between px-4 sm:px-6 bg-[#0a0a0a] z-30">
                 <div className="flex items-center gap-4 min-w-0">
                     <button
-                        onClick={onToggleSidebarAction}
+                        onClick={onToggleSidebarAction || (() => window.dispatchEvent(new CustomEvent('toggleBrainSidebar')))}
                         className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl text-white/40 hover:text-white hover:bg-white/[0.05] transition-all shrink-0"
                     >
                         <Menu size={18} />
