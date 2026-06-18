@@ -184,30 +184,33 @@ export default function BrainBuildActivityFeed({
             )}
 
             {todos.length > 0 && (
-                <div className="px-3 pt-3 pb-2 border-b border-white/5">
-                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">Tasks</p>
-                    <ul className="space-y-1.5 max-h-[140px] overflow-y-auto custom-scrollbar">
+                <div className="px-3 pt-3 pb-2 border-b border-white/5 sticky top-0 z-10 bg-[#0a0a0a]">
+                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">
+                        Tasks <span className="text-white/20 normal-case">({todos.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'success').length}/{todos.length})</span>
+                    </p>
+                    <ul className="space-y-1 max-h-[220px] overflow-y-auto custom-scrollbar">
                         {todos.map((t, i) => {
                             const s = (t.status || '').toLowerCase();
                             const isRunning = s === 'executing' || s === 'running' || s === 'pending_confirmation';
+                            const isDone = t.status === 'completed' || t.status === 'done' || t.status === 'success';
                             return (
                             <li
                                 key={t.id || i}
                                 ref={isRunning ? tasksEndRef : undefined}
-                                className="flex items-start gap-2 text-[12px]"
+                                className="flex items-center gap-2 text-[11px]"
                             >
                                 <span className={`shrink-0 ${
-                                    t.status === 'completed' || t.status === 'done' || t.status === 'success' ? 'text-emerald-400'
-                                    : isRunning ? 'text-[#c4b5fd]' : 'text-white/30'
+                                    isDone ? 'text-emerald-400'
+                                    : isRunning ? 'text-[#c4b5fd]' : 'text-white/40'
                                 }`}>
-                                    {t.status === 'completed' || t.status === 'done' || t.status === 'success' ? '✔' : isRunning ? '▶' : '□'}
+                                    {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
                                 </span>
-                                <span className={`leading-snug ${
-                                    t.status === 'completed' || t.status === 'done' || t.status === 'success'
-                                        ? 'text-white/35 line-through'
+                                <span className={`leading-snug truncate ${
+                                    isDone
+                                        ? 'text-white/50'
                                         : isRunning
-                                          ? 'text-[#c4b5fd]'
-                                          : 'text-white/75'
+                                          ? 'text-[#c4b5fd] font-medium'
+                                          : 'text-white/70'
                                 }`}>
                                     {t.title || t.task || 'Task'}
                                 </span>

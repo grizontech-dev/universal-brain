@@ -16,10 +16,11 @@ export async function brainApiFetch(path: string, init?: RequestInit): Promise<R
         const res = await fetch(getBrainApiUrl(path), {
             ...init,
             cache: 'no-store',
-            signal: init?.signal ?? AbortSignal.timeout(8000),
+            signal: init?.signal,
         });
         return res;
-    } catch {
+    } catch (err) {
+        console.error(`[brainApiFetch] ${path} failed:`, err?.constructor?.name, err);
         return null;
     }
 }

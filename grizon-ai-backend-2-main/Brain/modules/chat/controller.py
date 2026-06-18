@@ -41,7 +41,12 @@ async def chat_stream(request: BrainChatRequest):
 
         return StreamingResponse(
             service.process_chat_stream(data),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -12,7 +12,7 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="deepseek-chat"
+            model_id="gpt-4o-mini"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()
@@ -32,7 +32,7 @@ class BackendAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001).
+        You are the Backend Agent for Grizon Brain. Express API in `backend/`.
 
         {FULL_STACK_BUILD_STANDARDS}
 
@@ -46,6 +46,7 @@ class BackendAgent(BaseAgent):
         4. **Frontend contract**: paths must match what frontend calls via `/api/...` (e.g. POST `/api/contact`, GET `/api/programs`).
         5. **package.json**: add express, cors, @supabase/supabase-js, etc. in dependencies when needed.
         6. **commands & packages**: ALL packages used in the project MUST be added to `backend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies, you MUST add them to `backend/package.json` AND return `"commands": ["cd backend && npm install"]`. The runner handles server restarts automatically.
+        7. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. This is an absolute requirement for the tunnel URL to work properly.
         Title: {task.get('title')}
         Description: {task.get('description')}
         Acceptance: {task.get('acceptance_criteria', '')}

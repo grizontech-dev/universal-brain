@@ -23,7 +23,11 @@ from Brain.agents.planner.planner_agent import PlannerAgent
 from Brain.agents.todo.todo_agent import TodoAgent
 from Brain.agents.builder.builder_agent import BuilderAgent
 from Brain.agents.runner.runner_agent import RunnerAgent
-from Brain.services.workspace_manager import workspace_manager, RUNTIME_WEBCONTAINER
+from Brain.services.workspace_manager import workspace_manager
+from Brain.services.sandbox_mcp_service import (
+    get_sandbox_mcp_service,
+    RUNTIME_SANDBOX_MCP,
+)
 from Brain.services.template_service import (
     apply_templates_to_workspace,
     get_bootstrap_ops,
@@ -193,8 +197,12 @@ class BrainChatService:
         return state
 
     async def node_init_sandbox(self, state: BrainState) -> Dict[str, Any]:
-        """Initializes the WebContainer workspace (browser runtime)."""
+        """Initializes the sandbox MCP workspace."""
         print("DEBUG: NODE [init_sandbox] started")
+        sandbox_mcp = get_sandbox_mcp_service()
+        await sandbox_mcp.initialize()
+        sandbox_mcp.start_background_cleanup()
+
         if not state.get("current_job_id"):
             print(f"DEBUG: Creating workspace for conversation {state['conversation_id']}")
             cid = workspace_manager.create_workspace(name=state["conversation_id"])
@@ -204,7 +212,7 @@ class BrainChatService:
                 return {
                     "status": "error",
                     "error_msg": cid,
-                    "report": f"❌ Workspace error: {cid}"
+                    "report": f"Workspace error: {cid}"
                 }
 
         job_id = state["current_job_id"]
@@ -224,24 +232,25 @@ class BrainChatService:
 
         sandbox_job = {
             "job_id": job_id,
-            "runtime": RUNTIME_WEBCONTAINER,
+            "runtime": RUNTIME_SANDBOX_MCP,
             "framework": framework,
-            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}",
             "await_preview": True,
         }
+
+        sandbox_mcp.record_activity(str(job_id))
 
         template_activities = [
             {
                 "id": "tpl-express",
                 "type": "template",
-                "label": "Read express-template → backend/",
+                "label": "Read express-template -> backend/",
                 "status": "done",
                 "timestamp": int(__import__("time").time() * 1000),
             },
             {
                 "id": "tpl-supabase",
                 "type": "template",
-                "label": "Read supabase-template → backend/supabase/",
+                "label": "Read supabase-template -> backend/supabase/",
                 "status": "done",
                 "timestamp": int(__import__("time").time() * 1000),
             },
@@ -250,13 +259,6 @@ class BrainChatService:
                 "type": "template",
                 "label": f"Loaded {framework} frontend template",
                 "status": "done",
-                "timestamp": int(__import__("time").time() * 1000),
-            },
-            {
-                "id": "tpl-sync",
-                "type": "sync",
-                "label": "Syncing project files to WebContainer",
-                "status": "running",
                 "timestamp": int(__import__("time").time() * 1000),
             },
         ]
@@ -275,7 +277,7 @@ class BrainChatService:
                 "progress_msg": f"[TEMPLATE] Bootstrapped {framework} stack",
             },
             "status": "building",
-            "report": f"🚀 WebContainer ready ({framework}). Express + Supabase + frontend template loaded.",
+            "report": f"Sandbox workspace ready ({framework}). Express + Supabase + frontend template loaded.",
         }
 
     async def node_execute_sandbox(self, state: BrainState) -> Dict[str, Any]:
@@ -399,7 +401,8 @@ class BrainChatService:
             "agentStep": node_name,
             "questions_data": state.get("questions_data"),
             "planApproved": state.get("plan_approved", False),
-            "thoughts": thoughts
+            "thoughts": thoughts,
+            "current_task_index": state.get("current_task_index", 0),
         }
         conversation_service.save_message(
             conv_id, "ASSISTANT", report,
@@ -482,6 +485,7 @@ class BrainChatService:
 
 
     async def process_chat_stream(self, request: Dict[str, Any]) -> AsyncGenerator[str, None]:
+        import asyncio
         initial_state = self._prepare_initial_state(request)
         
         conv_id, _ = conversation_service.ensure_brain_persistence(initial_state)
@@ -564,6 +568,7 @@ class BrainChatService:
                             "questions_data": initial_state.get("questions_data"),
                             "planApproved": initial_state.get("plan_approved", False),
                             "thoughts": thoughts,
+                            "current_task_index": initial_state.get("current_task_index", 0),
                         }
                         conversation_service.save_message(
                             conv_id, "ASSISTANT", report or "",
@@ -609,6 +614,10 @@ class BrainChatService:
                             todo_id=task.get("id")
                         )
                         task_log_ids[index] = log.id
+
+                    # Emit task_started so UI shows live progress
+                    current_task = plan[index] if index < len(plan) else {}
+                    yield f"data: {json.dumps({'task_started': _sanitize_for_json({'current_task_index': index, 'total_tasks': len(plan), 'task_label': current_task.get('label', ''), 'plan': plan})})}\n\n"
                     
                     # Run builder for one task — stream each event
                     async for ev in agent.execute(state):
@@ -673,6 +682,7 @@ class BrainChatService:
                         "agentStep": "execute_sandbox",
                         "planApproved": True,
                         "thoughts": thoughts,
+                        "current_task_index": index,
                     }
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", report,
@@ -748,6 +758,7 @@ class BrainChatService:
                     "planContent": state.get("project_plan"),
                     "agentStep": "final_report",
                     "planApproved": True,
+                    "current_task_index": len(tasks),
                 }
                 conversation_service.save_message(
                     conv_id, "ASSISTANT", report,

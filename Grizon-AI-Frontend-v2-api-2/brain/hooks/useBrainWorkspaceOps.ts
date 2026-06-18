@@ -59,12 +59,15 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                 const data = JSON.parse(event.data);
                 if (data.type === 'workspace_ops' && data.ops) {
                     enqueueOps(data.ops);
-                    if (data.progress_msg) {
-                        const parsed = parseProgressToActivity(String(data.progress_msg));
-                        if (parsed) {
+                    if (data.progress_msg || data.todoList) {
+                        const parsed = data.progress_msg ? parseProgressToActivity(String(data.progress_msg)) : null;
+                        if (parsed || data.todoList) {
                             window.dispatchEvent(
                                 new CustomEvent('updateSandboxProgress', {
-                                    detail: { progressMsg: data.progress_msg },
+                                    detail: { 
+                                        progressMsg: data.progress_msg,
+                                        todoList: data.todoList
+                                    },
                                 })
                             );
                         }
@@ -74,10 +77,44 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                             new CustomEvent('brainBuildActivity', { detail: { activities: data.activities } })
                         );
                     }
+                    // Check if a tunnel URL is embedded in activities
+                    if (data.activities?.length) {
+                        for (const act of data.activities) {
+                            const tunnelMatch = String(act.detail || act.label || '').match(/https:\/\/[\w-]+\.trycloudflare\.com/);
+                            if (tunnelMatch) {
+                                window.dispatchEvent(
+                                    new CustomEvent('brainPreviewReady', { detail: { url: tunnelMatch[0], streamUrl: tunnelMatch[0] } })
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    // Check if progress_msg contains a tunnel URL
+                    if (data.progress_msg) {
+                        const tunnelMatch = String(data.progress_msg).match(/https:\/\/[\w-]+\.trycloudflare\.com/);
+                        if (tunnelMatch) {
+                            window.dispatchEvent(
+                                new CustomEvent('brainPreviewReady', { detail: { url: tunnelMatch[0], streamUrl: tunnelMatch[0] } })
+                            );
+                        }
+                    }
                 } else if (data.type === 'workspace_op') {
                     enqueueOps([data]);
                 } else if (data.type === 'file_change') {
                     window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
+                } else if (data.type === 'sandbox_ready' || data.type === 'tunnel_ready') {
+                    // Sandbox MCP returned a live tunnel URL
+                    const url = data.tunnel_url || data.url || data.stream_url;
+                    if (url) {
+                        window.dispatchEvent(
+                            new CustomEvent('brainPreviewReady', { detail: { url, streamUrl: url } })
+                        );
+                    }
+                } else if (data.tunnel_url) {
+                    // Generic event that carries a tunnel_url field
+                    window.dispatchEvent(
+                        new CustomEvent('brainPreviewReady', { detail: { url: data.tunnel_url, streamUrl: data.tunnel_url } })
+                    );
                 }
             } catch (err) {
                 console.error('[WebContainer] WS parse error:', err);

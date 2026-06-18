@@ -20,9 +20,7 @@ import { fetchSession, type SessionState, workflowPhaseLabel, workflowPhaseColor
 import { createProject, getProject, appendRequirement, updateProjectStack } from '../lib/projectMemory';
 import BrainEditorCanvas from './BrainEditorCanvas';
 import BrainFrameworkSelector from './BrainFrameworkSelector';
-import BrainDecisionView from './BrainDecisionView';
-import BrainExecutionView from './BrainExecutionView';
-import BrainArtifactView from './BrainArtifactView';
+
 import { DEFAULT_BRAIN_FRAMEWORK, type BrainFrameworkId } from '../constants/frameworks';
 import {
     type BuildActivity,
@@ -132,7 +130,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const activeConvIdRef = useRef<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const sendingRef = useRef(false);
     const userScrolledUpRef = useRef(false);
+    const pollTaskIndexRef = useRef(-1);
+    const maxSeenTaskIndexRef = useRef(-1);
+
+    // Reset sending lock when conversation changes (prevents stale lock from blocking new conversations)
+    useEffect(() => {
+        sendingRef.current = false;
+        pollTaskIndexRef.current = -1;
+        maxSeenTaskIndexRef.current = -1;
+    }, [currentConversationId]);
 
     // Sync ref with URL param
     useEffect(() => {
@@ -188,6 +196,118 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         }
     }, [isBuildMode, setThreadListOpen]);
 
+    // Force canvas open when buildJob becomes available (handles timing gap before component mounts)
+    const buildJobRef = useRef(buildJob);
+    useEffect(() => {
+        if (buildJob && buildJob !== buildJobRef.current) {
+            setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: buildJob }));
+                window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: buildJob }));
+            }, 0);
+        }
+        buildJobRef.current = buildJob;
+    }, [buildJob]);
+
+    // Poll conversation state periodically so UI updates even if SSE events are missed
+    const buildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    useEffect(() => {
+        if (!isBuildMode || !currentConversationId) {
+            if (buildPollRef.current) {
+                clearInterval(buildPollRef.current);
+                buildPollRef.current = null;
+            }
+            return;
+        }
+        buildPollRef.current = setInterval(async () => {
+            try {
+                const res = await conversationsApi.get(currentConversationId);
+                const data = res.data?.conversation || res.data;
+                if (res.success && data?.messages) {
+                    const lastAssistant = [...data.messages].reverse().find((m: any) => {
+                        const r = (m.role || '').toUpperCase();
+                        return r === 'ASSISTANT' || r === 'AGENT';
+                    });
+                    if (lastAssistant) {
+                        let metadata: any = lastAssistant.metadata || {};
+                        if (typeof metadata === 'string') {
+                            try { metadata = JSON.parse(metadata); } catch { metadata = {}; }
+                        }
+                        const todoData = lastAssistant.todoList || metadata.todoList || metadata.plan || [];
+                        if (Array.isArray(todoData) && todoData.length > 0) {
+                            const currentTaskIndex = metadata.current_task_index;
+                            const shouldRecalcStatus = typeof currentTaskIndex === 'number' && currentTaskIndex >= 0;
+
+                            // Only update if this poll has a higher task index than the max ever seen
+                            // (from either SSE or previous polling), so that SSE-driven updates
+                            // (which are more current) aren't overwritten by stale polling data.
+                            const taskIndex = shouldRecalcStatus ? currentTaskIndex : -1;
+
+                            if (taskIndex > maxSeenTaskIndexRef.current) {
+                                maxSeenTaskIndexRef.current = taskIndex;
+                                pollTaskIndexRef.current = taskIndex;
+
+                                const normalized = shouldRecalcStatus
+                                    ? mergeTodosFromPlan(
+                                        todoData.map((t: BuildTodoItem) => ({
+                                            ...t,
+                                            status: t.status === 'completed' || t.status === 'failed' ? t.status : 'pending',
+                                        })),
+                                        currentTaskIndex,
+                                        'building',
+                                    )
+                                    : todoData.map((t: any) => ({
+                                        ...t,
+                                        task: t.task || t.title || t.label || 'Unnamed Task',
+                                        status: t.status || 'pending',
+                                    }));
+                                setBuildTodos(prev => {
+                                    if (prev.length === 0 || JSON.stringify(prev) !== JSON.stringify(normalized)) {
+                                        return normalized;
+                                    }
+                                    return prev;
+                                });
+                            }
+                        }
+                        const actData = metadata.activities || metadata.buildActivities;
+                        if (Array.isArray(actData) && actData.length > 0) {
+                            setBuildActivities(prev => {
+                                if (prev.length === 0 || prev.length < actData.length) {
+                                    return actData.map((a: any, i: number) => ({
+                                        id: a.id || `poll-act-${i}`,
+                                        type: a.type || 'narration',
+                                        label: a.label || a.text || '',
+                                        timestamp: a.timestamp || Date.now(),
+                                        status: a.status || 'running',
+                                    }));
+                                }
+                                return prev;
+                            });
+                        }
+                        const sj = lastAssistant.sandboxJob || metadata.sandboxJob || metadata.sandbox_job;
+                        if (sj) {
+                            const jobData = {
+                                jobId: sj.job_id || sj.jobId,
+                                syncUrl: sj.sync_url || sj.syncUrl,
+                                streamUrl: sj.stream_url || sj.streamUrl,
+                                framework: sj.framework || selectedFramework,
+                            };
+                            if (jobData.jobId) {
+                                setBuildJob(prev => {
+                                    if (!prev || prev.jobId !== jobData.jobId) return jobData;
+                                    return prev;
+                                });
+                                setIsEditorOpen(true);
+                            }
+                        }
+                    }
+                }
+            } catch { }
+        }, 5000);
+        return () => {
+            if (buildPollRef.current) clearInterval(buildPollRef.current);
+        };
+    }, [isBuildMode, currentConversationId, selectedFramework]);
+
     // Persist project_id to sessionStorage whenever currentConversationId is known
     useEffect(() => {
         if (projectIdRef.current && currentConversationId) {
@@ -230,7 +350,20 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             opts?: { activeIndex?: number; buildPhase?: 'building' | 'runner' | 'complete' }
         ) => {
             if (!plan.length) return;
-            setBuildTodos(mergeTodosFromPlan(plan, opts?.activeIndex, opts?.buildPhase));
+            const activeIndex = opts?.activeIndex;
+            const taskIndex = typeof activeIndex === 'number' ? activeIndex : -1;
+
+            // Only apply if this is a forward progression (or no specific index),
+            // so that faster SSE events don't regress the UI when a slower duplicate arrives.
+            if (taskIndex > maxSeenTaskIndexRef.current || taskIndex < 0) {
+                if (taskIndex > maxSeenTaskIndexRef.current) {
+                    maxSeenTaskIndexRef.current = taskIndex;
+                }
+                const effectiveIndex = opts?.activeIndex !== undefined 
+                    ? opts.activeIndex 
+                    : (maxSeenTaskIndexRef.current >= 0 ? maxSeenTaskIndexRef.current : undefined);
+                setBuildTodos(mergeTodosFromPlan(plan, effectiveIndex, opts?.buildPhase));
+            }
         },
         []
     );
@@ -379,7 +512,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     };
                     setBuildJob(job);
                     setIsEditorOpen(true);
-                    window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
+                    setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
+                    }, 0);
                 }
 
                 const progressMsg = inner.progress_msg || nodeData.progress_msg;
@@ -471,7 +606,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         jobId: conversationId,
                         syncUrl: payload.sync_url,
                         framework: payload.framework,
-                        runtime: 'webcontainer',
+                        runtime: 'sandbox_mcp',
                         todoList: normalized,
                     },
                 })
@@ -511,7 +646,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     (event) => {
                         if (!event || typeof event !== 'object') return;
                         ingestSandboxStreamEvent(event as Record<string, unknown>);
-                    }
+                    },
+                    abortControllerRef.current?.signal
                 );
             } catch (e) {
                 console.error('[Brain] resume stream failed:', e);
@@ -604,12 +740,37 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     useEffect(() => {
         const onProgress = (e: Event) => {
             const d = (e as CustomEvent).detail || {};
+            let activeIndex: number | undefined = undefined;
+            if (d.progressMsg) {
+                try {
+                    const pm = typeof d.progressMsg === 'string' ? JSON.parse(d.progressMsg) : d.progressMsg;
+                    if (pm && pm.taskId !== undefined) {
+                        activeIndex = parseInt(pm.taskId);
+                    }
+                } catch {
+                    const match = String(d.progressMsg).match(/taskId["']?\s*:\s*["']?(\d+)/);
+                    if (match) activeIndex = parseInt(match[1]);
+                }
+            }
+
             if (d.todoList?.length) {
                 setBuildTodos((prev) => {
                     if (prev.length && isBuildTodosComplete(prev)) {
                         return prev;
                     }
-                    return mergeTodosFromPlan(d.todoList as BuildTodoItem[], undefined, 'building');
+                    // Only count actually completed/failed tasks from backend to avoid synthetic executing status causing false regressions
+                    const prevDone = prev.filter(t => t.status === 'completed' || t.status === 'failed').length;
+                    const newDone = (d.todoList as BuildTodoItem[]).filter(t => t.status === 'completed' || t.status === 'failed').length;
+                    if (prev.length && prevDone > newDone) {
+                        return prev; // don't regress — incoming payload is older than current state
+                    }
+
+                    if (activeIndex === undefined) {
+                        const executingIndex = prev.findIndex(t => t.status === 'executing');
+                        if (executingIndex >= 0) activeIndex = executingIndex;
+                    }
+
+                    return mergeTodosFromPlan(d.todoList as BuildTodoItem[], activeIndex, 'building');
                 });
             }
             if (d.progressMsg) {
@@ -687,7 +848,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 abortControllerRef.current = null;
             }
             useExecutionStore.getState().setStreamingMessage(null);
-            
+
             setMessages([]);
             setIsLoading(false);
             setAgentStep('idle');
@@ -723,15 +884,16 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
-            const navFlag = getNavigatingFlag();
-            const pendingMessage = sessionStorage.getItem('brainPendingMessage');
-            
-            // If we're navigating AND there's a pending message, we still need to fetch
-            // the user message that was just sent. Only skip fetch if no pending message.
-            if (navFlag && !pendingMessage) {
+            // If there's a pending message, the new component instance will handle it via the pending message effect.
+            // Skip history fetch to avoid overwriting the user message that handleSendMessage will add.
+            const pendingMsg = sessionStorage.getItem('brainPendingMessage');
+            if (pendingMsg) {
                 setNavigatingFlag(false);
                 return;
             }
+
+            // Always clear nav flag when we arrive and have no pending message
+            setNavigatingFlag(false);
 
             // Always reset the webcontainer before loading a new conversation
             // to prevent files from leaking across workspaces!
@@ -928,44 +1090,67 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 console.error('Failed to fetch brain history:', err);
             }
         };
-        
+
         // Wrap in async IIFE to properly sequence fetchHistory and pending message check
         (async () => {
             await fetchHistory();
-            
+
             // After fetching history, check if there's a pending message to send
             // This handles the case where we navigated from /brain with a new message
             if (!pendingMessageHandledRef.current) {
-                pendingMessageHandledRef.current = true;
                 const pendingStr = sessionStorage.getItem('brainPendingMessage');
-                if (!pendingStr) return;
-                
+                if (!pendingStr) {
+                    pendingMessageHandledRef.current = true;
+                    return;
+                }
+
                 // Check if we already have assistant messages (stream already ran)
                 const hasAssistantMessages = messages.some(m => m.role === 'agent' || m.role === 'clarification');
                 if (hasAssistantMessages) {
                     sessionStorage.removeItem('brainPendingMessage');
+                    pendingMessageHandledRef.current = true;
                     return;
                 }
-                
+
+                // If auth is not ready yet, wait and retry later — don't consume the ref
+                if (!isAuthenticated || isAuthLoading) {
+                    console.log('[Brain] Auth not ready for pending message, waiting...');
+                    return;
+                }
+
+                // If conversation ID is not yet synced from URL, wait for next effect cycle
+                if (!currentConversationId) {
+                    console.log('[Brain] Conversation ID not ready for pending message, waiting...');
+                    return;
+                }
+
                 // Also check if we're still loading - if so, wait
                 if (isLoading) return;
-                
+
                 const pending = JSON.parse(pendingStr);
                 console.log('[Brain] New component picked up pending message:', pending);
                 if (pending.projectId) {
                     projectIdRef.current = pending.projectId;
                 }
-                sessionStorage.removeItem('brainPendingMessage');
-                
+
                 // Small delay to ensure component is fully settled
                 await new Promise(r => setTimeout(r, 100));
-                handleSendMessage(
-                    pending.userText,
-                    pending.temperature,
-                    pending.isPlanApproval,
-                    pending.approvedPlan,
-                    pending.targetMessageId
-                );
+                try {
+                    await handleSendMessage(
+                        pending.userText,
+                        pending.temperature,
+                        pending.isPlanApproval,
+                        pending.approvedPlan,
+                        pending.targetMessageId
+                    );
+                    sessionStorage.removeItem('brainPendingMessage');
+                } catch (e) {
+                    console.error('[Brain] Pending message send failed:', e);
+                    // Don't remove pending message — it will be retried on next effect run
+                    pendingMessageHandledRef.current = false;
+                    return;
+                }
+                pendingMessageHandledRef.current = true;
             }
         })();
     }, [currentConversationId, pathname, resumeBrainAfterReload, selectedFramework, isAuthenticated, isAuthLoading, openAuthModal]);
@@ -1025,7 +1210,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         }
 
         const userText = (textValue || '').trim();
-        if (!userText || isLoading) return;
+        if (!userText || isLoading || sendingRef.current) return;
+        sendingRef.current = true;
 
         // Force isUpdate based strictly on targetMessageId presence
         const isUpdate = typeof targetMessageId === 'string' && targetMessageId.length > 0;
@@ -1113,6 +1299,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 }
                 await fetchConversations();
                 // Return early - the new component will handle the stream
+                sendingRef.current = false;
                 return;
             }
 
@@ -1370,7 +1557,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         const inner = (nodeData.execute_sandbox || nodeData) as Record<string, unknown>;
 
                         setIsBuildMode(true);
-                        
+
 
                         if (nodeData.report) {
                             chunkUpdate = String(nodeData.report);
@@ -1426,7 +1613,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             };
                             setBuildJob(job);
                             setIsEditorOpen(true);
-                            window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
+                            setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
+                            }, 0);
                         }
 
                         const progressMsg = inner.progress_msg || nodeData.progress_msg;
@@ -1434,16 +1623,40 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             window.dispatchEvent(new CustomEvent('updateSandboxProgress', {
                                 detail: { progressMsg, todoList: currentTodoList },
                             }));
+                            try {
+                                const pm = typeof progressMsg === 'string' ? JSON.parse(progressMsg) : progressMsg;
+                                if (pm.tunnel_url) {
+                                    window.dispatchEvent(new CustomEvent('brainPreviewReady', {
+                                        detail: { url: pm.tunnel_url, streamUrl: pm.tunnel_url }
+                                    }));
+                                }
+                            } catch { /* not JSON */ }
                         }
                     }
 
-                    // --- Tasks ---
-                    if (event.create_tasks) {
-                        currentStep = 'taskifying';
-                        const tasks = event.create_tasks.plan || [];
-                        if (tasks.length > 0) {
-                            currentTodoList = tasks;
+                    // --- Task Started (live progress before builder begins) ---
+                    if (event.task_started) {
+                        const ts = event.task_started;
+                        const taskIndex = ts.current_task_index as number | undefined;
+                        const totalTasks = ts.total_tasks as number | undefined;
+                        const taskLabel = ts.task_label as string || '';
+                        const planFromTs = ts.plan as BuildTodoItem[] | undefined;
+
+                        if (Array.isArray(planFromTs) && planFromTs.length > 0) {
+                            currentTodoList = planFromTs;
+                            applyPlanToTodos(planFromTs, {
+                                activeIndex: taskIndex ?? 0,
+                                buildPhase: 'building',
+                            });
                         }
+
+                        if (typeof taskIndex === 'number' && typeof totalTasks === 'number') {
+                            chunkUpdate = `🔄 Task ${taskIndex + 1}/${totalTasks}: ${taskLabel}`;
+                        }
+                    }
+
+                    // --- Tasks (second handler) ---
+                    if (event.create_tasks) {
                         const progress = event.create_tasks.progress_msg || event.create_tasks.report;
                         if (progress) {
                             chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + String(progress);
@@ -1501,6 +1714,14 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             ingestBuildPayload(frInner);
                         }
 
+                        const frSandboxJob = frInner.sandbox_job as Record<string, unknown> | undefined;
+                        const tunnelUrl = frSandboxJob?.tunnel_url as string | undefined;
+                        if (tunnelUrl) {
+                            window.dispatchEvent(new CustomEvent('brainPreviewReady', {
+                                detail: { url: tunnelUrl, streamUrl: tunnelUrl }
+                            }));
+                        }
+
                         completeRunnerBuild();
                         if (currentTodoList?.length) {
                             currentTodoList = markAllTodosComplete(currentTodoList as BuildTodoItem[]);
@@ -1521,7 +1742,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                         if (hasRealPlan) {
                             currentPlanContentRef.current = typeof planData === 'string' ? planData : JSON.stringify(planData);
-                            
+
                             // Extract real tasks from the plan JSON to replace hardcoded ones
                             if (typeof planData === 'object' && Array.isArray(planData.tasks)) {
                                 currentTodoList = planData.tasks.map((task: any, index: number) => ({
@@ -1618,7 +1839,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                         // Auto-open sandbox if it's not already open or if the jobId is different
                         if (!latestJobRef.current || latestJobRef.current.jobId !== jobData.jobId) {
-                            window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: jobData }));
+                            setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: jobData }));
+                            }, 0);
                         }
                         latestJobRef.current = jobData;
                     }
@@ -1658,6 +1881,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             if (isBuildMode && !buildFinishedAt) {
                 completeRunnerBuild();
             }
+        } finally {
+            sendingRef.current = false;
         }
     };
 
@@ -1815,221 +2040,222 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             <div className="flex flex-1 min-h-0 w-full overflow-hidden">
                 {/* Left Side: Chat History & Input */}
                 <div className={`${isBuildMode ? 'w-full lg:w-[35%] max-w-[500px] border-r border-white/10 shrink-0 bg-[#0a0a0a]' : 'flex-1'} flex flex-col relative z-1 overflow-hidden`}>
-                    
+
                     {/* Chat Messages */}
                     <div
                         ref={scrollContainerRef}
                         className={`flex-1 flex flex-col overflow-y-auto custom-scrollbar ${(messages.length === 0 && pathname === '/brain' && !isLoading) ? 'items-center justify-center' : 'px-4 py-8 space-y-8'}`}
                     >
-                    {(messages.length === 0 && pathname === '/brain' && !isLoading) ? (
-                        <div className="w-full max-w-3xl flex flex-col items-center px-6 animate-in fade-in duration-700">
-                            {/* Logo Style - Responsive Font Size */}
-                            <div className="flex items-center gap-2 sm:gap-3 mb-10">
-                                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-lg sm:rounded-xl flex items-center justify-center shrink-0">
-                                    <div className="w-4 h-3 sm:w-6 sm:h-4 border-[1.5px] sm:border-2 border-black rounded-sm relative">
-                                        <div className="absolute top-0.5 sm:top-1 left-0.5 sm:left-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
-                                        <div className="absolute top-0.5 sm:top-1 right-0.5 sm:right-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
-                                    </div>
-                                </div>
-                                <h1 className="text-[24px] sm:text-[32px] font-medium tracking-tight">
-                                    grizon <span className="text-white/60">brain</span>
-                                </h1>
-                            </div>
-
-                            {/* Perplexity-style Input Bar - Responsive Padding & Font */}
-                            <div className="w-full relative mb-6">
-                                <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-3 sm:p-4 shadow-2xl transition-all duration-300 focus-within:border-white/20">
-                                    <textarea
-                                        value={input}
-                                        onChange={(e) => setInput(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                handleSendMessage();
-                                            }
-                                        }}
-                                        placeholder="What should we work on next?"
-                                        className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-[16px] sm:text-[18px] text-white placeholder:text-white/30 p-0 mb-3 sm:mb-4 resize-none min-h-[40px] custom-scrollbar"
-                                        rows={1}
-                                    />
-
-                                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <BrainFrameworkSelector
-                                                value={selectedFramework}
-                                                onChange={handleFrameworkChange}
-                                                disabled={isLoading}
-                                                compact
-                                            />
-                                            <span className="text-[10px] text-white/30 hidden sm:inline">
-                                                + Express & Supabase in canvas
-                                            </span>
-                                        </div>
-
-                                        <div className="flex items-center gap-2 sm:gap-4 overflow-hidden">
-                                            <span className="hidden xs:inline text-[11px] sm:text-[13px] text-white/40 font-medium italic truncate">Orchestrator</span>
-                                            <button
-                                                onClick={() => handleSendMessage()}
-                                                disabled={!input.trim() || isLoading}
-                                                className={`w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full transition-all shrink-0 ${input.trim() && !isLoading
-                                                    ? 'bg-white text-black'
-                                                    : 'bg-white/10 text-white/20'
-                                                    }`}
-                                            >
-                                                <ArrowRight size={18} />
-                                            </button>
+                        {(messages.length === 0 && pathname === '/brain' && !isLoading) ? (
+                            <div className="w-full max-w-3xl flex flex-col items-center px-6 animate-in fade-in duration-700">
+                                {/* Logo Style - Responsive Font Size */}
+                                <div className="flex items-center gap-2 sm:gap-3 mb-10">
+                                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-lg sm:rounded-xl flex items-center justify-center shrink-0">
+                                        <div className="w-4 h-3 sm:w-6 sm:h-4 border-[1.5px] sm:border-2 border-black rounded-sm relative">
+                                            <div className="absolute top-0.5 sm:top-1 left-0.5 sm:left-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
+                                            <div className="absolute top-0.5 sm:top-1 right-0.5 sm:right-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
                                         </div>
                                     </div>
+                                    <h1 className="text-[24px] sm:text-[32px] font-medium tracking-tight">
+                                        grizon <span className="text-white/60">brain</span>
+                                    </h1>
                                 </div>
-                            </div>
 
-                            {/* Category Buttons */}
-                            <div className="flex flex-wrap justify-center gap-2 mb-16">
-                                {[
-                                    { icon: Database, text: "Use cases" },
-                                    { icon: User, text: "Lead generation" },
-                                    { icon: Sparkles, text: "Recruiting" },
-                                    { icon: Activity, text: "Monitoring" }
-                                ].map((item, i) => (
-                                    <button
-                                        key={i}
-                                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 transition-all text-[13px] font-medium text-white/80"
-                                    >
-                                        <item.icon size={14} className="text-white/40" />
-                                        <span>{item.text}</span>
-                                    </button>
-                                ))}
-                            </div>
+                                {/* Perplexity-style Input Bar - Responsive Padding & Font */}
+                                <div className="w-full relative mb-6">
+                                    <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-3 sm:p-4 shadow-2xl transition-all duration-300 focus-within:border-white/20">
+                                        <textarea
+                                            value={input}
+                                            onChange={(e) => setInput(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    handleSendMessage();
+                                                }
+                                            }}
+                                            placeholder="What should we work on next?"
+                                            className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-[16px] sm:text-[18px] text-white placeholder:text-white/30 p-0 mb-3 sm:mb-4 resize-none min-h-[40px] custom-scrollbar"
+                                            rows={1}
+                                        />
 
-                            {/* Visual Task Cards */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
-                                {[
-                                    { title: "Lead Generation", color: "from-blue-500/20" },
-                                    { title: "Stock Analysis", color: "from-emerald-500/20" },
-                                    { title: "Market Trends", color: "from-purple-500/20" }
-                                ].map((card, i) => (
-                                    <div key={i} className="group cursor-pointer">
-                                        <div className={`aspect-video w-full rounded-xl bg-gradient-to-br ${card.color} to-transparent border border-white/5 mb-3 relative overflow-hidden group-hover:border-white/20 transition-all`}>
-                                            <div className="absolute inset-0 flex items-center justify-center opacity-20">
-                                                <Activity size={40} />
+                                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <BrainFrameworkSelector
+                                                    value={selectedFramework}
+                                                    onChange={handleFrameworkChange}
+                                                    disabled={isLoading}
+                                                    compact
+                                                />
+                                                <span className="text-[10px] text-white/30 hidden sm:inline">
+                                                    + Express & Supabase in canvas
+                                                </span>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 sm:gap-4 overflow-hidden">
+                                                <span className="hidden xs:inline text-[11px] sm:text-[13px] text-white/40 font-medium italic truncate">Orchestrator</span>
+                                                <button
+                                                    onClick={() => handleSendMessage()}
+                                                    disabled={!input.trim() || isLoading}
+                                                    className={`w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full transition-all shrink-0 ${input.trim() && !isLoading
+                                                        ? 'bg-white text-black'
+                                                        : 'bg-white/10 text-white/20'
+                                                        }`}
+                                                >
+                                                    <ArrowRight size={18} />
+                                                </button>
                                             </div>
                                         </div>
-                                        <h3 className="text-[13px] font-medium text-white/60 group-hover:text-white transition-colors">{card.title}</h3>
                                     </div>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="max-w-4xl mx-auto w-full relative">
-                            {(() => {
-                                // Dynamically calculate the last plan and accumulate all plan versions
-                                const planVersionsAcrossHistory = messages
-                                    .filter(m => m.planContent)
-                                    .map(m => m.planContent!);
-                                
-                                const lastPlanMessageId = [...messages].reverse().find(m => m.planContent)?.id;
+                                </div>
 
-                                return messages.map((msg, index) => {
-                                    if (msg.role === 'user') {
-                                        return <BrainUserMessage key={msg.id} content={msg.content} dateTime={msg.timestamp} />;
-                                    }
-                                    
-                                    const isLatestPlan = msg.id === lastPlanMessageId;
-                                    const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
-                                    
-                                    // For the latest plan, give it all previous versions (excluding its own)
-                                    const dynamicPlanVersions = isLatestPlan 
-                                        ? Array.from(new Set(planVersionsAcrossHistory.filter(p => p !== msg.planContent)))
-                                        : [];
+                                {/* Category Buttons */}
+                                <div className="flex flex-wrap justify-center gap-2 mb-16">
+                                    {[
+                                        { icon: Database, text: "Use cases" },
+                                        { icon: User, text: "Lead generation" },
+                                        { icon: Sparkles, text: "Recruiting" },
+                                        { icon: Activity, text: "Monitoring" }
+                                    ].map((item, i) => (
+                                        <button
+                                            key={i}
+                                            className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 transition-all text-[13px] font-medium text-white/80"
+                                        >
+                                            <item.icon size={14} className="text-white/40" />
+                                            <span>{item.text}</span>
+                                        </button>
+                                    ))}
+                                </div>
 
-                                    return (
-                                        <React.Fragment key={msg.id}>
-                                            <BrainAgentMessage
-                                                content={msg.content}
-                                                planVersions={msg.planVersions?.length ? msg.planVersions : dynamicPlanVersions}
-                                                dateTime={msg.timestamp}
-                                                planContent={msg.planContent}
-                                                sandboxJob={msg.sandboxJob}
-                                                todoList={(isBuildMode && index === messages.length - 1 && buildTodos.length) ? (buildTodos as any) : msg.todoList}
-                                                clarificationData={msg.clarificationData}
-                                                thoughts={(isLoading && index === messages.length - 1) ? (liveThoughts || msg.thoughts) : msg.thoughts}
-                                                timeline={(isLoading && index === messages.length - 1) ? (liveTimeline?.length ? liveTimeline : msg.timeline) : msg.timeline}
-                                                planApproved={msg.planApproved}
-                                                planSuperseded={isSuperseded}
-                                                agentStep={(isLoading && index === messages.length - 1) ? agentStep : undefined}
-                                                buildActivities={isBuildMode && index === messages.length - 1 ? buildActivities : undefined}
-                                                buildTodos={(isBuildMode && index === messages.length - 1) ? (buildTodos.length ? buildTodos : msg.todoList) : undefined}
-                                                isBuildSyncing={isBuildMode && index === messages.length - 1 ? isBuildSyncing : undefined}
-                                                onClarifySelect={handleClarificationAnswer}
-                                                onClarifySkip={handleClarificationSkip}
-                                                onRegenerate={() => handleRegenerate(msg.id)}
-                                                onBuild={() => handleSendMessage(
-                                                    "✅ Plan Approved. Please proceed with the build.",
-                                                    0.3,
-                                                    true,
-                                                    msg.planContent,
-                                                    msg.id // Pass the current message ID to build in-place
-                                                )}
-                                                onReject={(feedback?: string) => {
-                                                    if (feedback) {
-                                                        // Perform in-place update for feedback
-                                                        handleSendMessage(
-                                                            `I would like to request changes to this plan: ${feedback}. Please review and update the strategy.`,
-                                                            0.3,
-                                                            false,
-                                                            undefined,
-                                                            msg.id // Pass the current message ID to update it in-place
-                                                        );
-                                                    } else {
-                                                        handleSendMessage("I reject this plan. Let's rethink the strategy.", 0.3);
-                                                    }
-                                                }}
-                                            />
-                                        </React.Fragment>
-                                    );
-                                });
-                            })()}
-
-                            {/* Fallback loading for when agentStep is idle but still loading */}
-                            {isLoading && agentStep === 'idle' && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
-                                <div className="flex items-center gap-3 py-4 pl-4 animate-in fade-in duration-500">
-                                    <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/20 relative">
-                                        <div className="absolute inset-0 rounded-lg border border-white/10 animate-pulse" />
-                                        <Activity size={14} className="animate-spin opacity-40" />
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[13px] text-white/30 font-medium tracking-wide">Initializing engine...</span>
-                                        <div className="flex gap-1">
-                                            <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce [animation-delay:-0.3s]" />
-                                            <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce [animation-delay:-0.15s]" />
-                                            <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce" />
+                                {/* Visual Task Cards */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
+                                    {[
+                                        { title: "Lead Generation", color: "from-blue-500/20" },
+                                        { title: "Stock Analysis", color: "from-emerald-500/20" },
+                                        { title: "Market Trends", color: "from-purple-500/20" }
+                                    ].map((card, i) => (
+                                        <div key={i} className="group cursor-pointer">
+                                            <div className={`aspect-video w-full rounded-xl bg-gradient-to-br ${card.color} to-transparent border border-white/5 mb-3 relative overflow-hidden group-hover:border-white/20 transition-all`}>
+                                                <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                                                    <Activity size={40} />
+                                                </div>
+                                            </div>
+                                            <h3 className="text-[13px] font-medium text-white/60 group-hover:text-white transition-colors">{card.title}</h3>
                                         </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="max-w-4xl mx-auto w-full relative">
+                                {messages.length === 0 && !isLoading ? (
+                                    <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center px-6 animate-in fade-in duration-500">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <div className="w-6 h-6 bg-white rounded-md flex items-center justify-center shrink-0">
+                                                <div className="w-3 h-2 border-[1.5px] border-black rounded-sm" />
+                                            </div>
+                                            <span className="text-lg font-medium text-white/40">grizon <span className="text-white/20">brain</span></span>
+                                        </div>
+                                        <p className="text-sm text-white/30 max-w-md">
+                                            This conversation has no messages yet. Type something below to get started.
+                                        </p>
                                     </div>
-                                </div>
-                            )}
-                            {projectIdRef.current && (messages.some(m => m.planApproved) || buildTodos.length > 0) && (
-                                <div className="px-4 mb-4 space-y-3">
-                                    <BrainDecisionView
-                                        projectId={projectIdRef.current}
-                                        onDecisionOverride={(key, newVal) => {
-                                            console.log(`Decision overridden: ${key} → ${newVal}`);
-                                        }}
-                                    />
-                                    <BrainExecutionView
-                                        projectId={projectIdRef.current}
-                                    />
-                                    <BrainArtifactView
-                                        projectId={projectIdRef.current}
-                                    />
-                                </div>
-                            )}
-                            <div ref={messagesEndRef} className="h-40 shrink-0" />
-                        </div>
-                    )}
+                                ) : (
+                                    <>
+                                        {(() => {
+                                            // Dynamically calculate the last plan and accumulate all plan versions
+                                            const planVersionsAcrossHistory = messages
+                                                .filter(m => m.planContent)
+                                                .map(m => m.planContent!);
+
+                                            const lastPlanMessageId = [...messages].reverse().find(m => m.planContent)?.id;
+
+                                            return messages.map((msg, index) => {
+                                                if (msg.role === 'user') {
+                                                    return <BrainUserMessage key={msg.id} content={msg.content} dateTime={msg.timestamp} />;
+                                                }
+
+                                                const isLatestPlan = msg.id === lastPlanMessageId;
+                                                const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
+
+                                                // For the latest plan, give it all previous versions (excluding its own)
+                                                const dynamicPlanVersions = isLatestPlan
+                                                    ? Array.from(new Set(planVersionsAcrossHistory.filter(p => p !== msg.planContent)))
+                                                    : [];
+
+                                                return (
+                                                    <React.Fragment key={msg.id}>
+                                                        <BrainAgentMessage
+                                                            content={msg.content}
+                                                            planVersions={msg.planVersions?.length ? msg.planVersions : dynamicPlanVersions}
+                                                            dateTime={msg.timestamp}
+                                                            planContent={msg.planContent}
+                                                            sandboxJob={msg.sandboxJob}
+                                                            todoList={(isBuildMode && index === messages.length - 1 && buildTodos.length) ? (buildTodos as any) : msg.todoList}
+                                                            clarificationData={msg.clarificationData}
+                                                            thoughts={(isLoading && index === messages.length - 1) ? (liveThoughts || msg.thoughts) : msg.thoughts}
+                                                            timeline={(isLoading && index === messages.length - 1) ? (liveTimeline?.length ? liveTimeline : msg.timeline) : msg.timeline}
+                                                            planApproved={msg.planApproved}
+                                                            planSuperseded={isSuperseded}
+                                                            agentStep={(isLoading && index === messages.length - 1) ? agentStep : undefined}
+                                                            buildActivities={isBuildMode && index === messages.length - 1 ? buildActivities : undefined}
+                                                            buildTodos={(isBuildMode && index === messages.length - 1) ? (buildTodos.length ? buildTodos : msg.todoList) : undefined}
+                                                            isBuildSyncing={isBuildMode && index === messages.length - 1 ? isBuildSyncing : undefined}
+                                                            onClarifySelect={handleClarificationAnswer}
+                                                            onClarifySkip={handleClarificationSkip}
+                                                            onRegenerate={() => handleRegenerate(msg.id)}
+                                                            onBuild={() => handleSendMessage(
+                                                                "✅ Plan Approved. Please proceed with the build.",
+                                                                0.3,
+                                                                true,
+                                                                msg.planContent,
+                                                                msg.id // Pass the current message ID to build in-place
+                                                            )}
+                                                            onReject={(feedback?: string) => {
+                                                                if (feedback) {
+                                                                    // Perform in-place update for feedback
+                                                                    handleSendMessage(
+                                                                        `I would like to request changes to this plan: ${feedback}. Please review and update the strategy.`,
+                                                                        0.3,
+                                                                        false,
+                                                                        undefined,
+                                                                        msg.id // Pass the current message ID to update it in-place
+                                                                    );
+                                                                } else {
+                                                                    handleSendMessage("I reject this plan. Let's rethink the strategy.", 0.3);
+                                                                }
+                                                            }}
+                                                        />
+                                                    </React.Fragment>
+                                                );
+                                            });
+                                        })()}
+
+                                        {/* Fallback loading for when agentStep is idle but still loading */}
+                                        {isLoading && agentStep === 'idle' && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
+                                            <div className="flex items-center gap-3 py-4 pl-4 animate-in fade-in duration-500">
+                                                <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/20 relative">
+                                                    <div className="absolute inset-0 rounded-lg border border-white/10 animate-pulse" />
+                                                    <Activity size={14} className="animate-spin opacity-40" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[13px] text-white/30 font-medium tracking-wide">Initializing engine...</span>
+                                                    <div className="flex gap-1">
+                                                        <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce [animation-delay:-0.3s]" />
+                                                        <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce [animation-delay:-0.15s]" />
+                                                        <div className="w-1 h-1 rounded-full bg-white/20 animate-bounce" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div ref={messagesEndRef} className="h-40 shrink-0" />
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Sticky Bottom Input */}
-                    {messages.length > 0 && (
+                    {(messages.length > 0 || pathname.startsWith('/brain/')) && (
                         <div className={`bg-[#0a0a0a] relative z-10 shrink-0 ${isBuildMode ? 'border-t border-white/5 px-3 py-3' : 'p-6'}`}>
                             <div className={`${isBuildMode ? 'w-full' : 'max-w-3xl mx-auto'} relative group`}>
                                 <div className="relative flex flex-col gap-2 bg-[#1a1a1a] border border-white/10 rounded-2xl p-2 pr-3 focus-within:border-white/20 transition-all duration-300 shadow-2xl">
@@ -2089,14 +2315,16 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 {isBuildMode && (
                     <main className="flex-1 min-w-0 hidden lg:flex flex-col bg-[#0d0d0d] relative">
                         {buildJob ? (
-                                <BrainEditorCanvas
-                                    embedded
-                                    isOpen
-                                    buildJob={buildJob}
-                                    buildComplete={!!buildFinishedAt || (buildTodos.length > 0 && isBuildTodosComplete(buildTodos))}
-                                    forceBuilding={isBuildSyncing}
-                                    todoList={buildTodos.length ? buildTodos : ([...messages].reverse().find(m => m.todoList?.length)?.todoList || [])}
-                                />
+                            <BrainEditorCanvas
+                                embedded
+                                isOpen
+                                buildJob={buildJob}
+                                buildComplete={!!buildFinishedAt || (buildTodos.length > 0 && isBuildTodosComplete(buildTodos))}
+                                forceBuilding={isBuildSyncing}
+                                todoList={buildTodos.length ? buildTodos : ([...messages].reverse().find(m => m.todoList?.length)?.todoList || [])}
+                                activities={buildActivities}
+                                isSyncing={isBuildSyncing}
+                            />
                         ) : (
                             <div className="flex-1 flex items-center justify-center text-white/30 text-sm">
                                 Initializing workspace…
