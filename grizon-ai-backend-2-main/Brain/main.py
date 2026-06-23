@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from Brain.modules.chat.controller import router as brain_chat_router
 from Brain.modules.conversations.controller import brain_conversations_router
 from Brain.memory.debug import router as brain_memory_router
+from Brain.modules.connectors.supabase.controller import router as supabase_connector_router
+from Brain.modules.connectors.github.controller import router as github_connector_router
 from Brain.modules.projects.controller import router as brain_projects_router
 from Brain.modules.projects.decisions import router as brain_decisions_router
 from Brain.modules.projects.execution import router as brain_execution_router
@@ -63,6 +65,8 @@ app.include_router(brain_decisions_router)
 app.include_router(brain_execution_router)
 app.include_router(brain_artifacts_router)
 app.include_router(brain_memory_router)
+app.include_router(supabase_connector_router)
+app.include_router(github_connector_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)
 
