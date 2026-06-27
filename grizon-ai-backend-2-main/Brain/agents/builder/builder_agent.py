@@ -85,12 +85,87 @@ class BuilderAgent(BaseAgent):
         executed_tasks = state.get("executed_tasks", [])
         workspace_id = state.get("current_job_id")
         session_id = workspace_id  # alias for clarity — both refer to the same job/session ID
+        print(f"[BUILDER] execute called | task={index+1}/{len(tasks)} | session={session_id}")
         # Track which dirs were already created this build session to avoid duplicate "Created folder" noise
         if "_created_dirs" not in state:
             state["_created_dirs"] = set()
         created_dirs: set = state["_created_dirs"]
 
         if index >= len(tasks):
+            print(f"[BUILDER] All {len(tasks)} tasks done — starting final deploy")
+            # All tasks done — now deploy to MCP sandbox once
+            if session_id and not str(session_id).startswith("error:"):
+                deploy_act = self._make_activity("terminal", "Deploying to sandbox...", task_title="Deploy", status="running")
+                await self._publish_ops(session_id, [], progress_msg="Packaging and deploying to sandbox...", activities=[deploy_act])
+
+                try:
+                    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
+                    print(f"[BUILDER] Deploy workspace: {ws_root}")
+                    if ws_root and os.path.exists(ws_root):
+                        print(f"[BUILDER] Files in workspace: {os.listdir(ws_root)[:20]}")
+                        import io, base64, tarfile
+                        buf = io.BytesIO()
+                        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                            for root, dirs, files in os.walk(ws_root):
+                                if "node_modules" in dirs:
+                                    dirs.remove("node_modules")
+                                if ".git" in dirs:
+                                    dirs.remove(".git")
+                                for file in files:
+                                    full_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(full_path, ws_root)
+                                    tar.add(full_path, arcname=rel_path)
+                        archive_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                        print(f"[BUILDER] Archive ready | size={len(archive_b64)} chars")
+
+                        sandbox_mcp = get_sandbox_mcp_service()
+                        if not sandbox_mcp._initialized:
+                            print("[BUILDER] Initializing MCP tools...")
+                            await sandbox_mcp.initialize()
+
+                        mcp_tool = sandbox_mcp._tools.get("execute_workspace_archive")
+                        if mcp_tool:
+                            print("[BUILDER] Calling MCP execute_workspace_archive...")
+                            response = await mcp_tool.ainvoke({
+                                "session_id": session_id,
+                                "entrypoint": "frontend/src/main.jsx",
+                                "archive_b64": archive_b64,
+                            })
+                            print(f"[BUILDER] MCP response type: {type(response).__name__}")
+                        else:
+                            print("[BUILDER] ERROR: execute_workspace_archive tool not found!")
+
+                            # Parse MCP response
+                            if isinstance(response, list) and response:
+                                inner = response[0]
+                                inner_text = inner.get("text", str(inner)) if isinstance(inner, dict) else str(inner)
+                                try:
+                                    data = json.loads(inner_text)
+                                except Exception:
+                                    data = {"raw": inner_text}
+                            elif isinstance(response, dict):
+                                data = response
+                            else:
+                                try:
+                                    data = json.loads(str(response))
+                                except Exception:
+                                    data = {"raw": str(response)}
+
+                            tunnel_url = data.get("tunnel_url", "")
+                            print(f"[BUILDER] Parsed result | status={data.get('status')} | tunnel={tunnel_url[:60] if tunnel_url else 'none'}")
+                            if tunnel_url:
+                                await ws_manager.broadcast_to_sandbox(session_id, {
+                                    "type": "sandbox_ready",
+                                    "tunnel_url": tunnel_url,
+                                    "url": tunnel_url,
+                                    "stream_url": tunnel_url,
+                                })
+                                ready_act = self._make_activity("terminal_output", f"Live at: {tunnel_url}", task_title="Deploy")
+                                await self._publish_ops(session_id, [], progress_msg=f"Sandbox ready: {tunnel_url}", activities=[ready_act])
+                                print(f"DEBUG: Deployed! Tunnel URL: {tunnel_url}")
+                except Exception as e:
+                    print(f"DEBUG: Deploy error: {e}")
+
             state["status"] = "building_complete"
             state["next_agent"] = "runner"
             yield state
@@ -130,9 +205,8 @@ class BuilderAgent(BaseAgent):
                 "2. **App.jsx is the product** — You MUST include `frontend/src/App.jsx` in every response that adds or changes components.\n"
                 "3. **react-router-dom & Connection** — ALWAYS connect all components, pages, and everything in `App.jsx`.\n"
                 "4. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
-                "5. You MUST use client_execute_in_sandbox to run code. ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, use --port 9999 --host 0.0.0.0.\n"
-                "6. After saving files, ALWAYS call client_execute_in_sandbox as the final step.\n"
-                "7. If the client_execute_in_sandbox tool returns a Tunnel URL, explicitly include this Tunnel URL in your final response."
+                "5. Do NOT call client_execute_in_sandbox — that happens automatically after all tasks.\n"
+                "6. Just save files using client_save_code. Focus on writing clean, complete code."
             )
         else:
             system_prompt = (
@@ -143,12 +217,11 @@ class BuilderAgent(BaseAgent):
                 "3. **Supabase**: controllers import `{ supabase }` from `../supabase/client.js`.\n"
                 "4. **package.json**: add express, cors, @supabase/supabase-js, etc. in dependencies when needed.\n"
                 "5. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
-                "6. You MUST use client_execute_in_sandbox to run code. ALL web servers MUST run on port 9999 and bind to 0.0.0.0.\n"
-                "7. After saving files, ALWAYS call client_execute_in_sandbox as the final step.\n"
-                "8. If the client_execute_in_sandbox tool returns a Tunnel URL, explicitly include this Tunnel URL in your final response."
+                "6. Do NOT call client_execute_in_sandbox — that happens automatically after all tasks.\n"
+                "7. Just save files using client_save_code. Focus on writing clean, complete code."
             )
 
-        agent = create_react_agent(self.llm, tools=[client_save_code, client_execute_in_sandbox], prompt=system_prompt)
+        agent = create_react_agent(self.llm, tools=[client_save_code], prompt=system_prompt)
         
         config = RunnableConfig(
             configurable={"thread_id": session_id, "task_title": task_title},

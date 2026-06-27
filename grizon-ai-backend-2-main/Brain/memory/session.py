@@ -24,3 +24,6 @@ class SessionMemory:
         await self.set("workflow_state", state)
         await self.set("current_agent", agent_name)
         await self.set("last_active", datetime.utcnow().isoformat())
+
+    async def clear(self):
+        await redis_client.delete(self.key)

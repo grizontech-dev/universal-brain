@@ -88,7 +88,7 @@ export class AgentEngine {
         store.setPhase('SYNCING');
         store.updateAgent('frontend', { status: 'DONE' });
         store.updateAgent('leader', { status: 'DONE' });
-        store.setStreamingMessage("Execution complete. Syncing files to WebContainer...");
+        store.setStreamingMessage("Execution complete. Syncing files to sandbox...");
         await this.delay(2000);
         
         store.setPhase('COMPLETED');

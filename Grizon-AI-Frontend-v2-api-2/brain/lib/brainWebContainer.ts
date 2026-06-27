@@ -1,13 +1,6 @@
 'use client';
 
-import type { WebContainer } from '@webcontainer/api';
-import {
-    devServerKey,
-    isBareNpmInstall,
-    isLongRunningDevCommand,
-    parseSpawnSpec,
-    shouldSkipWebContainerCommand,
-} from './commandPolicy';
+import { brainApiFetch } from './brainApiBase';
 
 export type WorkspaceOp =
     | { op: 'write_file'; path: string; content: string }
@@ -26,79 +19,31 @@ export interface FileNode {
     isOpen?: boolean;
 }
 
-const WC_GLOBAL_KEY = '__grizonBrainWebContainer';
-const WC_BOOT_KEY = '__grizonBrainWebContainerBoot';
-
-type GrizonWindow = Window & {
-    [WC_GLOBAL_KEY]?: WebContainer;
-    [WC_BOOT_KEY]?: Promise<WebContainer>;
-};
-
-let webcontainerInstance: WebContainer | null = null;
-let bootPromise: Promise<WebContainer> | null = null;
-let activePreviewPort = 0;
-
-function getGrizonWindow(): GrizonWindow | null {
-    return typeof window !== 'undefined' ? (window as GrizonWindow) : null;
-}
-
-function isSingleWebContainerError(err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
-    return msg.includes('Only a single WebContainer instance');
-}
+const outputListeners = new Set<(line: string) => void>();
+const outputBuffer: string[] = [];
 
 export function isWebContainerBooted(): boolean {
-    if (webcontainerInstance) return true;
-    const w = getGrizonWindow();
-    return !!w?.[WC_GLOBAL_KEY];
-}
-const previewListeners = new Set<(url: string, port: number) => void>();
-const outputListeners = new Set<(line: string) => void>();
-
-/** Prefer Vite (5173) over Express API (3001) for the iframe preview */
-function previewPortPriority(port: number): number {
-    if (port === 5173) return 100;
-    if (port >= 5174 && port <= 5180) return 99;
-    if (port === 3000 || port === 4173) return 90;
-    if (port === 3001 || port === 8080 || port === 8000) return 10;
-    return 50;
+    return true;
 }
 
 export function isFrontendPreviewPort(port: number): boolean {
-    return previewPortPriority(port) >= 90;
-}
-
-function shouldEmitPreview(port: number): boolean {
-    if (activePreviewPort === 0) return true;
-    return previewPortPriority(port) >= previewPortPriority(activePreviewPort);
-}
-
-function emitBuildRunnerComplete(port: number, url: string) {
-    if (typeof window === 'undefined') return;
-    if (!isFrontendPreviewPort(port)) return;
-    window.dispatchEvent(
-        new CustomEvent('brainBuildRunnerComplete', {
-            detail: { port, url },
-        })
-    );
-}
-
-function emitPreviewIfPreferred(url: string, port: number) {
-    if (!shouldEmitPreview(port)) {
-        console.log(`[WebContainer] ignoring server-ready on port ${port} (keeping preview on ${activePreviewPort})`);
-        return;
-    }
-    activePreviewPort = port;
-    emitPreview(url, port);
-    emitBuildRunnerComplete(port, url);
+    return port === 5173 || (port >= 5174 && port <= 5180) || port === 3000 || port === 4173;
 }
 
 export function onBrainPreviewReady(cb: (url: string, port: number) => void) {
-    previewListeners.add(cb);
-    return () => previewListeners.delete(cb);
+    const handler = (e: Event) => {
+        const detail = (e as CustomEvent).detail || {};
+        if (detail.url) cb(detail.url, detail.port || 0);
+    };
+    if (typeof window !== 'undefined') {
+        window.addEventListener('brainPreviewReady', handler);
+    }
+    return () => {
+        if (typeof window !== 'undefined') {
+            window.removeEventListener('brainPreviewReady', handler);
+        }
+    };
 }
-
-const outputBuffer: string[] = [];
 
 export function onBrainTerminalOutput(cb: (line: string) => void) {
     outputListeners.add(cb);
@@ -106,136 +51,22 @@ export function onBrainTerminalOutput(cb: (line: string) => void) {
     return () => outputListeners.delete(cb);
 }
 
-function emitPreview(url: string, port: number) {
-    previewListeners.forEach((cb) => cb(url, port));
-    if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('brainPreviewReady', { detail: { url, streamUrl: url, port } }));
-    }
-}
-
 export function emitOutput(line: string) {
     outputBuffer.push(line);
     if (outputBuffer.length > 500) outputBuffer.shift();
     outputListeners.forEach(fn => fn(line));
-
-    // Automatically trigger preview refresh when Vite/Next.js finishes starting
-    if (
-        line.includes('Local:') ||
-        line.includes('ready in') ||
-        line.includes('listening on') ||
-        line.includes('Network:') ||
-        line.includes('VITE v') ||
-        line.includes('ready started server on')
-    ) {
-        if (!devServersStarted.has('preview_ready')) {
-            devServersStarted.add('preview_ready');
-            window.dispatchEvent(new CustomEvent('brainPreviewReady'));
-        }
-    }
 }
 
-function cacheWebContainer(wc: WebContainer) {
-    webcontainerInstance = wc;
-    const w = getGrizonWindow();
-    if (w) w[WC_GLOBAL_KEY] = wc;
+export async function getBrainWebContainer(): Promise<null> {
+    return null;
 }
-
-async function bootWebContainer(): Promise<WebContainer> {
-    const { WebContainer } = await import('@webcontainer/api');
-    const wc = await WebContainer.boot({ coep: 'credentialless' });
-    wc.on('server-ready', (port, url) => {
-        console.log('[WebContainer] server-ready', port, url);
-        emitPreviewIfPreferred(url, port);
-    });
-    cacheWebContainer(wc);
-    return wc;
-}
-
-export async function getBrainWebContainer(): Promise<WebContainer> {
-    const w = getGrizonWindow();
-    if (webcontainerInstance) return webcontainerInstance;
-    if (w?.[WC_GLOBAL_KEY]) {
-        webcontainerInstance = w[WC_GLOBAL_KEY];
-        return webcontainerInstance;
-    }
-
-    const existingBoot = bootPromise || w?.[WC_BOOT_KEY];
-    if (existingBoot) {
-        try {
-            return await existingBoot;
-        } catch (err) {
-            if (isSingleWebContainerError(err) && w?.[WC_GLOBAL_KEY]) {
-                webcontainerInstance = w[WC_GLOBAL_KEY];
-                return webcontainerInstance;
-            }
-            bootPromise = null;
-            if (w) delete w[WC_BOOT_KEY];
-            throw err;
-        }
-    }
-
-    bootPromise = (async () => {
-        try {
-            return await bootWebContainer();
-        } catch (err) {
-            if (isSingleWebContainerError(err) && w?.[WC_GLOBAL_KEY]) {
-                webcontainerInstance = w[WC_GLOBAL_KEY];
-                return webcontainerInstance;
-            }
-            throw err;
-        }
-    })();
-
-    if (w) w[WC_BOOT_KEY] = bootPromise;
-
-    try {
-        return await bootPromise;
-    } catch (err) {
-        bootPromise = null;
-        if (w) delete w[WC_BOOT_KEY];
-        if (isSingleWebContainerError(err) && w?.[WC_GLOBAL_KEY]) {
-            webcontainerInstance = w[WC_GLOBAL_KEY];
-            return webcontainerInstance;
-        }
-        throw err;
-    }
-}
-
-const bareNpmInstalledDirs = new Set<string>();
-const devServersStarted = new Set<string>();
 
 export async function resetBrainWebContainer() {
-    if (webcontainerInstance) {
-        try {
-            webcontainerInstance.teardown();
-        } catch (e) {
-            // ignore
-        }
-    }
-    webcontainerInstance = null;
-    bootPromise = null;
-    activePreviewPort = 0;
-    bareNpmInstalledDirs.clear();
-    devServersStarted.clear();
-    const w = getGrizonWindow();
-    if (w) {
-        delete w[WC_GLOBAL_KEY];
-        delete w[WC_BOOT_KEY];
-    }
 }
 
-function normalizePath(path: string): string {
-    return path.replace(/^\/+/, '').replace(/\/+$/, '');
+export function resetDevServers() {
 }
 
-function normalizeCwd(cwd?: string): string | undefined {
-    if (!cwd) return undefined;
-    const p = normalizePath(cwd.trim().replace(/^["']|["']$/g, ''));
-    if (!p || p === '.') return undefined;
-    return p;
-}
-
-/** mkdir → write_file → install_packages → run → delete_file */
 export function sortWorkspaceOps(ops: WorkspaceOp[]): WorkspaceOp[] {
     const mkdirs: WorkspaceOp[] = [];
     const writes: WorkspaceOp[] = [];
@@ -252,193 +83,30 @@ export function sortWorkspaceOps(ops: WorkspaceOp[]): WorkspaceOp[] {
     return [...mkdirs, ...writes, ...installs, ...runs, ...deletes];
 }
 
-async function ensureDir(wc: WebContainer, filePath: string) {
-    const parts = normalizePath(filePath).split('/');
-    if (parts.length <= 1) return;
-    const dir = parts.slice(0, -1).join('/');
-    try {
-        await wc.fs.mkdir(dir, { recursive: true });
-    } catch {
-        /* exists */
-    }
-}
-
-async function ensureCwdExists(wc: WebContainer, cwd: string): Promise<boolean> {
-    const p = normalizeCwd(cwd);
-    if (!p) return false;
-    try {
-        await wc.fs.mkdir(p, { recursive: true });
-        await wc.fs.readdir(p);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-async function hasPackageJson(wc: WebContainer, cwd: string): Promise<boolean> {
-    const p = normalizeCwd(cwd) || '.';
-    try {
-        await wc.fs.readFile(`${p}/package.json`, 'utf-8');
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-async function hasNodeModules(wc: WebContainer, cwd: string): Promise<boolean> {
-    return false; // Force re-install to fix WebContainer IndexedDB .bin corruption
-}
-
-let runOpChain: Promise<void> = Promise.resolve();
-
-function enqueueRunOp(fn: () => Promise<{ exitCode?: number }>): Promise<{ exitCode?: number }> {
-    const next = runOpChain.then(fn);
-    runOpChain = next.then(
-        () => undefined,
-        () => undefined
-    );
-    return next;
-}
-
-async function spawnWithOutput(
-    wc: WebContainer,
-    program: string,
-    args: string[],
-    cwd: string | undefined,
-    onOutput?: (line: string) => void,
-    background = false
-): Promise<{ exitCode?: number }> {
-    const spawnOpts = cwd ? { cwd } : undefined;
-    const process = await wc.spawn(program, args, spawnOpts);
-    const writeChunk = (chunk: string) => {
-        const handler = onOutput || emitOutput;
-        handler(chunk);
-    };
-    process.output.pipeTo(
-        new WritableStream({
-            write(data) {
-                writeChunk(typeof data === 'string' ? data : new TextDecoder().decode(data));
-            },
-        })
-    );
-    if (!background) {
-        const exitCode = await process.exit;
-        return { exitCode };
-    }
-    return {};
-}
-
 export async function applyWorkspaceOp(
-    wc: WebContainer,
+    _wc: null,
     op: WorkspaceOp,
+    jobId: string | null,
     onOutput?: (line: string) => void
 ): Promise<{ exitCode?: number }> {
+    const handler = onOutput || emitOutput;
+
     switch (op.op) {
-        case 'mkdir': {
-            const p = normalizePath(op.path);
-            if (p) await wc.fs.mkdir(p, { recursive: true });
+        case 'write_file':
             return {};
-        }
-        case 'write_file': {
-            const p = normalizePath(op.path);
-            await ensureDir(wc, p);
-            await wc.fs.writeFile(p, op.content);
+        case 'mkdir':
             return {};
-        }
-        case 'delete_file': {
-            const p = normalizePath(op.path);
-            if (!p) return {};
-            try {
-                await wc.fs.rm(p);
-            } catch {
-                /* already gone */
-            }
+        case 'delete_file':
             return {};
-        }
         case 'install_packages': {
-            enqueueRunOp(async () => {
-                const cwd = normalizeCwd(op.cwd);
-                const cwdKey = cwd || '.';
-                if (cwd) {
-                    const ok = await ensureCwdExists(wc, cwd);
-                    if (!ok) {
-                        console.warn(`[WebContainer] skipping install_packages — cwd missing: ${cwd}`);
-                        return { exitCode: 1 };
-                    }
-                }
-                if (!(await hasPackageJson(wc, cwdKey))) {
-                    console.warn(`[WebContainer] skipping install_packages — no package.json in ${cwdKey}`);
-                    return { exitCode: 0 };
-                }
-                const args = ['install', '--no-audit', '--no-fund', '--legacy-peer-deps', ...op.packages];
-                if (op.dev) args.push('--save-dev');
-                console.log(`[WebContainer] npm install packages in ${cwdKey}:`, op.packages.join(', '));
-                return spawnWithOutput(wc, 'npm', args, cwd, onOutput, false);
-            });
+            const cmd = `npm install --no-audit --no-fund --legacy-peer-deps ${op.packages.join(' ')}`;
+            handler(`[sandbox] ${cmd}\n`);
             return {};
         }
         case 'run': {
-            enqueueRunOp(async () => {
-                const cmd = op.command.trim();
-                if (!cmd || cmd === 'true' || cmd === ':') {
-                    return {};
-                }
-                if (shouldSkipWebContainerCommand(cmd)) {
-                    console.log(`[WebContainer] skipped instruction (not executed): ${cmd.slice(0, 120)}…`);
-                    return { exitCode: 0 };
-                }
-
-                const cwd = normalizeCwd(op.cwd);
-                const cwdKey = cwd || '.';
-
-                if (cwd) {
-                    const ok = await ensureCwdExists(wc, cwd);
-                    if (!ok) {
-                        console.warn(`[WebContainer] skipping run — cwd does not exist: ${cwd}`);
-                        return { exitCode: 1 };
-                    }
-                }
-
-                let finalCmd = cmd;
-                if (isBareNpmInstall(cmd)) {
-                    if (bareNpmInstalledDirs.has(cwdKey)) {
-                        return { exitCode: 0 };
-                    }
-                    if (!(await hasPackageJson(wc, cwdKey))) {
-                        console.warn(`[WebContainer] skipping npm install — no package.json in ${cwdKey}`);
-                        return { exitCode: 0 };
-                    }
-                    if (await hasNodeModules(wc, cwdKey)) {
-                        bareNpmInstalledDirs.add(cwdKey);
-                        return { exitCode: 0 };
-                    }
-                    finalCmd = 'npm install --no-audit --no-fund --legacy-peer-deps';
-                }
-
-                if (isLongRunningDevCommand(cmd)) {
-                    const key = devServerKey(cwdKey, cmd);
-                    if (devServersStarted.has(key)) {
-                        console.log(`[WebContainer] dev server already running: ${key}`);
-                        return {};
-                    }
-                    devServersStarted.add(key);
-                }
-
-                const runInBackground = op.background || isLongRunningDevCommand(cmd);
-                const spec = parseSpawnSpec(finalCmd);
-                const result = await spawnWithOutput(
-                    wc,
-                    spec.program,
-                    spec.args,
-                    cwd,
-                    onOutput,
-                    runInBackground
-                );
-                if (!runInBackground && isBareNpmInstall(cmd) && result.exitCode === 0) {
-                    bareNpmInstalledDirs.add(cwdKey);
-                }
-                return result;
-            });
+            const cmd = op.command.trim();
+            if (!cmd || cmd === 'true' || cmd === ':') return {};
+            handler(`[sandbox] ${cmd}\n`);
             return {};
         }
         default:
@@ -448,61 +116,139 @@ export async function applyWorkspaceOp(
 
 export async function applyWorkspaceOps(
     ops: WorkspaceOp[],
-    onOutput?: (line: string) => void
-): Promise<WebContainer> {
-    const wc = await getBrainWebContainer();
+    onOutput?: (line: string) => void,
+    jobId?: string | null
+): Promise<null> {
     const sorted = sortWorkspaceOps(ops);
     for (const op of sorted) {
-        await applyWorkspaceOp(wc, op, onOutput);
+        await applyWorkspaceOp(null, op, jobId ?? null, onOutput);
     }
-    return wc;
-}
-
-async function isDirectory(wc: WebContainer, fullPath: string): Promise<boolean> {
-    try {
-        await wc.fs.readdir(fullPath);
-        return true;
-    } catch {
-        return false;
-    }
+    return null;
 }
 
 export async function listWebContainerFiles(
-    wc: WebContainer,
+    _wc: null,
     dirPath = '.',
-    base = ''
+    jobId?: string
 ): Promise<FileNode[]> {
-    const nodes: FileNode[] = [];
-    let entries: string[] = [];
+    if (!jobId) return [];
     try {
-        entries = await wc.fs.readdir(dirPath);
+        const q = new URLSearchParams({ workspace_id: jobId, path: dirPath });
+        const res = await brainApiFetch(`sandbox/list-files?${q}`);
+        if (!res?.ok) return [];
+        const data = await res.json();
+        return (data.files || []) as FileNode[];
     } catch {
-        return nodes;
+        return [];
     }
-
-    for (const name of entries) {
-        if (['node_modules', '.git', 'dist', 'build', '.next'].includes(name)) continue;
-        const rel = base ? `${base}/${name}` : name;
-        const full = dirPath === '.' ? name : `${dirPath}/${name}`;
-        if (await isDirectory(wc, full)) {
-            nodes.push({
-                name,
-                type: 'folder',
-                path: rel,
-                isOpen: false,
-                children: await listWebContainerFiles(wc, full, rel),
-            });
-        } else {
-            nodes.push({ name, type: 'file', path: rel });
-        }
-    }
-    return nodes.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-    });
 }
 
-export async function readWebContainerFile(wc: WebContainer, path: string): Promise<string> {
-    const data = await wc.fs.readFile(normalizePath(path), 'utf-8');
-    return typeof data === 'string' ? data : new TextDecoder().decode(data as Uint8Array);
+export async function readWebContainerFile(_wc: null, path: string, jobId?: string): Promise<string> {
+    if (!jobId) return '';
+    try {
+        const q = new URLSearchParams({ workspace_id: jobId, path });
+        const res = await brainApiFetch(`sandbox/read-file?${q}`);
+        if (!res?.ok) return '';
+        const data = await res.json();
+        return data.content || '';
+    } catch {
+        return '';
+    }
+}
+
+export async function mcpSaveFiles(
+    sessionId: string,
+    files: { filename: string; code: string }[]
+): Promise<{ ok: boolean; saved?: number; error?: string }> {
+    try {
+        const res = await brainApiFetch('sandbox/mcp/save-files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, files }),
+        });
+        if (!res?.ok) {
+            const err = await res?.json().catch(() => ({}));
+            return { ok: false, error: err.detail || 'Save failed' };
+        }
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: String(e) };
+    }
+}
+
+export async function mcpExecute(
+    sessionId: string,
+    entrypoint: string,
+    archiveB64: string
+): Promise<{ ok: boolean; tunnel_url?: string; status?: string; execution_output?: string; error?: string }> {
+    try {
+        const res = await brainApiFetch('sandbox/mcp/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: sessionId,
+                entrypoint,
+                archive_b64: archiveB64,
+            }),
+        });
+        if (!res?.ok) {
+            const err = await res?.json().catch(() => ({}));
+            return { ok: false, error: err.detail || 'Execute failed' };
+        }
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: String(e) };
+    }
+}
+
+export async function mcpSaveAndExecute(
+    sessionId: string,
+    entrypoint: string,
+    files: { filename: string; code: string }[]
+): Promise<{ ok: boolean; tunnel_url?: string; status?: string; execution_output?: string; saved?: number; error?: string }> {
+    try {
+        const res = await brainApiFetch('sandbox/mcp/save-and-execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, entrypoint, files }),
+        });
+        if (!res?.ok) {
+            const err = await res?.json().catch(() => ({}));
+            return { ok: false, error: err.detail || 'Save and execute failed' };
+        }
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: String(e) };
+    }
+}
+
+export async function mcpGetStatus(sessionId: string): Promise<{ ok: boolean; result?: string; error?: string }> {
+    try {
+        const q = new URLSearchParams({ session_id: sessionId });
+        const res = await brainApiFetch(`sandbox/mcp/status?${q}`);
+        if (!res?.ok) {
+            const err = await res?.json().catch(() => ({}));
+            return { ok: false, error: err.detail || 'Status check failed' };
+        }
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: String(e) };
+    }
+}
+
+export async function mcpDeleteSandbox(sessionId: string): Promise<{ ok: boolean; result?: string; error?: string }> {
+    try {
+        const res = await brainApiFetch('sandbox/mcp/sandbox', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId }),
+        });
+        if (!res?.ok) {
+            const err = await res?.json().catch(() => ({}));
+            return { ok: false, error: err.detail || 'Delete failed' };
+        }
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: String(e) };
+    }
 }

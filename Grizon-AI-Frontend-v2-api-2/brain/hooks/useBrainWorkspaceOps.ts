@@ -1,11 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import {
-    applyWorkspaceOps,
-    type WorkspaceOp,
-    onBrainPreviewReady,
-} from '../lib/brainWebContainer';
+import type { WorkspaceOp } from '../lib/brainWebContainer';
+import { onBrainPreviewReady } from '../lib/brainWebContainer';
 import { parseProgressToActivity } from '../lib/buildActivity';
 
 export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | null) {
@@ -18,15 +15,17 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
         processingRef.current = true;
         const batch = queueRef.current.splice(0, queueRef.current.length);
         try {
-            await applyWorkspaceOps(batch);
+            window.dispatchEvent(
+                new CustomEvent('applyBrainWorkspaceOpsRemote', { detail: { ops: batch, jobId } })
+            );
             window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
         } catch (e) {
-            console.error('[WebContainer] op batch failed:', e);
+            console.error('[Sandbox] op batch failed:', e);
         } finally {
             processingRef.current = false;
             if (queueRef.current.length > 0) drainQueue();
         }
-    }, []);
+    }, [jobId]);
 
     const enqueueOps = useCallback(
         (ops: WorkspaceOp[]) => {
@@ -77,7 +76,6 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                             new CustomEvent('brainBuildActivity', { detail: { activities: data.activities } })
                         );
                     }
-                    // Check if a tunnel URL is embedded in activities
                     if (data.activities?.length) {
                         for (const act of data.activities) {
                             const tunnelMatch = String(act.detail || act.label || '').match(/https:\/\/[\w-]+\.trycloudflare\.com/);
@@ -89,7 +87,6 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                             }
                         }
                     }
-                    // Check if progress_msg contains a tunnel URL
                     if (data.progress_msg) {
                         const tunnelMatch = String(data.progress_msg).match(/https:\/\/[\w-]+\.trycloudflare\.com/);
                         if (tunnelMatch) {
@@ -103,7 +100,6 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                 } else if (data.type === 'file_change') {
                     window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
                 } else if (data.type === 'sandbox_ready' || data.type === 'tunnel_ready') {
-                    // Sandbox MCP returned a live tunnel URL
                     const url = data.tunnel_url || data.url || data.stream_url;
                     if (url) {
                         window.dispatchEvent(
@@ -111,13 +107,12 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                         );
                     }
                 } else if (data.tunnel_url) {
-                    // Generic event that carries a tunnel_url field
                     window.dispatchEvent(
                         new CustomEvent('brainPreviewReady', { detail: { url: data.tunnel_url, streamUrl: data.tunnel_url } })
                     );
                 }
             } catch (err) {
-                console.error('[WebContainer] WS parse error:', err);
+                console.error('[Sandbox] WS parse error:', err);
             }
         };
 

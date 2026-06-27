@@ -17,9 +17,6 @@ import BrainBuildActivityFeed from './BrainBuildActivityFeed';
 import '@xterm/xterm/css/xterm.css';
 import { useBrainWebContainer } from '../context/BrainWebContainerContext';
 import {
-    getBrainWebContainer,
-    listWebContainerFiles,
-    readWebContainerFile,
     onBrainTerminalOutput,
     isFrontendPreviewPort,
     type FileNode,
@@ -59,7 +56,7 @@ export default function BrainEditorCanvas({
     activities = [],
     isSyncing = false,
 }: BrainEditorCanvasProps) {
-    const { previewUrl: wcPreviewUrl, previewPort: wcPreviewPort, isReady: wcReady, setWorkspace } = useBrainWebContainer();
+    const { previewUrl: wcPreviewUrl, previewPort: wcPreviewPort, setWorkspace } = useBrainWebContainer();
     const [internalIsOpen, setInternalIsOpen] = useState(false);
     const isOpen = embedded ? true : (propsIsOpen !== undefined ? propsIsOpen : internalIsOpen);
 
@@ -80,7 +77,7 @@ export default function BrainEditorCanvas({
     const [viewMode, setViewMode] = useState<'preview' | 'code' | 'terminal'>(embedded ? 'code' : 'code');
     const [previewUrl, setPreviewUrl] = useState('');
     const [syncUrl, setSyncUrl] = useState<string | null>(null);
-    const [runtime, setRuntime] = useState<'webcontainer' | 'legacy'>('webcontainer');
+    const [runtime] = useState<'sandbox'>('sandbox');
     const [framework, setFramework] = useState<BrainFrameworkId>(DEFAULT_BRAIN_FRAMEWORK);
     const templatesBootstrappedRef = useRef(false);
     const workspaceInitKeyRef = useRef<string | null>(null);
@@ -206,15 +203,6 @@ export default function BrainEditorCanvas({
         if (file.type !== 'file') return file;
         const wid = targetJobId || jobIdRef.current || jobId || '';
         try {
-            if (runtime === 'webcontainer' && wcReady) {
-                try {
-                    const wc = await getBrainWebContainer();
-                    const content = await readWebContainerFile(wc, file.path);
-                    return { ...file, content };
-                } catch {
-                    /* fall back to API */
-                }
-            }
             if (!wid) return file;
             const res = await brainApiFetch(
                 `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(file.path)}`
@@ -265,24 +253,10 @@ export default function BrainEditorCanvas({
         );
 
     const fetchProjectFiles = useCallback(async (targetJobId: string, pickActive = false) => {
-        if (!targetJobId && !wcReady) return;
+        if (!targetJobId) return;
         try {
-            let wcFiles: FileNode[] = [];
-            let apiFiles: FileNode[] = [];
-
-            if (runtime === 'webcontainer' && wcReady) {
-                try {
-                    const wc = await getBrainWebContainer();
-                    wcFiles = await listWebContainerFiles(wc);
-                } catch (err) {
-                    console.warn('[BrainEditor] WebContainer unavailable, using API file tree:', err);
-                }
-            }
-            if (targetJobId && wcFiles.length === 0) {
-                apiFiles = await fetchApiFileTree(targetJobId);
-            }
-
-            const files = wcFiles.length > 0 ? wcFiles : apiFiles;
+            const apiFiles = await fetchApiFileTree(targetJobId);
+            const files = apiFiles;
             if (!files.length) return;
 
             const expanded = openDefaultFolders(sortFileTreeNodes(files));
@@ -309,7 +283,7 @@ export default function BrainEditorCanvas({
         } catch (err) {
             console.error('Error fetching project files:', err);
         }
-    }, [wcReady, runtime, framework]);
+    }, [runtime, framework]);
 
     const scheduleFileRefresh = useCallback(
         (targetJobId: string, pickActive = false) => {
@@ -326,7 +300,7 @@ export default function BrainEditorCanvas({
     }, [isOpen]);
 
     useEffect(() => {
-        if (!isOpen || !wcReady || templatesBootstrappedRef.current) return;
+        if (!isOpen || templatesBootstrappedRef.current) return;
         if (embedded && buildJobId) {
             templatesBootstrappedRef.current = true;
             if (jobIdRef.current) scheduleFileRefresh(jobIdRef.current, true);
@@ -336,43 +310,42 @@ export default function BrainEditorCanvas({
         bootstrapDefaultTemplates(framework).then(() => {
             if (jobIdRef.current) scheduleFileRefresh(jobIdRef.current, true);
         }).catch(() => { });
-    }, [isOpen, wcReady, framework, embedded, buildJobId, scheduleFileRefresh]);
+    }, [isOpen, framework, embedded, buildJobId, scheduleFileRefresh]);
 
     useEffect(() => {
         const onRefresh = () => {
             const id = jobIdRef.current || jobId;
-            if (id || wcReady) scheduleFileRefresh(id || '', false);
+            if (id) scheduleFileRefresh(id || '', false);
         };
         window.addEventListener('refreshBrainFiles', onRefresh);
         return () => window.removeEventListener('refreshBrainFiles', onRefresh);
-    }, [wcReady, jobId, scheduleFileRefresh]);
+    }, [jobId, scheduleFileRefresh]);
 
     useEffect(() => {
         const id = jobIdRef.current || jobId;
         if (!id) return;
         scheduleFileRefresh(id, !filesLoadedRef.current);
-    }, [jobId, wcReady, scheduleFileRefresh]);
+    }, [jobId, scheduleFileRefresh]);
 
     useEffect(() => {
         if (!buildComplete) return;
         setIsBuilding(false);
-        if (wcPreviewUrl) setPreviewUrl(wcPreviewUrl);
         const id = jobIdRef.current || jobId;
         if (id) scheduleFileRefresh(id, true);
         setViewMode('preview');
-    }, [buildComplete, wcPreviewUrl, jobId, scheduleFileRefresh]);
+    }, [buildComplete, jobId, scheduleFileRefresh]);
 
     useEffect(() => {
         const onFw = (e: Event) => {
             const fw = normalizeBrainFramework((e as CustomEvent).detail?.framework);
             setFramework(fw);
-            if (wcReady && jobIdRef.current) {
+            if (jobIdRef.current) {
                 applyFrontendTemplate(fw).then(() => scheduleFileRefresh(jobIdRef.current!, true));
             }
         };
         window.addEventListener('brainFrameworkChange', onFw);
         return () => window.removeEventListener('brainFrameworkChange', onFw);
-    }, [wcReady, scheduleFileRefresh]);
+    }, [scheduleFileRefresh]);
 
     const handleRefresh = () => {
         fileTreeSigRef.current = '';
@@ -390,9 +363,6 @@ export default function BrainEditorCanvas({
             if (data.jobId) {
                 setJobId(data.jobId);
                 setWorkspace(data.jobId, data.syncUrl ?? null);
-            }
-            if (data.runtime) {
-                setRuntime(data.runtime === 'webcontainer' ? 'webcontainer' : 'legacy');
             }
             if (data.framework) {
                 setFramework(normalizeBrainFramework(data.framework));

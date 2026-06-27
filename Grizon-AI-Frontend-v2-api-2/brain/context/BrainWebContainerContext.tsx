@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { getBrainWebContainer, isWebContainerBooted, type WorkspaceOp } from '../lib/brainWebContainer';
+import type { WorkspaceOp } from '../lib/brainWebContainer';
 import { useBrainWorkspaceOps } from '../hooks/useBrainWorkspaceOps';
 
 interface BrainWebContainerContextValue {
@@ -22,8 +22,8 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
     const [syncUrl, setSyncUrl] = useState<string | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [previewPort, setPreviewPort] = useState<number | null>(null);
-    const [isBooting, setIsBooting] = useState(false);
-    const [isReady, setIsReady] = useState(false);
+    const [isBooting] = useState(false);
+    const [isReady, setIsReady] = useState(true);
     const workspaceKeyRef = useRef<string | null>(null);
 
     const { enqueueOps } = useBrainWorkspaceOps(jobId, syncUrl);
@@ -34,26 +34,9 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
         workspaceKeyRef.current = key;
         setJobId(id);
         if (sync !== undefined) setSyncUrl(sync);
-        if (unchanged && (isReady || isWebContainerBooted())) {
-            if (!isReady && isWebContainerBooted()) setIsReady(true);
-            return;
-        }
-        setIsBooting(true);
-        getBrainWebContainer()
-            .then(() => {
-                setIsReady(true);
-                setIsBooting(false);
-            })
-            .catch((e) => {
-                if (isWebContainerBooted()) {
-                    setIsReady(true);
-                    setIsBooting(false);
-                    return;
-                }
-                console.warn('[WebContainer] boot skipped (will use API file tree):', e);
-                setIsBooting(false);
-            });
-    }, [isReady]);
+        if (unchanged) return;
+        setIsReady(true);
+    }, []);
 
     const applyOps = useCallback(
         (ops: WorkspaceOp[]) => {

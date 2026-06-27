@@ -224,7 +224,7 @@ export default function BrainBuildActivityFeed({
             <div className="flex-1 px-2 py-3 space-y-2.5">
                 {dedupedStream.length === 0 && !isSyncing && (
                     <p className="text-[13px] text-white/30 leading-relaxed">
-                        Building your project in WebContainer. Actions will appear here as they run.
+                        Building your project in Sandbox. Actions will appear here as they run.
                     </p>
                 )}
 

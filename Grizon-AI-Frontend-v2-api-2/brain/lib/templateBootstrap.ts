@@ -1,9 +1,8 @@
 'use client';
 
 import type { WorkspaceOp } from './brainWebContainer';
-import { applyWorkspaceOps, isWebContainerBooted, getBrainWebContainer } from './brainWebContainer';
-import { normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
 import { brainApiFetch } from './brainApiBase';
+import { type BrainFrameworkId } from '../constants/frameworks';
 
 export async function fetchTemplateOps(
     framework: BrainFrameworkId,
@@ -23,19 +22,17 @@ export async function fetchTemplateOps(
     }
 }
 
-/** Skip when backend already bootstrapped via workspace_ops during init_sandbox */
 export async function bootstrapDefaultTemplates(framework: BrainFrameworkId) {
     try {
         const ops = await fetchTemplateOps(framework, { frontendOnly: false });
         if (!ops.length) return ops;
-        if (!isWebContainerBooted()) {
-            await getBrainWebContainer();
-        }
-        await applyWorkspaceOps(ops);
+        window.dispatchEvent(
+            new CustomEvent('applyBrainWorkspaceOps', { detail: { ops } })
+        );
         window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
         return ops;
     } catch (err) {
-        console.warn('[templateBootstrap] skipped — WebContainer not available:', err);
+        console.warn('[templateBootstrap] skipped:', err);
         return [];
     }
 }
@@ -44,7 +41,9 @@ export async function applyFrontendTemplate(framework: BrainFrameworkId) {
     try {
         const ops = await fetchTemplateOps(framework, { frontendOnly: true });
         if (ops.length) {
-            await applyWorkspaceOps(ops);
+            window.dispatchEvent(
+                new CustomEvent('applyBrainWorkspaceOps', { detail: { ops } })
+            );
             window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
         }
         return ops;

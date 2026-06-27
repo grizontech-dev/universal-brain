@@ -94,7 +94,7 @@ export default function BrainLayout({ children }: { children?: React.ReactNode }
 
                             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/5">
                                 <Activity size={12} className="text-[#976df8]" />
-                                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Runtime: WebContainer</span>
+                                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Runtime: Sandbox MCP</span>
                             </div>
                         </div>
                     </header>

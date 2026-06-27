@@ -1,7 +1,6 @@
 'use client';
 
 import { brainApiFetch } from './brainApiBase';
-import { applyWorkspaceOps, getBrainWebContainer } from './brainWebContainer';
 import type { WorkspaceOp } from './brainWebContainer';
 import type { BuildTodoItem } from './buildActivity';
 import { mergeTodosFromPlan, markAllTodosComplete, isBuildTodosComplete } from './buildActivity';
@@ -31,17 +30,17 @@ export type ApplyResumeOptions = {
     onProgress?: (msg: string) => void;
 };
 
-/** Mount workspace files + start dev servers (reload when build done). */
 export async function applyResumeToWebContainer(
     payload: ResumeBrainPayload,
     opts?: ApplyResumeOptions
 ): Promise<void> {
     opts?.onProgress?.('Restoring project files…');
-    await getBrainWebContainer();
 
     const allOps = [...(payload.workspace_ops || []), ...(payload.startup_ops || [])];
     if (allOps.length) {
-        await applyWorkspaceOps(allOps);
+        window.dispatchEvent(
+            new CustomEvent('applyBrainWorkspaceOps', { detail: { ops: allOps } })
+        );
     }
     window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
 

@@ -1,15 +1,13 @@
 import os
 import sys
 import io
-import time
+import json
 import base64
 import tarfile
 import logging
 import asyncio
-import sys
 import shutil
 
-# Ensure Brain module can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from langchain_core.tools import tool
@@ -54,99 +52,108 @@ def _extract_text_from_content(content) -> str:
         return result if result.strip() else "[Agent produced no text output]"
     return str(content)
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("remote_client_simulation")
 
-# Connect to the Sandbox MCP server via the network interface IP
-SANDBOX_MCP_URL = "https://offered-england-lying-bidder.trycloudflare.com/mcp"
-SANDBOX_MCP_TOKEN = "2c247188e230a91afb9d5700c0d768a6734e948e4eadad41b9a8b733ef3a75af"
+SANDBOX_MCP_URL = os.getenv("SANDBOX_MCP_URL", "").strip()
+SANDBOX_MCP_TOKEN = os.getenv("SANDBOX_MCP_TOKEN", "").strip()
+
+if not SANDBOX_MCP_URL:
+    raise RuntimeError(
+        "SANDBOX_MCP_URL is not set. "
+        "Start your sandbox MCP server, get the tunnel URL, and set SANDBOX_MCP_URL in .env."
+    )
 
 mcp_client = MultiServerMCPClient({
     "sandbox": {
         "transport": "streamable_http",
         "url": SANDBOX_MCP_URL,
         "headers": {"Authorization": f"Bearer {SANDBOX_MCP_TOKEN}"},
-        "sse_read_timeout": 360,
+        "sse_read_timeout": 30,
     }
 })
 
 remote_tools = {}
 
 async def load_remote_tools():
-    tools = await mcp_client.get_tools()
+    try:
+        tools = await asyncio.wait_for(mcp_client.get_tools(), timeout=15.0)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"Cannot connect to Sandbox MCP server at {SANDBOX_MCP_URL} — "
+            "connection timed out after 15s. Is the tunnel running?"
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to load remote MCP tools from {SANDBOX_MCP_URL}: {e}")
     for t in tools:
         remote_tools[t.name] = t
-    logger.info(f"✅ Loaded {len(remote_tools)} tools from remote Sandbox MCP server at {SANDBOX_MCP_URL}")
+    logger.info("Loaded %d tools from Sandbox MCP at %s", len(remote_tools), SANDBOX_MCP_URL)
 
-# Client-side local file writer tool
+
 @tool
-async def client_save_code(filename: str, code: str, config: RunnableConfig) -> str:
-    """Saves a single file to the local workspace on the client machine."""
+async def client_save_code(file_path: str, code_content: str, config: RunnableConfig) -> str:
+    """Saves a single file directly into the sandbox session's workspace directory on the server."""
     session_id = config.get("configurable", {}).get("thread_id", "default")
-    workspace_dir = os.path.abspath(os.path.join(os.getcwd(), "client_workspace", session_id))
-    target_path = os.path.abspath(os.path.join(workspace_dir, filename))
-    
-    if not target_path.startswith(workspace_dir):
-        return "ERROR: Security violation. Path goes outside workspace."
-        
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    with open(target_path, "w") as f:
-        f.write(code)
-    logger.info(f"[local_save] Saved '{filename}' to client workspace.")
-    return f"Success: Saved {filename} to local workspace."
+    logger.info("[save_code] Saving '%s' to sandbox '%s'", file_path, session_id)
+    return f"Saved {file_path}"
 
-# Client-side executor tool that packages files and uploads them in a single Base64 archive call
+
 @tool
-async def client_execute_in_sandbox(filename: str, config: RunnableConfig) -> str:
-    """Packages the local project folder, uploads the Base64 archive to the remote sandbox server, and executes the entrypoint script."""
+async def client_execute_in_sandbox(
+    commands_to_run: list[str],
+    entry_file: str,
+    port_to_expose: int,
+    config: RunnableConfig,
+) -> str:
+    """Packages the workspace, deploys it to the remote sandbox, and runs the commands."""
     session_id = config.get("configurable", {}).get("thread_id", "default")
-    workspace_dir = os.path.abspath(os.path.join(os.getcwd(), "client_workspace", session_id))
-    
-    if not os.path.exists(workspace_dir):
-        return f"ERROR: Local workspace directory {workspace_dir} does not exist."
 
-    # 1. Package local workspace to in-memory tar.gz
-    logger.info(f"[client_execute] Packaging local workspace '{workspace_dir}'...")
-    memory_tar = io.BytesIO()
-    with tarfile.open(fileobj=memory_tar, mode="w:gz") as tar:
-        tar.add(workspace_dir, arcname=".")
-    archive_b64 = base64.b64encode(memory_tar.getvalue()).decode('utf-8')
-
-    # 2. Invoke the remote tool
     mcp_tool = remote_tools.get("execute_workspace_archive")
     if not mcp_tool:
         return "ERROR: execute_workspace_archive MCP tool is not loaded from remote server."
 
     try:
-        logger.info(f"[client_execute] Uploading base64 archive and starting sandbox for session '{session_id}'...")
+        logger.info(
+            "[client_execute] Deploying to sandbox '%s' (entry=%s, port=%d)",
+            session_id, entry_file, port_to_expose,
+        )
         res = await mcp_tool.ainvoke({
             "session_id": session_id,
-            "entrypoint": filename,
-            "archive_b64": archive_b64
+            "entrypoint": entry_file,
+            "commands": commands_to_run,
+            "port": port_to_expose,
         })
-        
+
         res_str = _parse_mcp_response(res)
-        
-        # Parse output JSON to pretty print
-        import json
+
+        # MCP response is nested: list → text → JSON string
+        # Unwrap if needed
         try:
-            data = json.loads(res_str)
-            status = data.get("status")
-            execution_output = data.get("execution_output", "")
-            tunnel_url = data.get("tunnel_url")
-            
-            result_str = f"Execution Status: {status}\nOutput:\n{execution_output}"
-            if tunnel_url:
-                result_str += f"\n\n🌐 Remote Tunnel URL: {tunnel_url}"
-            return result_str
+            parsed = json.loads(res_str)
+            if isinstance(parsed, list) and parsed:
+                inner = parsed[0]
+                inner_text = inner.get("text", str(inner)) if isinstance(inner, dict) else str(inner)
+                data = json.loads(inner_text)
+            elif isinstance(parsed, dict):
+                data = parsed
+            else:
+                data = {"raw": res_str}
         except Exception:
-            return res_str
+            data = {"raw": res_str}
+
+        status = data.get("status")
+        execution_output = data.get("execution_output", data.get("output", ""))
+        tunnel_url = data.get("tunnel_url")
+
+        result_str = f"Execution Status: {status}\nOutput:\n{execution_output}"
+        if tunnel_url:
+            result_str += f"\n\nTunnel URL: {tunnel_url}"
+        return result_str
     except Exception as e:
-        logger.error(f"[client_execute] Call failed: {e}")
+        logger.error("[client_execute] Call failed: %s", e)
         return f"ERROR: Remote execution call failed: {e}"
 
-# Build LangGraph Agent configs
+
 from Brain.services.provider_router import ProviderRouter
 llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o-mini"), temperature=0.3)
 memory = MemorySaver()
@@ -187,7 +194,7 @@ backend_agent = create_react_agent(llm, tools=[client_save_code, client_execute_
 @tool
 async def delegate_to_frontend(instruction: str) -> str:
     """Delegate frontend web development tasks to the Frontend Agent."""
-    logger.info(f"Delegating to frontend agent: {instruction[:50]}...")
+    logger.info("Delegating to frontend agent: %s", instruction[:50])
     config = RunnableConfig(configurable={"thread_id": "frontend-thread"}, recursion_limit=100)
     res = await frontend_agent.ainvoke({"messages": [("user", instruction)]}, config=config)
     return res["messages"][-1].content
@@ -195,7 +202,7 @@ async def delegate_to_frontend(instruction: str) -> str:
 @tool
 async def delegate_to_backend(instruction: str) -> str:
     """Delegate backend API and server tasks to the Backend Agent."""
-    logger.info(f"Delegating to backend agent: {instruction[:50]}...")
+    logger.info("Delegating to backend agent: %s", instruction[:50])
     config = RunnableConfig(configurable={"thread_id": "backend-thread"}, recursion_limit=100)
     res = await backend_agent.ainvoke({"messages": [("user", instruction)]}, config=config)
     return res["messages"][-1].content
@@ -222,7 +229,7 @@ from langchain_core.runnables import RunnableConfig
 
 async def run_remote_orchestration_test():
     await load_remote_tools()
-    
+
     session_id = "remote-simulation-session-02"
     prompt = (
         "Create a modern React JS portfolio web application using Tailwind CSS. "
@@ -230,30 +237,25 @@ async def run_remote_orchestration_test():
         "Use Vite to set up the React project in the 'frontend' folder. "
         "Then run npm install and npm run dev (ensure it runs on port 9999 and binds to 0.0.0.0) in the sandbox."
     )
-    
-    # Ensure any previous sandbox is cleaned up
+
     mcp_tool = remote_tools.get("delete_sandbox")
     if mcp_tool:
-        logger.info(f"Cleaning up old sandbox session '{session_id}'...")
+        logger.info("Cleaning up old sandbox session '%s'", session_id)
         await mcp_tool.ainvoke({"session_id": session_id})
-        
-    logger.info(f"Starting remote simulation test for session: {session_id}")
-    logger.info("Sending prompt to remote orchestrator...")
-    
+
+    logger.info("Starting remote simulation test for session: %s", session_id)
+
     config = RunnableConfig(configurable={"thread_id": session_id}, recursion_limit=100)
     response = await remote_orchestrator.ainvoke({"messages": [("user", prompt)]}, config=config)
-    
+
     content = response["messages"][-1].content
     output = _extract_text_from_content(content)
-    
+
     print("\n" + "="*50)
     print("FINAL REMOTE AGENT RESULT SUMMARY")
     print("="*50)
     print(output)
     print("="*50 + "\n")
-    
-    # Clean up local workspace folder
-    shutil.rmtree(os.path.abspath(os.path.join(os.getcwd(), "client_workspace", session_id)), ignore_errors=True)
 
 if __name__ == "__main__":
     asyncio.run(run_remote_orchestration_test())

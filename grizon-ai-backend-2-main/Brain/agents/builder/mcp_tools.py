@@ -28,11 +28,14 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
     
+    print(f"[MCP_TOOLS] client_save_code called | file={file_path} | session={session_id}")
+
     if not session_id:
         return "ERROR: session_id (thread_id) not provided in config."
 
     ws_root = workspace_manager.resolve_workspace_path(str(session_id))
     if not ws_root:
+        print(f"[MCP_TOOLS] ERROR: workspace not found for session={session_id}")
         return f"ERROR: Could not resolve workspace path for session '{session_id}'."
 
     abs_path = os.path.abspath(os.path.join(ws_root, file_path))
@@ -42,6 +45,8 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(code_content)
+
+    print(f"[MCP_TOOLS] Saved OK | {file_path} -> {abs_path} | size={len(code_content)}")
 
     # Emit WebSocket event
     act = _make_activity("edit_file", f"Saved {file_path}", path=file_path, task_title=task_title)
@@ -66,12 +71,17 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Deploying")
 
+    print(f"[MCP_TOOLS] client_execute_in_sandbox called | session={session_id} | entry={entry_file}")
+
     if not session_id:
         return "ERROR: session_id not provided."
         
     ws_root = workspace_manager.resolve_workspace_path(str(session_id))
     if not ws_root or not os.path.exists(ws_root):
+        print(f"[MCP_TOOLS] ERROR: workspace not found for session={session_id}")
         return "ERROR: Workspace directory not found."
+
+    print(f"[MCP_TOOLS] Packaging workspace from: {ws_root}")
 
     # Package workspace to base64
     memory_file = io.BytesIO()
@@ -88,6 +98,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     
     memory_file.seek(0)
     encoded_archive = base64.b64encode(memory_file.read()).decode("utf-8")
+    print(f"[MCP_TOOLS] Archive ready | size={len(encoded_archive)} chars")
 
     act = _make_activity("terminal", f"Running '{' && '.join(commands_to_run)}'", task_title=task_title)
     await ws_manager.broadcast_to_sandbox(session_id, {
@@ -106,26 +117,34 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         return "ERROR: execute_workspace_archive tool not found on remote server."
 
     try:
+        print(f"[MCP_TOOLS] Calling MCP execute_workspace_archive...")
         response = await mcp_tool.ainvoke({
             "session_id": session_id,
-            "archive_format": "tar.gz",
-            "base64_data": encoded_archive,
-            "commands": commands_to_run,
-            "entry_file": entry_file,
-            "port": port_to_expose
+            "entrypoint": entry_file,
+            "archive_b64": encoded_archive,
         })
+        print(f"[MCP_TOOLS] MCP response type: {type(response).__name__} | len={len(str(response)[:200])}")
         
+        # MCP returns list format: [{'type': 'text', 'text': '{...json...}'}]
         output_data = response
-        if isinstance(response, str):
+        if isinstance(response, list) and response:
+            inner = response[0]
+            inner_text = inner.get("text", str(inner)) if isinstance(inner, dict) else str(inner)
+            try:
+                output_data = json.loads(inner_text)
+            except Exception:
+                output_data = {"raw": inner_text}
+        elif isinstance(response, str):
             try:
                 output_data = json.loads(response)
-            except:
+            except Exception:
                 pass
                 
         if isinstance(output_data, dict):
-            output_text = output_data.get("output", str(response))
+            output_text = output_data.get("output", output_data.get("execution_output", str(response)))
             tunnel_url = output_data.get("tunnel_url", "")
             if tunnel_url:
+                print(f"[MCP_TOOLS] TUNNEL URL: {tunnel_url}")
                 output_text += f"\nTunnel URL: {tunnel_url}"
                 # Broadcast dedicated sandbox_ready event so the frontend canvas loads the preview
                 await ws_manager.broadcast_to_sandbox(session_id, {
@@ -155,4 +174,5 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         return f"Execution Output:\n{response}"
         
     except Exception as e:
+        print(f"[MCP_TOOLS] ERROR in execute_in_sandbox: {e}")
         return f"ERROR: Remote execution call failed: {e}"

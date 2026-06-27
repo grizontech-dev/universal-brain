@@ -20,6 +20,7 @@ class RunnerAgent(BaseAgent):
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("current_job_id")
+        print(f"[RUNNER] execute called | session={session_id}")
         if not session_id:
             state["run_report"] = "Error: No workspace found."
             return state
@@ -27,9 +28,11 @@ class RunnerAgent(BaseAgent):
         # Determine entrypoint — prefer frontend (Vite) over backend
         tasks = state.get("plan", [])
         has_frontend = any(t.get("category") == "frontend" for t in tasks)
-        entrypoint = "frontend/package.json" if has_frontend else (state.get("sandbox_entrypoint") or "backend/server.js")
+        entrypoint = "frontend/src/main.jsx" if has_frontend else (state.get("sandbox_entrypoint") or "backend/server.js")
 
         sandbox_mcp = get_sandbox_mcp_service()
+        if not sandbox_mcp._initialized:
+            await sandbox_mcp.initialize()
 
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",
@@ -55,9 +58,11 @@ class RunnerAgent(BaseAgent):
         )
 
         # Use deploy_workspace which tars the local workspace and uploads it
+        print(f"[RUNNER] Deploying workspace | entrypoint={entrypoint}")
         deploy_result = await sandbox_mcp.deploy_workspace(
             str(session_id), entrypoint
         )
+        print(f"[RUNNER] Deploy done | status={deploy_result.get('status')} | tunnel={(deploy_result.get('tunnel_url') or 'none')[:60]}")
 
         plan = state.get("plan", [])
         for t in plan:
@@ -88,6 +93,7 @@ class RunnerAgent(BaseAgent):
 
         # Broadcast the tunnel URL over WebSocket so the frontend canvas loads it
         if tunnel_url:
+            print(f"[RUNNER] Broadcasting tunnel URL: {tunnel_url}")
             await ws_manager.broadcast_to_sandbox(str(session_id), {
                 "type": "sandbox_ready",
                 "tunnel_url": tunnel_url,
@@ -110,6 +116,7 @@ class RunnerAgent(BaseAgent):
             })
 
         state["status"] = "running" if status != "error" else "error"
+        print(f"[RUNNER] Final status: {state['status']} | tunnel_url={tunnel_url}")
         state["run_report"] = (
             f"### Sandbox Deployment\n"
             f"Status: {status}\n"

@@ -736,7 +736,7 @@ class BrainChatService:
                     )
                     # Store final report in long-term memory
                     final_report_text = runner_state.get("run_report") or ""
-                    if final_report_text:
+                    if final_report_text and mg.long_term:
                         mg.long_term.store(mg.project_id, "review", final_report_text, {"conv_id": conv_id})
                 
                 final_payload = {

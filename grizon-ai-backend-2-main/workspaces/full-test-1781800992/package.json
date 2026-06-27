@@ -1,0 +1,6 @@
+{
+  "name": "full-test",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

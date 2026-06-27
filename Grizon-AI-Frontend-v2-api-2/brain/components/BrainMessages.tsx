@@ -895,7 +895,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             // Always clear nav flag when we arrive and have no pending message
             setNavigatingFlag(false);
 
-            // Always reset the webcontainer before loading a new conversation
+            // Always reset the sandbox state before loading a new conversation
             // to prevent files from leaking across workspaces!
             resetBrainWebContainer();
 
@@ -1025,7 +1025,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 streamUrl: latestSandboxMsg.sandboxJob.stream_url || latestSandboxMsg.sandboxJob.streamUrl,
                                 framework: latestSandboxMsg.sandboxJob.framework || selectedFramework,
                                 todoList: latestSandboxMsg.todoList,
-                                runtime: latestSandboxMsg.sandboxJob.runtime || 'webcontainer',
+                                runtime: latestSandboxMsg.sandboxJob.runtime || 'sandbox',
                             };
                             setActiveSandboxJob(jobData);
                             latestJobRef.current = jobData;
@@ -1175,7 +1175,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 streamUrl: detail.streamUrl || detail.stream_url,
                 framework: detail.framework || selectedFramework,
                 todoList: detail.todoList,
-                runtime: detail.runtime || 'webcontainer',
+                runtime: detail.runtime || 'sandbox',
             };
             setActiveSandboxJob(jobData);
             latestJobRef.current = jobData;
