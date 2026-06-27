@@ -41,6 +41,7 @@ function mapMessage(row: Row): Message {
     promptBreakdown: (row.prompt_breakdown as PromptBreakdown | null) ?? null,
     todoList: row.todo_list ? (typeof row.todo_list === 'string' ? JSON.parse(row.todo_list as string) : row.todo_list) as Record<string, unknown> | null : null,
     sandboxJob: row.sandbox_job ? (typeof row.sandbox_job === 'string' ? JSON.parse(row.sandbox_job as string) : row.sandbox_job) as Record<string, unknown> | null : null,
+    metadata: row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata) as Record<string, unknown> | null : null,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };

@@ -1,0 +1,1 @@
+import React from 'react';\n\nconst Projects = () => {\n  return (\n    <div className='flex items-center justify-center h-screen bg-gray-300'>\n      <h1 className='text-4xl font-bold'>My Projects</h1>\n    </div>\n  );\n};\n\nexport default Projects;

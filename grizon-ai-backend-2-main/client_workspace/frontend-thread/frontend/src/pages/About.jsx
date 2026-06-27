@@ -1,0 +1,1 @@
+import React from 'react';\n\nconst About = () => {\n  return (\n    <div className='flex items-center justify-center h-screen bg-gray-200'>\n      <h1 className='text-4xl font-bold'>About Me</h1>\n    </div>\n  );\n};\n\nexport default About;

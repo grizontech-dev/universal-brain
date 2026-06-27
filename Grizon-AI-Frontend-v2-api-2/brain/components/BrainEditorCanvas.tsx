@@ -15,6 +15,7 @@ import BrainPublishModal from './BrainPublishModal';
 import Editor from '@monaco-editor/react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import BrainBuildActivityFeed from './BrainBuildActivityFeed';
 import '@xterm/xterm/css/xterm.css';
 import { useBrainWebContainer } from '../context/BrainWebContainerContext';
 import {
@@ -47,6 +48,8 @@ interface BrainEditorCanvasProps {
     buildComplete?: boolean;
     forceBuilding?: boolean;
     todoList?: { id?: string; title?: string; task?: string; status?: string }[];
+    activities?: any[];
+    isSyncing?: boolean;
 }
 
 export default function BrainEditorCanvas({
@@ -57,11 +60,13 @@ export default function BrainEditorCanvas({
     buildComplete = false,
     forceBuilding = false,
     todoList: propsTodoList = [],
+    activities = [],
+    isSyncing = false,
 }: BrainEditorCanvasProps) {
     const { previewUrl: wcPreviewUrl, previewPort: wcPreviewPort, isReady: wcReady, setWorkspace } = useBrainWebContainer();
     const [internalIsOpen, setInternalIsOpen] = useState(false);
     const isOpen = embedded ? true : (propsIsOpen !== undefined ? propsIsOpen : internalIsOpen);
-    
+
     // Bridge internal setter to call props if available
     const setIsOpen = (val: boolean) => {
         if (!val && propsOnClose) {
@@ -171,26 +176,33 @@ export default function BrainEditorCanvas({
     const buildJobSyncUrl = buildJob?.syncUrl;
     const buildJobFramework = buildJob?.framework;
 
+    // Handle new job initialization (reset UI state only once per job)
     useEffect(() => {
         if (!buildJobId) return;
-        const key = `${buildJobId}|${buildJobSyncUrl ?? ''}`;
-        if (workspaceInitKeyRef.current === key) return;
-        workspaceInitKeyRef.current = key;
+        if (workspaceInitKeyRef.current === buildJobId) return;
+
+        workspaceInitKeyRef.current = buildJobId;
         setJobId(buildJobId);
-        if (buildJobSyncUrl) setSyncUrl(buildJobSyncUrl);
-        if (buildJobFramework) setFramework(normalizeBrainFramework(buildJobFramework));
-        setWorkspace(buildJobId, buildJobSyncUrl ?? null);
         setIsBuilding(true);
         setPreviewUrl('');
         setViewMode('code');
         filesLoadedRef.current = false;
         fileTreeSigRef.current = '';
+    }, [buildJobId]);
+
+    // Handle syncUrl/framework updates for the current job without resetting UI
+    useEffect(() => {
+        if (!buildJobId) return;
+        if (buildJobSyncUrl) setSyncUrl(buildJobSyncUrl);
+        if (buildJobFramework) setFramework(normalizeBrainFramework(buildJobFramework));
+        setWorkspace(buildJobId, buildJobSyncUrl ?? null);
     }, [buildJobId, buildJobSyncUrl, buildJobFramework, setWorkspace]);
 
     const effectivePreviewUrl = previewUrl || wcPreviewUrl || '';
+    const isSandboxTunnel = !!effectivePreviewUrl && /trycloudflare\.com|\.l\.trycloudflare\.com/.test(effectivePreviewUrl);
     const hasLiveFrontendPreview =
         !!effectivePreviewUrl &&
-        (wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174|:3000/.test(effectivePreviewUrl));
+        (!!previewUrl || isSandboxTunnel || (wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174|:3000/.test(effectivePreviewUrl)));
 
     const showBuildingOverlay = embedded
         ? (forceBuilding || !buildComplete) && !hasLiveFrontendPreview
@@ -213,7 +225,8 @@ export default function BrainEditorCanvas({
 
     useEffect(() => {
         if (!wcPreviewUrl) return;
-        const portOk = wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174/.test(wcPreviewUrl);
+        const isTunnel = /trycloudflare\.com/.test(wcPreviewUrl);
+        const portOk = isTunnel || (wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174/.test(wcPreviewUrl));
         if (embeddedRef.current && !buildCompleteRef.current && !portOk) return;
         setPreviewUrl(wcPreviewUrl);
         if (portOk) setViewMode('preview');
@@ -225,7 +238,8 @@ export default function BrainEditorCanvas({
             const url = detail.url || detail.streamUrl;
             const port = detail.port as number | undefined;
             if (!url) return;
-            const portOk = port ? isFrontendPreviewPort(port) : /5173|5174/.test(url);
+            const isTunnel = /trycloudflare\.com/.test(url);
+            const portOk = isTunnel || (port ? isFrontendPreviewPort(port) : /5173|5174/.test(url));
             if (embeddedRef.current && !buildCompleteRef.current && !portOk) return;
             setPreviewUrl(url);
             if (portOk) setViewMode('preview');
@@ -330,7 +344,7 @@ export default function BrainEditorCanvas({
 
             const expanded = openDefaultFolders(sortFileTreeNodes(files));
             const sig = treeSignature(expanded);
-            
+
             fileTreeSigRef.current = sig;
             setFileTree(expanded);
 
@@ -378,7 +392,7 @@ export default function BrainEditorCanvas({
         templatesBootstrappedRef.current = true;
         bootstrapDefaultTemplates(framework).then(() => {
             if (jobIdRef.current) scheduleFileRefresh(jobIdRef.current, true);
-        }).catch(() => {});
+        }).catch(() => { });
     }, [isOpen, wcReady, framework, embedded, buildJobId, scheduleFileRefresh]);
 
     useEffect(() => {
@@ -443,12 +457,16 @@ export default function BrainEditorCanvas({
             if (targetJobId) {
                 setIsBuilding(true);
                 scheduleFileRefresh(targetJobId, true);
-                setViewMode('code');
+                if (data.jobId && data.jobId !== jobIdRef.current) {
+                    setViewMode('code');
+                }
             }
             if (data.streamUrl && !embedded) {
                 setPreviewUrl(data.streamUrl);
                 setIsBuilding(false);
-                setViewMode('preview');
+                if (data.jobId && data.jobId !== jobIdRef.current) {
+                    setViewMode('preview');
+                }
             }
             if (data.syncUrl) {
                 setSyncUrl(data.syncUrl);
@@ -487,8 +505,8 @@ export default function BrainEditorCanvas({
                     }
                 }
                 if (
-                    data.progressMsg.includes('✅') || 
-                    data.progressMsg.includes('completed') || 
+                    data.progressMsg.includes('✅') ||
+                    data.progressMsg.includes('completed') ||
                     data.progressMsg.includes('Success') ||
                     data.progressMsg.includes('finished') ||
                     data.progressMsg.includes('Live')
@@ -576,7 +594,7 @@ export default function BrainEditorCanvas({
         term.open(terminalRef.current);
         fitAddon.fit();
         xtermRef.current = term;
-        term.write('\r\n\x1b[35m[GRIZON]\x1b[0m WebContainer shell output...\r\n');
+        term.write('\r\n\x1b[35m[GRIZON]\x1b[0m Sandbox shell output...\r\n');
 
         const unsub = onBrainTerminalOutput((line) => {
             term.write(line.replace(/\n/g, '\r\n'));
@@ -602,38 +620,38 @@ export default function BrainEditorCanvas({
             node.isOpen
         );
         return (
-        <div className="select-none">
-            <div
-                className={`flex items-center py-[2px] px-2 cursor-pointer transition-colors group relative ${activeFile?.path === node.path ? 'bg-white/5 text-white' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
-                style={{ paddingLeft: `${level * 12 + 12}px` }}
-                onClick={() => handleFileClick(node)}
-            >
-                <div className="w-3.5 h-3.5 mr-0.5 flex items-center justify-center shrink-0">
-                    {node.type === 'folder' ? (
-                        node.isOpen ? (
-                            <ChevronDown size={12} className="text-white/30" />
+            <div className="select-none">
+                <div
+                    className={`flex items-center py-[2px] px-2 cursor-pointer transition-colors group relative ${activeFile?.path === node.path ? 'bg-white/5 text-white' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
+                    style={{ paddingLeft: `${level * 12 + 12}px` }}
+                    onClick={() => handleFileClick(node)}
+                >
+                    <div className="w-3.5 h-3.5 mr-0.5 flex items-center justify-center shrink-0">
+                        {node.type === 'folder' ? (
+                            node.isOpen ? (
+                                <ChevronDown size={12} className="text-white/30" />
+                            ) : (
+                                <ChevronRight size={12} className="text-white/30" />
+                            )
                         ) : (
-                            <ChevronRight size={12} className="text-white/30" />
-                        )
-                    ) : (
-                        <span className="w-3.5" />
-                    )}
+                            <span className="w-3.5" />
+                        )}
+                    </div>
+                    <NodeIcon
+                        size={15}
+                        className={`mr-1.5 shrink-0 ${iconClass} ${activeFile?.path === node.path ? 'opacity-100' : 'opacity-90'}`}
+                    />
+                    <span className={`text-[13px] font-normal truncate ${activeFile?.path === node.path ? 'text-white font-medium' : ''}`}>{node.name}</span>
                 </div>
-                <NodeIcon
-                    size={15}
-                    className={`mr-1.5 shrink-0 ${iconClass} ${activeFile?.path === node.path ? 'opacity-100' : 'opacity-90'}`}
-                />
-                <span className={`text-[13px] font-normal truncate ${activeFile?.path === node.path ? 'text-white font-medium' : ''}`}>{node.name}</span>
+                {node.type === 'folder' && node.isOpen && node.children && (
+                    <div>
+                        {node.children.map(child => (
+                            <FileTreeItem key={child.path} node={child} level={level + 1} />
+                        ))}
+                    </div>
+                )}
             </div>
-            {node.type === 'folder' && node.isOpen && node.children && (
-                <div>
-                    {node.children.map(child => (
-                        <FileTreeItem key={child.path} node={child} level={level + 1} />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
+        );
     };
 
     const shellClass = embedded
@@ -642,44 +660,45 @@ export default function BrainEditorCanvas({
             ${isFullScreen ? 'inset-4 rounded-xl' : 'right-4 top-4 bottom-4 w-[calc(100vw-450px)] max-w-[1400px] rounded-xl'}`;
 
     const globalBuildingOverlay = (!buildComplete) && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#0a0a0a] p-8">
-            <Loader2 size={48} className="text-[#976df8] animate-spin mb-8" />
-            <h2 className="text-[20px] font-bold text-white mb-2">Brain Build Mode</h2>
-            
-            {activeTodos.length > 0 && (
-                <div className="flex flex-col items-center gap-1.5 mt-4">
-                    <p className="text-[12px] font-bold text-white/40 uppercase tracking-[0.15em] mb-1">Current Phase</p>
-                    <p className="text-[15px] text-white/90 font-medium">Execution</p>
-                    
-                    <div className="h-[1px] w-12 bg-white/10 my-3" />
-                    
-                    <p className="text-[12px] font-bold text-white/40 uppercase tracking-[0.15em] mb-1">Current Task</p>
-                    {(() => {
-                        const runningTask = activeTodos.find(t => {
-                            const s = (t.status || '').toLowerCase();
-                            return s === 'executing' || s === 'running';
-                        });
-                        return (
-                            <p className="text-[15px] text-[#c4b5fd] font-medium text-center max-w-sm">
-                                {runningTask ? (runningTask.title || runningTask.task) : 'Waiting for next task...'}
-                            </p>
-                        );
-                    })()}
-                    
-                    <div className="mt-8 flex items-center gap-4 text-[13px] font-mono text-white/50">
-                        <span>Progress:</span>
+        <div className="absolute inset-0 z-[100] flex flex-col bg-[#0a0a0a] overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 shrink-0">
+                <Loader2 size={20} className="text-[#976df8] animate-spin" />
+                <h2 className="text-[16px] font-bold text-white">Brain Build Mode</h2>
+                {activeTodos.length > 0 && (
+                    <div className="ml-auto flex items-center gap-3 text-[13px] font-mono text-white/50">
                         <span className="text-white">{completedTodoCount} / {activeTodos.length}</span>
                         <span>Tasks Complete</span>
+                        <div className="w-32 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-[#976df8] transition-all duration-500 ease-out"
+                                style={{ width: `${(completedTodoCount / activeTodos.length) * 100}%` }}
+                            />
+                        </div>
                     </div>
+                )}
+            </div>
 
-                    <div className="w-64 h-1.5 mt-3 bg-white/10 rounded-full overflow-hidden shadow-inner">
-                        <div
-                            className="h-full bg-[#976df8] transition-all duration-500 ease-out"
-                            style={{ width: `${(completedTodoCount / activeTodos.length) * 100}%` }}
-                        />
+            {/* Activity Feed */}
+            <div className="flex-1 overflow-y-auto p-6">
+                {activities.length > 0 || activeTodos.length > 0 ? (
+                    <BrainBuildActivityFeed
+                        activities={activities}
+                        todos={activeTodos}
+                        isSyncing={isSyncing || forceBuilding}
+                    />
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-full gap-4">
+                        <p className="text-[15px] text-[#c4b5fd] font-medium">
+                            {forceBuilding ? 'Syncing project files...' : 'Analyzing your request...'}
+                        </p>
+                        <div className="flex items-center gap-3 text-[13px] font-mono text-white/50">
+                            <Loader2 size={14} className="animate-spin" />
+                            <span>Setting up tasks...</span>
+                        </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
         </div>
     );
 
@@ -722,7 +741,7 @@ export default function BrainEditorCanvas({
                 <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.03] border border-white/5 min-w-0 max-w-[400px]">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />
                     <span className="text-[12px] font-medium text-white/60 tracking-tight truncate">
-                        {jobId ? `webcontainer / ${jobId.slice(0, 8)}` : 'grizon-brain / initializing'}
+                        {jobId ? `sandbox / ${jobId.slice(0, 8)}` : 'grizon-brain / initializing'}
                     </span>
                     <ChevronDown size={14} className="text-white/20 shrink-0" />
                 </div>
@@ -780,7 +799,7 @@ export default function BrainEditorCanvas({
                             <div className="flex items-center gap-0.5">
                                 <button className="p-1 text-white/30 hover:text-white transition-colors"><PlusSquare size={14} /></button>
                                 <button className="p-1 text-white/30 hover:text-white transition-colors"><FolderPlus size={14} /></button>
-                                <button 
+                                <button
                                     onClick={() => handleRefresh()}
                                     className="p-1 text-white/30 hover:text-white transition-colors"
                                     title="Refresh Workspace"
@@ -905,7 +924,7 @@ export default function BrainEditorCanvas({
                                     <div className="flex-1 max-w-[600px] h-7 bg-white/[0.03] border border-white/5 rounded-md flex items-center px-3 gap-2 group focus-within:border-white/20 transition-all">
                                         <Shield size={12} className="text-white/20 group-hover:text-white/40" />
                                         <span className="text-[12px] text-white/60 select-none truncate">
-                                            {previewUrl ? previewUrl.replace(/^https?:\/\//, '').slice(0, 48) : 'Waiting for Vite (port 5173)…'}
+                                            {previewUrl ? previewUrl.replace(/^https?:\/\//, '').slice(0, 48) : 'Waiting for Sandbox (port 9999)…'}
                                         </span>
                                     </div>
 
@@ -928,9 +947,9 @@ export default function BrainEditorCanvas({
                                     ) : buildComplete && !hasLiveFrontendPreview ? (
                                         <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50 p-8 text-center">
                                             <Loader2 size={32} className="text-[#976df8] animate-spin" />
-                                            <p className="text-sm font-medium text-white/80">Starting frontend dev server on port 5173…</p>
-                                            <p className="text-xs text-white/40 max-w-md">The WebContainer is installing dependencies (npm install) in the background. This can take 1-2 minutes on the first load.</p>
-                                            
+                                            <p className="text-sm font-medium text-white/80">Starting frontend dev server on port 9999…</p>
+                                            <p className="text-xs text-white/40 max-w-md">The remote sandbox is installing dependencies and starting the server. This may take a moment.</p>
+
                                             <div className="mt-6 bg-black/40 rounded-lg p-3 w-full max-w-lg text-left text-[11px] font-mono text-white/50 border border-white/5 shadow-inner">
                                                 {recentTerminalLines.length > 0 ? recentTerminalLines.map((line, i) => (
                                                     <div key={i} className="truncate">{line.replace(/\x1b\[[0-9;]*m/g, '')}</div>
@@ -958,7 +977,7 @@ export default function BrainEditorCanvas({
                             </div>
                             <div className="flex items-center gap-2">
                                 <Cpu size={14} />
-                                <span>WebContainer · In-browser Node</span>
+                                <span>Remote Sandbox Environment</span>
                             </div>
                         </div>
                         <div className="flex items-center gap-4">

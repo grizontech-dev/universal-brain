@@ -9,7 +9,7 @@ class PlannerAgent(BaseAgent):
         super().__init__(
             name="Planner",
             description="Creates the technical architecture and project plan.",
-            model_id="deepseek-chat"
+            model_id="gpt-4o-mini"
         )
 
     def _build_context_summary(self, history: List[dict], prompt: str) -> str:

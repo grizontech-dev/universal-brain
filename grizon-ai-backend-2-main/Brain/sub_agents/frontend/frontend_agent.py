@@ -12,7 +12,7 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="deepseek-chat"
+            model_id="gpt-4o-mini"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()
@@ -51,12 +51,13 @@ class FrontendAgent(BaseAgent):
         6. **Tailwind** — Use utility classes; add `tailwindcss`, `postcss`, `autoprefixer` to `frontend/package.json` if missing; include `tailwind.config.js` and `src/index.css` with `@tailwind` directives when styling.
         7. **Structure**: `frontend/src/components/` for UI blocks; `frontend/src/pages/` for route pages when using router.
         8. **commands & packages**: ALL packages used in the project MUST be added to `frontend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies (like `react-icons`, `lucide-react`, etc.) or if the user reports a "Failed to resolve import" error, you MUST add them to `frontend/package.json` AND return `"commands": ["cd frontend && npm install"]`. The runner handles `npm run dev` at the end automatically.
-        9. **CRITICAL VALIDATION RULE**: Before returning files, you MUST mentally verify for EVERY file created inside `frontend/src/components/` and `frontend/src/pages/`:
+        9. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, you MUST configure `vite.config.js` or the package.json dev script to explicitly use `--port 9999 --host 0.0.0.0`. This is an absolute requirement for the tunnel URL to work properly.
+        10. **CRITICAL VALIDATION RULE**: Before returning files, you MUST mentally verify for EVERY file created inside `frontend/src/components/` and `frontend/src/pages/`:
            - 1. Is it imported in App.jsx or a parent page?
            - 2. Is it rendered somewhere in the component tree?
            - 3. No orphan components are allowed! An orphan component is any component that exists but is not reachable from App.jsx. If a component is not connected, the task is considered FAILED. Return ONLY when all components pass this internal checklist.
-        10. **APP.JSX IS THE SINGLE SOURCE OF TRUTH**: Every page, route, layout, component, section, widget, table, modal, form, dashboard, chart, navbar, footer, sidebar, and UI element created by the agent MUST be reachable from `App.jsx`. Never leave a placeholder `Home.jsx` as the only rendered page. Replace template routes completely with the generated application.
-        11. **ROUTING RULES**: If you create more than one page, you MUST: (1) Import all pages into App.jsx, (2) Create Route entries, (3) Create navigation links, (4) Ensure every page can be visited. Failure to connect routes is considered a failed task.
+        11. **APP.JSX IS THE SINGLE SOURCE OF TRUTH**: Every page, route, layout, component, section, widget, table, modal, form, dashboard, chart, navbar, footer, sidebar, and UI element created by the agent MUST be reachable from `App.jsx`. Never leave a placeholder `Home.jsx` as the only rendered page. Replace template routes completely with the generated application.
+        12. **ROUTING RULES**: If you create more than one page, you MUST: (1) Import all pages into App.jsx, (2) Create Route entries, (3) Create navigation links, (4) Ensure every page can be visited. Failure to connect routes is considered a failed task.
         ```jsx
         import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
         import Navbar from './components/Navbar';

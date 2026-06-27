@@ -94,8 +94,6 @@ def get_resume_payload(
     index, build_complete = compute_resume_index(plan)
 
     workspace_ops = workspace_disk_to_ops(workspace_id)
-    startup_ops = workspace_manager.build_webcontainer_startup_ops(fw)
-
     return {
         "workspace_id": workspace_id,
         "framework": fw,
@@ -103,7 +101,5 @@ def get_resume_payload(
         "current_task_index": index,
         "build_complete": build_complete,
         "workspace_ops": workspace_ops,
-        "startup_ops": startup_ops,
-        "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{workspace_id}",
-        "runtime": "webcontainer",
+        "runtime": "sandbox_mcp",
     }

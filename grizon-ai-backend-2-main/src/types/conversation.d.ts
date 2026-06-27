@@ -71,6 +71,7 @@ export interface Message {
   promptBreakdown: PromptBreakdown | null;
   todoList: Record<string, unknown> | null;
   sandboxJob: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   /**

@@ -130,6 +130,6 @@ async def list_files(
 
     try:
         tree = get_tree(host_path)
-        return {"files": tree, "runtime": "webcontainer"}
+        return {"files": tree, "runtime": "sandbox_mcp"}
     except Exception as e:
         return {"error": str(e)}
