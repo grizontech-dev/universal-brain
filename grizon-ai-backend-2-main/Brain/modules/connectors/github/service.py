@@ -603,6 +603,57 @@ class GitHubConnectorService:
             json=payload,
         )
 
+    async def create_repository(self, access_token: str, name: str, description: str = "", private: bool = True) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{self.api_base}/user/repos",
+                headers=self._request_headers(access_token),
+                json={"name": name, "description": description, "private": private, "auto_init": True},
+            )
+            if response.status_code == 422:
+                raise ValueError(f"Repository '{name}' already exists or name is invalid")
+            response.raise_for_status()
+            return response.json()
+
+    async def push_files_to_repo(
+        self, access_token: str, full_name: str, files: List[Dict[str, str]], branch: str = "main", message: str = "Initial commit via Grizon AI"
+    ) -> List[Dict[str, Any]]:
+        results = []
+        async with httpx.AsyncClient(timeout=60) as client:
+            for file in files:
+                encoded = base64.b64encode(file["content"].encode("utf-8")).decode("ascii")
+                payload = {"message": message, "content": encoded, "branch": branch}
+                try:
+                    resp = await client.put(
+                        f"{self.api_base}/repos/{full_name}/contents/{file['path'].lstrip('/')}",
+                        headers=self._request_headers(access_token),
+                        json=payload,
+                    )
+                    if resp.status_code == 422:
+                        try:
+                            existing = await client.get(
+                                f"{self.api_base}/repos/{full_name}/contents/{file['path'].lstrip('/')}",
+                                headers=self._request_headers(access_token),
+                                params={"ref": branch},
+                            )
+                            if existing.status_code == 200:
+                                existing_data = existing.json()
+                                if isinstance(existing_data, dict) and existing_data.get("sha"):
+                                    payload["sha"] = existing_data["sha"]
+                                resp = await client.put(
+                                    f"{self.api_base}/repos/{full_name}/contents/{file['path'].lstrip('/')}",
+                                    headers=self._request_headers(access_token),
+                                    json=payload,
+                                )
+                        except Exception:
+                            pass
+                    resp.raise_for_status()
+                    data = resp.json()
+                    results.append({"path": file["path"], "status": "created", "sha": data.get("content", {}).get("sha") if isinstance(data, dict) else None})
+                except Exception as e:
+                    results.append({"path": file["path"], "status": "failed", "error": str(e)})
+        return results
+
     def delete_local_clone(self, repository_path: str):
         shutil.rmtree(repository_path, ignore_errors=True)
 

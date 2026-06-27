@@ -14,6 +14,8 @@ router = APIRouter(prefix="/connect-supabase", tags=["Supabase Integration"])
 supabase_service = SupabaseOAuthService()
 
 from Brain.modules.shared.auth import get_current_user
+from Brain.config.database import SessionLocal
+from Brain.modules.connectors.supabase.service import Connector
 
 # 10 minutes expiration for the state/PKCE challenge
 STATE_EXPIRATION = 600 
@@ -63,6 +65,18 @@ async def login(
     return RedirectResponse(url=redirect_url)
     
 
+
+@router.get("/status")
+async def status(current_user = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        connector = db.query(Connector).filter(
+            Connector.userId == current_user.id,
+            Connector.type == "supabase"
+        ).first()
+        return {"connected": connector is not None}
+    finally:
+        db.close()
 
 @router.get("/oauth2/callback")
 async def oauth2_callback(

@@ -11,6 +11,14 @@ from pydantic import BaseModel, Field
 from Brain.config.redis import redis_client
 from Brain.modules.connectors.github.service import GitHubConnectorService
 from Brain.modules.shared.auth import get_current_user
+from pydantic import BaseModel
+
+
+class CreateRepoRequest(BaseModel):
+    name: str
+    description: str = ""
+    private: bool = True
+    files: list[dict[str, str]] = []
 
 
 router = APIRouter(prefix="/connect-github", tags=["GitHub Integration"])
@@ -90,6 +98,50 @@ async def oauth2_callback(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to process callback: {exc}")
 
+
+@router.get("/status")
+async def status(current_user=Depends(get_current_user)):
+    connector = github_service.get_connection(current_user.id)
+    return {"connected": connector is not None and connector.config is not None}
+
+@router.post("/repositories/create")
+async def create_repository(req: CreateRepoRequest, current_user=Depends(get_current_user)):
+    try:
+        connector = github_service.get_connection(current_user.id)
+        if not connector or not connector.config:
+            raise HTTPException(status_code=400, detail="GitHub connector is not connected")
+        installation_id = connector.config.get("installation_id")
+        access_token = await github_service.get_installation_token(installation_id)
+
+        repo_data = await github_service.create_repository(
+            access_token, name=req.name, description=req.description, private=req.private
+        )
+        full_name = repo_data["full_name"]
+        default_branch = repo_data.get("default_branch", "main")
+
+        pushed = []
+        if req.files:
+            pushed = await github_service.push_files_to_repo(
+                access_token, full_name, req.files, branch=default_branch
+            )
+
+        return {
+            "success": True,
+            "repository": {
+                "name": repo_data["name"],
+                "full_name": full_name,
+                "html_url": repo_data["html_url"],
+                "clone_url": repo_data["clone_url"],
+                "default_branch": default_branch,
+            },
+            "files_pushed": len(pushed),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.get("/repositories")
 async def list_repositories(current_user=Depends(get_current_user)):
