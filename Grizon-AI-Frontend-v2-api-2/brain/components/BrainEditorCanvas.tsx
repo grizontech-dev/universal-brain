@@ -10,6 +10,8 @@ import {
     ChevronUp, Globe, Cpu, Zap, ArrowLeft, ArrowRight,
     RotateCw, ExternalLink, Copy, Shield, Loader2, CheckCircle2, Circle
 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import BrainPublishModal from './BrainPublishModal';
 import Editor from '@monaco-editor/react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -24,6 +26,8 @@ import { bootstrapDefaultTemplates, applyFrontendTemplate } from '../lib/templat
 import { brainApiFetch } from '../lib/brainApiBase';
 import { sortFileTreeNodes, getFileTreeIcon } from '../lib/fileTreeUtils';
 import { DEFAULT_BRAIN_FRAMEWORK, normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
+
+const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
 
 function PreviewIframe({ url, sessionId }: { url: string; sessionId?: string }) {
     const [loadIframe, setLoadIframe] = useState(false);
@@ -196,6 +200,53 @@ export default function BrainEditorCanvas({
     const [lastProgressMsg, setLastProgressMsg] = useState("");
     const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
     const [recentTerminalLines, setRecentTerminalLines] = useState<string[]>([]);
+
+    const { getAccessToken } = useAuth();
+    const [showPublish, setShowPublish] = useState(false);
+
+    const collectWorkspaceFiles = async (): Promise<{ path: string; content: string }[]> => {
+        const files: { path: string; content: string }[] = [];
+        const walk = async (nodes: FileNode[]) => {
+            for (const node of nodes) {
+                if (node.type === 'file' && node.path) {
+                    const content = node.content || '';
+                    if (content) {
+                        files.push({ path: node.path, content });
+                    }
+                }
+                if (node.children) {
+                    await walk(node.children);
+                }
+            }
+        };
+        await walk(fileTree);
+        return files;
+    };
+
+    const handlePublish = async (name: string, description: string, isPrivate: boolean) => {
+        const token = getAccessToken?.() ?? '';
+        try {
+            const files = await collectWorkspaceFiles();
+            const res = await fetch(
+                `${BRAIN_URL}/connect-github/repositories/create${token ? `?token=${encodeURIComponent(token)}` : ''}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    body: JSON.stringify({ name, description, private: isPrivate, files }),
+                },
+            );
+            const data = await res.json();
+            if (!res.ok) {
+                return { success: false, error: data.detail || 'Failed to create repository' };
+            }
+            return { success: true, repository: data.repository };
+        } catch (e: any) {
+            return { success: false, error: e.message || 'Network error' };
+        }
+    };
 
     useEffect(() => {
         const unsub = onBrainTerminalOutput((line) => {
@@ -773,7 +824,10 @@ export default function BrainEditorCanvas({
                         </button>
                     </div>
 
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-[12px] font-bold hover:bg-white/90 transition-all ml-1 shadow-[0_0_15px_rgba(255,255,255,0.1)] shrink-0">
+                    <button
+                        onClick={() => setShowPublish(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-[12px] font-bold hover:bg-white/90 transition-all ml-1 shadow-[0_0_15px_rgba(255,255,255,0.1)] shrink-0"
+                    >
                         <Globe size={14} />
                         <span>Publish</span>
                     </button>
@@ -995,6 +1049,12 @@ export default function BrainEditorCanvas({
                     {/* These are just visual fillers to match the feel */}
                 </div>
             )}
+
+            <BrainPublishModal
+                isOpen={showPublish}
+                onClose={() => setShowPublish(false)}
+                onPublish={handlePublish}
+            />
         </div>
     );
 }

@@ -20,4 +20,8 @@ langchain-postgres
 langchain-text-splitters
 qdrant-client
 openai
+<<<<<<< HEAD
+PyJWT
+=======
 langchain-mcp-adapters
+>>>>>>> cbee052ebc5232f395402778012d9e95f39ef771

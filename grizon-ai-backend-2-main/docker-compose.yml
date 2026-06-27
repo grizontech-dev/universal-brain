@@ -6,13 +6,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      POSTGRES_USER:  grizon_user
+      POSTGRES_PASSWORD: grizon_password_123
+      POSTGRES_DB: grizon_db
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      test: ["CMD-SHELL", "pg_isready -U grizon_user -d grizon_db"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -28,7 +28,7 @@ services:
     ports:
       - "${PGWEB_PORT:-8081}:8081"
     environment:
-      DATABASE_URL: ${PGWEB_DATABASE_URL:-postgres://app:app@postgres:5432/app?sslmode=disable}
+      DATABASE_URL: ${PGWEB_DATABASE_URL:-postgres://grizon_user:grizon_password_123@postgres:5432/grizon_db?sslmode=disable}
       PGWEB_AUTH_USER: ${PGWEB_AUTH_USER:-}
       PGWEB_AUTH_PASS: ${PGWEB_AUTH_PASS:-}
     command:
@@ -36,7 +36,7 @@ services:
       - --bind=0.0.0.0
       - --listen=8081
       - --ssl=disable
-      - --url=${PGWEB_DATABASE_URL:-postgres://app:app@postgres:5432/app?sslmode=disable}
+      - --url=${PGWEB_DATABASE_URL:-postgres://grizon_user:grizon_password_123@postgres:5432/grizon_db?sslmode=disable}
 
   redis:
     image: redis:7-alpine
@@ -82,7 +82,7 @@ services:
     env_file:
       - .env.docker
     environment:
-      - DATABASE_URL=postgresql://app:app@postgres:5432/app?sslmode=disable
+      - DATABASE_URL=postgresql://grizon_user:grizon_password_123@postgres:5432/grizon_db?sslmode=disable
       - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"
@@ -115,7 +115,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://app:app@postgres:5432/app
+      DATABASE_URL: postgres://grizon_user:grizon_password_123@postgres:5432/grizon_db
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
       UNSTRUCTURED_API_URL: http://grizon-ai_unstructured:8000
