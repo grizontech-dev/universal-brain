@@ -235,6 +235,7 @@ class BrainChatService:
             "runtime": RUNTIME_SANDBOX_MCP,
             "framework": framework,
             "await_preview": True,
+            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}",
         }
 
         sandbox_mcp.record_activity(str(job_id))
@@ -599,10 +600,25 @@ class BrainChatService:
                         pass
                 agent = BuilderAgent()
                 
+                last_index = -1
+                stuck_count = 0
                 while True:
                     index = state.get("current_task_index", 0)
                     if index >= len(plan):
                         break
+                    
+                    # Stuck loop protection
+                    if index == last_index:
+                        stuck_count += 1
+                        if stuck_count >= 2:
+                            print(f"WARNING: BuilderAgent is stuck at task index {index}. Manually advancing to prevent infinite loop.")
+                            state["current_task_index"] = index + 1
+                            state["plan"][index]["status"] = "failed"
+                            state["plan"][index]["result"] = "Task timed out or agent loop did not complete."
+                            continue
+                    else:
+                        last_index = index
+                        stuck_count = 0
                     
                     # Start execution log for this task
                     if mg and index not in task_log_ids:
@@ -625,7 +641,7 @@ class BrainChatService:
                             if ev.get("execute_sandbox"):
                                 exe = ev["execute_sandbox"]
                                 exe["plan"] = plan
-                                exe["current_task_index"] = index
+                                exe["current_task_index"] = state.get("current_task_index", index + 1)
                                 yield f"data: {json.dumps({'execute_sandbox': _sanitize_for_json(exe)})}\n\n"
 
                                 # Register artifacts from workspace_ops
@@ -682,7 +698,7 @@ class BrainChatService:
                         "agentStep": "execute_sandbox",
                         "planApproved": True,
                         "thoughts": thoughts,
-                        "current_task_index": index,
+                        "current_task_index": state.get("current_task_index", index + 1),
                     }
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", report,
@@ -699,7 +715,7 @@ class BrainChatService:
                         except RuntimeError:
                             pass
                 
-                # Phase 3: Runner (final report)
+                # Phase 3: Runner — deploy runs as detached background task
                 runner = RunnerAgent()
                 runner_state = await runner.execute(state)
                 tasks = runner_state.get("plan", plan)
@@ -717,38 +733,26 @@ class BrainChatService:
                     )
                     mg.execution.complete_task(runner_log.id)
 
-                # Mark session as complete
+                # Mark session as "deploying" (not "done" yet — deploy runs in background)
                 if mg:
                     import asyncio as _asyncio4
                     try:
                         _asyncio4.get_event_loop().create_task(
-                            mg.session.update_workflow_state("done", "RunnerAgent")
+                            mg.session.update_workflow_state("deploying", "RunnerAgent")
                         )
                     except RuntimeError:
                         pass
 
-                # Store architecture pattern in memory on success
-                if mg:
-                    mg.architecture.record_usage(
-                        {"frontend": state.get("framework", "react"), "backend": "node", "database": "supabase"},
-                        mg.project_id,
-                        succeeded=True
-                    )
-                    # Store final report in long-term memory
-                    final_report_text = runner_state.get("run_report") or ""
-                    if final_report_text and mg.long_term:
-                        mg.long_term.store(mg.project_id, "review", final_report_text, {"conv_id": conv_id})
-                
                 final_payload = {
                     "execute_sandbox": {
                         "sandbox_job": sandbox_job,
                         "plan": tasks,
-                        "status": "complete",
+                        "status": "deploying",
                         "workspace_ops": runner_exe.get("workspace_ops", []),
                         "progress_msg": runner_exe.get("progress_msg"),
                     },
                     "plan": tasks,
-                    "status": "complete",
+                    "status": "deploying",
                     "report": runner_state.get("run_report"),
                 }
                 yield f"data: {json.dumps({'final_report': _sanitize_for_json(final_payload)})}\n\n"
@@ -858,7 +862,7 @@ class BrainChatService:
             "current_task_index": current_index,
             "executed_tasks": [],
             "current_job_id": conv_id if conv_id != "new" else request.get("current_job_id"),
-            "model_id": request.get("model_id", "deepseek-chat"),
+            "model_id": request.get("model_id", "gpt-4o-mini"),
             "temperature": request.get("temperature", 0.3),
             "question_rounds": request.get("question_rounds", 0),
             "framework": normalize_framework(request.get("framework")),

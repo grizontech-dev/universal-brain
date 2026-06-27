@@ -65,6 +65,20 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
 
     return f"Successfully saved {file_path} to local workspace."
 
+def _resolve_entrypoint(ws_root: str, entry_file: str) -> str:
+    """Resolve entrypoint to full relative path. If LLM sends 'main.jsx', find 'frontend/src/main.jsx'."""
+    if "/" in entry_file or "\\" in entry_file:
+        return entry_file
+    for root, dirs, files in os.walk(ws_root):
+        for f in files:
+            if f == entry_file:
+                rel = os.path.relpath(os.path.join(root, f), ws_root)
+                print(f"[MCP_TOOLS] Resolved entrypoint '{entry_file}' -> '{rel}'")
+                return rel
+    print(f"[MCP_TOOLS] WARNING: entrypoint '{entry_file}' not found, using as-is")
+    return entry_file
+
+
 @tool
 async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str, port_to_expose: int, config: RunnableConfig) -> str:
     """Packages the workspace, deploys it to the remote sandbox, and runs the commands."""
@@ -81,7 +95,8 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         print(f"[MCP_TOOLS] ERROR: workspace not found for session={session_id}")
         return "ERROR: Workspace directory not found."
 
-    print(f"[MCP_TOOLS] Packaging workspace from: {ws_root}")
+    entry_file = _resolve_entrypoint(ws_root, entry_file)
+    print(f"[MCP_TOOLS] Packaging workspace from: {ws_root} | entrypoint={entry_file}")
 
     # Package workspace to base64
     memory_file = io.BytesIO()
@@ -111,37 +126,19 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     sandbox_mcp = get_sandbox_mcp_service()
     if not sandbox_mcp._initialized:
         await sandbox_mcp.initialize()
-        
-    mcp_tool = sandbox_mcp._tools.get("execute_workspace_archive")
-    if not mcp_tool:
-        return "ERROR: execute_workspace_archive tool not found on remote server."
 
     try:
-        print(f"[MCP_TOOLS] Calling MCP execute_workspace_archive...")
-        response = await mcp_tool.ainvoke({
+        print(f"[MCP_TOOLS] Calling MCP execute_workspace_archive (timeout=600s)...")
+        result = await sandbox_mcp._call_tool("execute_workspace_archive", {
             "session_id": session_id,
             "entrypoint": entry_file,
             "archive_b64": encoded_archive,
-        })
-        print(f"[MCP_TOOLS] MCP response type: {type(response).__name__} | len={len(str(response)[:200])}")
-        
-        # MCP returns list format: [{'type': 'text', 'text': '{...json...}'}]
-        output_data = response
-        if isinstance(response, list) and response:
-            inner = response[0]
-            inner_text = inner.get("text", str(inner)) if isinstance(inner, dict) else str(inner)
-            try:
-                output_data = json.loads(inner_text)
-            except Exception:
-                output_data = {"raw": inner_text}
-        elif isinstance(response, str):
-            try:
-                output_data = json.loads(response)
-            except Exception:
-                pass
+        }, timeout=600)
+        print(f"[MCP_TOOLS] MCP result type: {type(result).__name__}")
+        output_data = sandbox_mcp._parse_response(result)
                 
         if isinstance(output_data, dict):
-            output_text = output_data.get("output", output_data.get("execution_output", str(response)))
+            output_text = output_data.get("output", output_data.get("execution_output", str(output_data)))
             tunnel_url = output_data.get("tunnel_url", "")
             if tunnel_url:
                 print(f"[MCP_TOOLS] TUNNEL URL: {tunnel_url}")
@@ -171,7 +168,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
             })
             return f"Execution Output:\n{output_text}"
             
-        return f"Execution Output:\n{response}"
+        return f"Execution Output:\n{output_data}"
         
     except Exception as e:
         print(f"[MCP_TOOLS] ERROR in execute_in_sandbox: {e}")

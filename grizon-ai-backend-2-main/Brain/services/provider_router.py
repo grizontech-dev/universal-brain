@@ -24,7 +24,7 @@ class ProviderRouter:
             fallback_model = "gpt-4o"
         else:
             fallback_provider = "deepseek"
-            fallback_model = "deepseek-chat"
+            fallback_model = "gpt-4o-mini"
             
         def get_fallback_model():
             if fallback_provider == "openai":
@@ -75,13 +75,21 @@ class ProviderRouter:
         elif "gemini" in model_id:
             gemini_key = os.getenv("GOOGLE_AI_API_KEY", "").strip() or None
             if gemini_key:
-                actual_model = "gemini-flash-latest" if "flash" in model_id else "gemini-pro-latest"
+                if "3-flash" in model_id or "flash" in model_id:
+                    actual_model = "gemini-3-flash-preview"
+                elif "pro" in model_id:
+                    actual_model = "gemini-2.0-pro"
+                else:
+                    actual_model = "gemini-3-flash-preview"
                 print(f"DEBUG: Using Google Gemini model: {actual_model}")
                 return ChatGoogleGenerativeAI(
                     model=actual_model,
                     google_api_key=gemini_key,
                     temperature=temperature,
-                    convert_system_message_to_human=True
+                    convert_system_message_to_human=True,
+                    max_retries=1,
+                    timeout=30,
+                    request_timeout=30,
                 )
             return get_fallback_model()
         

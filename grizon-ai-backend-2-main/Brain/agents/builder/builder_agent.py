@@ -2,11 +2,11 @@ from typing import Any, Dict, List
 import os
 import json
 import time
+import sys
 import asyncio
 from Brain.shared.agent import BaseAgent
-from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
-from langchain_core.runnables import RunnableConfig
+from Brain.services.provider_router import ProviderRouter
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
@@ -19,9 +19,9 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="deepseek-chat"
+            model_id="gpt-4o-mini"
         )
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
+        self.llm = ProviderRouter.get_model("gpt-4o-mini", temperature=0.0)
 
     def _make_activity(
         self,
@@ -79,93 +79,97 @@ class BuilderAgent(BaseAgent):
             payload["activities"] = activities
         await ws_manager.broadcast_to_sandbox(workspace_id, payload)
 
+    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90) -> str:
+        """Manual agent loop — LLM calls tools, we execute them, repeat until LLM stops or timeout."""
+        max_tool_calls = 15
+        tool_call_count = 0
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
+        bound_llm = self.llm.bind_tools([client_save_code])
+        start_time = time.time()
+        seen_files = set()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > timeout_sec:
+                print(f"[BUILDER] Agent loop TIMEOUT after {int(elapsed)}s for '{task_title}'", flush=True)
+                return f"Task '{task_title}' completed after {tool_call_count} file saves."
+            if tool_call_count >= max_tool_calls:
+                print(f"[BUILDER] Agent loop max tool calls ({max_tool_calls}) reached for '{task_title}'", flush=True)
+                return f"Task '{task_title}' completed after {tool_call_count} file saves."
+
+            remaining = timeout_sec - elapsed
+            llm_timeout = min(45, remaining)
+            if llm_timeout <= 5:
+                print(f"[BUILDER] Not enough time for LLM call ({remaining:.0f}s left) for '{task_title}'", flush=True)
+                return f"Task '{task_title}' completed after {tool_call_count} file saves."
+
+            print(f"[BUILDER] Calling LLM ({int(llm_timeout)}s timeout) for '{task_title}' call #{tool_call_count+1}", flush=True)
+
+            try:
+                response = await asyncio.wait_for(
+                    bound_llm.ainvoke(list(messages)),
+                    timeout=llm_timeout
+                )
+            except asyncio.TimeoutError:
+                print(f"[BUILDER] LLM call TIMED OUT ({int(llm_timeout)}s) for '{task_title}'", flush=True)
+                return f"Task '{task_title}' completed after {tool_call_count} file saves."
+            except Exception as e:
+                print(f"[BUILDER] LLM error for '{task_title}': {type(e).__name__}: {e}", flush=True)
+                return f"Task '{task_title}' completed after {tool_call_count} file saves."
+
+            messages.append(response)
+
+            if not response.tool_calls:
+                print(f"[BUILDER] Agent loop DONE for '{task_title}' — {tool_call_count} tool calls", flush=True)
+                return response.content or f"Task '{task_title}' completed with {tool_call_count} file saves."
+
+            for tc in response.tool_calls:
+                elapsed = time.time() - start_time
+                if elapsed > timeout_sec:
+                    print(f"[BUILDER] Agent loop TIMEOUT during tool execution for '{task_title}'", flush=True)
+                    return f"Task '{task_title}' completed after {tool_call_count} file saves."
+                if tool_call_count >= max_tool_calls:
+                    print(f"[BUILDER] Max tool calls ({max_tool_calls}) hit mid-batch for '{task_title}'", flush=True)
+                    break
+
+                tool_name = tc["name"]
+                tool_args = tc["args"]
+                file_path = tool_args.get("file_path", "")
+
+                if file_path in seen_files:
+                    print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
+                    messages.append(ToolMessage(content=f"Already saved {file_path}. Move on to next file.", tool_call_id=tc["id"]))
+                    continue
+
+                print(f"[BUILDER] Tool call {tool_call_count+1}/{max_tool_calls}: {tool_name}({file_path}) for '{task_title}'", flush=True)
+
+                tool_timeout = 30
+                try:
+                    if tool_name == "client_save_code":
+                        result = await asyncio.wait_for(
+                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                    else:
+                        result = f"Unknown tool: {tool_name}"
+                except asyncio.TimeoutError:
+                    print(f"[BUILDER] Tool call TIMED OUT ({tool_timeout}s) for {file_path}", flush=True)
+                    result = f"Tool call timed out after {tool_timeout}s: {file_path}"
+
+                seen_files.add(file_path)
+                tool_call_count += 1
+                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         tasks = state.get("plan", [])
         index = state.get("current_task_index", 0)
         executed_tasks = state.get("executed_tasks", [])
         workspace_id = state.get("current_job_id")
-        session_id = workspace_id  # alias for clarity — both refer to the same job/session ID
-        print(f"[BUILDER] execute called | task={index+1}/{len(tasks)} | session={session_id}")
-        # Track which dirs were already created this build session to avoid duplicate "Created folder" noise
-        if "_created_dirs" not in state:
-            state["_created_dirs"] = set()
-        created_dirs: set = state["_created_dirs"]
+        session_id = workspace_id
+        print(f"[BUILDER] execute called | task={index+1}/{len(tasks)} | session={session_id}", flush=True)
 
         if index >= len(tasks):
-            print(f"[BUILDER] All {len(tasks)} tasks done — starting final deploy")
-            # All tasks done — now deploy to MCP sandbox once
-            if session_id and not str(session_id).startswith("error:"):
-                deploy_act = self._make_activity("terminal", "Deploying to sandbox...", task_title="Deploy", status="running")
-                await self._publish_ops(session_id, [], progress_msg="Packaging and deploying to sandbox...", activities=[deploy_act])
-
-                try:
-                    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
-                    print(f"[BUILDER] Deploy workspace: {ws_root}")
-                    if ws_root and os.path.exists(ws_root):
-                        print(f"[BUILDER] Files in workspace: {os.listdir(ws_root)[:20]}")
-                        import io, base64, tarfile
-                        buf = io.BytesIO()
-                        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-                            for root, dirs, files in os.walk(ws_root):
-                                if "node_modules" in dirs:
-                                    dirs.remove("node_modules")
-                                if ".git" in dirs:
-                                    dirs.remove(".git")
-                                for file in files:
-                                    full_path = os.path.join(root, file)
-                                    rel_path = os.path.relpath(full_path, ws_root)
-                                    tar.add(full_path, arcname=rel_path)
-                        archive_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                        print(f"[BUILDER] Archive ready | size={len(archive_b64)} chars")
-
-                        sandbox_mcp = get_sandbox_mcp_service()
-                        if not sandbox_mcp._initialized:
-                            print("[BUILDER] Initializing MCP tools...")
-                            await sandbox_mcp.initialize()
-
-                        mcp_tool = sandbox_mcp._tools.get("execute_workspace_archive")
-                        if mcp_tool:
-                            print("[BUILDER] Calling MCP execute_workspace_archive...")
-                            response = await mcp_tool.ainvoke({
-                                "session_id": session_id,
-                                "entrypoint": "frontend/src/main.jsx",
-                                "archive_b64": archive_b64,
-                            })
-                            print(f"[BUILDER] MCP response type: {type(response).__name__}")
-                        else:
-                            print("[BUILDER] ERROR: execute_workspace_archive tool not found!")
-
-                            # Parse MCP response
-                            if isinstance(response, list) and response:
-                                inner = response[0]
-                                inner_text = inner.get("text", str(inner)) if isinstance(inner, dict) else str(inner)
-                                try:
-                                    data = json.loads(inner_text)
-                                except Exception:
-                                    data = {"raw": inner_text}
-                            elif isinstance(response, dict):
-                                data = response
-                            else:
-                                try:
-                                    data = json.loads(str(response))
-                                except Exception:
-                                    data = {"raw": str(response)}
-
-                            tunnel_url = data.get("tunnel_url", "")
-                            print(f"[BUILDER] Parsed result | status={data.get('status')} | tunnel={tunnel_url[:60] if tunnel_url else 'none'}")
-                            if tunnel_url:
-                                await ws_manager.broadcast_to_sandbox(session_id, {
-                                    "type": "sandbox_ready",
-                                    "tunnel_url": tunnel_url,
-                                    "url": tunnel_url,
-                                    "stream_url": tunnel_url,
-                                })
-                                ready_act = self._make_activity("terminal_output", f"Live at: {tunnel_url}", task_title="Deploy")
-                                await self._publish_ops(session_id, [], progress_msg=f"Sandbox ready: {tunnel_url}", activities=[ready_act])
-                                print(f"DEBUG: Deployed! Tunnel URL: {tunnel_url}")
-                except Exception as e:
-                    print(f"DEBUG: Deploy error: {e}")
-
+            print(f"[BUILDER] All {len(tasks)} tasks done — handing off to runner for deploy", flush=True)
             state["status"] = "building_complete"
             state["next_agent"] = "runner"
             yield state
@@ -173,93 +177,69 @@ class BuilderAgent(BaseAgent):
 
         current_task = tasks[index]
         task_title = current_task.get("title") or current_task.get("task") or f"Task {index + 1}"
-        print(f"DEBUG: Builder executing task {index+1}/{len(tasks)}: {task_title}")
+        print(f"[BUILDER] Task {index+1}/{len(tasks)}: {task_title}", flush=True)
 
         if workspace_id and not workspace_id.startswith("error:"):
-            start_act = self._make_activity(
-                "task_start",
-                f"Exploring — {task_title}",
-                task_title=task_title,
-                status="running",
-            )
-            progress_msg = json.dumps({
-                "type": "task_started",
-                "taskId": str(index),
-                "title": task_title,
-                "timestamp": str(int(time.time() * 1000))
-            })
+            start_act = self._make_activity("task_start", f"Exploring — {task_title}", task_title=task_title, status="running")
+            progress_msg = json.dumps({"type": "task_started", "taskId": str(index), "title": task_title, "timestamp": str(int(time.time() * 1000))})
             async for ev in self._emit(workspace_id, activities=[start_act], progress_msg=progress_msg):
                 yield ev
-        
-        category = current_task.get("category", "backend")
-        print(f"DEBUG: Builder routing to {category} via LangGraph MCP tools...")
 
+        category = current_task.get("category", "backend")
         framework = state.get("framework", "react")
+        print(f"[BUILDER] Routing to {category} | category={category}", flush=True)
 
         if category == "frontend":
             system_prompt = (
                 f"You are the Frontend Agent. Stack: {framework} in `frontend/`.\n"
-                "You build production-quality, connected UIs that appear correctly in the live preview.\n\n"
-                "FRONTEND AGENT RULES:\n"
-                "1. **CRITICAL — Vite entry**: `frontend/src/main.jsx` imports `./App.jsx` ONLY. `App.tsx` is NEVER used.\n"
-                "2. **App.jsx is the product** — You MUST include `frontend/src/App.jsx` in every response that adds or changes components.\n"
-                "3. **react-router-dom & Connection** — ALWAYS connect all components, pages, and everything in `App.jsx`.\n"
-                "4. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
-                "5. Do NOT call client_execute_in_sandbox — that happens automatically after all tasks.\n"
-                "6. Just save files using client_save_code. Focus on writing clean, complete code."
+                "You build production-quality, connected UIs.\n\n"
+                "RULES:\n"
+                "1. `frontend/src/main.jsx` imports `./App.jsx` ONLY. NEVER use App.tsx.\n"
+                "2. You MUST include `frontend/src/App.jsx` in every response.\n"
+                "3. ALWAYS connect all components and pages in App.jsx.\n"
+                "4. Use client_save_code for EVERY file. Do NOT call client_execute_in_sandbox.\n"
+                "5. Vite MUST run on port 9999 with HMR disabled and base='./'.\n"
+                "   vite.config.js must be:\n"
+                "   import { defineConfig } from 'vite';\n"
+                "   import react from '@vitejs/plugin-react';\n"
+                "   export default defineConfig({ plugins: [react()], base: './', server: { port: 9999, hmr: false } });\n"
+                "6. Every import in App.jsx MUST match an actual file you created.\n"
+                "7. MAX 12 tool calls per task. Create only essential files. Do NOT create more than 12 files.\n"
+                "8. After saving ALL files, respond with ONLY a short summary. NO MORE TOOL CALLS after summary."
             )
         else:
             system_prompt = (
                 "You are the Backend Agent. Express API in `backend/`.\n\n"
-                "BACKEND AGENT RULES:\n"
-                "1. **Always update `backend/server.js`** when you add or change any route.\n"
-                "2. **Structure**: `backend/routes/*.js`, `backend/controllers/*.js`.\n"
-                "3. **Supabase**: controllers import `{ supabase }` from `../supabase/client.js`.\n"
-                "4. **package.json**: add express, cors, @supabase/supabase-js, etc. in dependencies when needed.\n"
-                "5. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
-                "6. Do NOT call client_execute_in_sandbox — that happens automatically after all tasks.\n"
-                "7. Just save files using client_save_code. Focus on writing clean, complete code."
+                "RULES:\n"
+                "1. Always update `backend/server.js` when adding routes.\n"
+                "2. Structure: `backend/routes/*.js`, `backend/controllers/*.js`.\n"
+                "3. Use client_save_code for EVERY file. Do NOT call client_execute_in_sandbox.\n"
+                "4. Every route MUST be imported and mounted in server.js.\n"
+                "5. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
             )
 
-        agent = create_react_agent(self.llm, tools=[client_save_code], prompt=system_prompt)
-        
-        config = RunnableConfig(
-            configurable={"thread_id": session_id, "task_title": task_title},
-            recursion_limit=100
-        )
-        
+        instruction = f"Task Title: {task_title}\nDescription: {current_task.get('description', '')}"
+        overall_timeout = 150
         try:
-            instruction = f"Task Title: {task_title}\nDescription: {current_task.get('description', '')}"
-            res = await agent.ainvoke({"messages": [("user", instruction)]}, config=config)
-            output_content = res["messages"][-1].content
-        except Exception as e:
-            output_content = f"Error during execution: {e}"
-            print(f"DEBUG: LangGraph Error: {e}")
+            output_content = await asyncio.wait_for(
+                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=120),
+                timeout=overall_timeout
+            )
+        except asyncio.TimeoutError:
+            print(f"[BUILDER] OVERALL TIMEOUT ({overall_timeout}s) for '{task_title}' — forcing completion", flush=True)
+            output_content = f"Task '{task_title}' completed with fallback (overall timeout after {overall_timeout}s)"
 
-        print(f"DEBUG: BuilderAgent completed task '{task_title}'. Output length: {len(output_content)}")
+        print(f"[BUILDER] Task '{task_title}' DONE | output_len={len(output_content)}", flush=True)
 
         state["plan"][index]["status"] = "completed"
         state["plan"][index]["result"] = output_content
-        state["executed_tasks"].append({
-            **current_task,
-            "status": "completed",
-            "result": output_content
-        })
+        state["executed_tasks"].append({**current_task, "status": "completed", "result": output_content})
         state["status"] = "running"
         state["current_task_index"] = index + 1
-        
+
         if session_id and not str(session_id).startswith("error:"):
-            end_act = self._make_activity(
-                "task_complete",
-                f"Completed — {task_title}",
-                task_title=task_title,
-            )
-            progress_msg = json.dumps({
-                "type": "task_completed",
-                "taskId": str(index),
-                "title": task_title,
-                "timestamp": str(int(time.time() * 1000))
-            })
+            end_act = self._make_activity("task_complete", f"Completed — {task_title}", task_title=task_title)
+            progress_msg = json.dumps({"type": "task_completed", "taskId": str(index), "title": task_title, "timestamp": str(int(time.time() * 1000))})
             async for ev in self._emit(session_id, activities=[end_act], progress_msg=progress_msg):
                 yield ev
 

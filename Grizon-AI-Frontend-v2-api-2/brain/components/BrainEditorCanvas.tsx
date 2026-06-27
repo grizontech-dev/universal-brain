@@ -18,13 +18,118 @@ import '@xterm/xterm/css/xterm.css';
 import { useBrainWebContainer } from '../context/BrainWebContainerContext';
 import {
     onBrainTerminalOutput,
-    isFrontendPreviewPort,
     type FileNode,
 } from '../lib/brainWebContainer';
 import { bootstrapDefaultTemplates, applyFrontendTemplate } from '../lib/templateBootstrap';
 import { brainApiFetch } from '../lib/brainApiBase';
 import { sortFileTreeNodes, getFileTreeIcon } from '../lib/fileTreeUtils';
 import { DEFAULT_BRAIN_FRAMEWORK, normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
+
+function PreviewIframe({ url, sessionId }: { url: string; sessionId?: string }) {
+    const [loadIframe, setLoadIframe] = useState(false);
+    const [elapsed, setElapsed] = useState(0);
+    const [iframeKey, setIframeKey] = useState(0);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const iframeSrc = url;
+
+    useEffect(() => {
+        setLoadIframe(false);
+        setElapsed(0);
+        setIframeKey(0);
+
+        if (!url) return;
+
+        timerRef.current = setInterval(() => {
+            setElapsed((prev) => {
+                const next = prev + 1;
+                if (next >= 10) {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setLoadIframe(true);
+                }
+                return next;
+            });
+        }, 1000);
+
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, [url]);
+
+    const handleRefresh = useCallback(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setLoadIframe(false);
+        setElapsed(0);
+        setIframeKey((k) => k + 1);
+        timerRef.current = setInterval(() => {
+            setElapsed((prev) => {
+                const next = prev + 1;
+                if (next >= 10) {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    setLoadIframe(true);
+                }
+                return next;
+            });
+        }, 1000);
+    }, []);
+
+    if (!url) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-[#0a0a0a]">
+                <div className="text-center text-white/50 text-xs">
+                    <Loader2 size={24} className="text-white/20 animate-spin mx-auto mb-3" />
+                    <div className="animate-pulse">Waiting for tunnel URL...</div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!loadIframe) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-[#0a0a0a]">
+                <div className="text-center text-white/50 text-xs">
+                    <Loader2 size={24} className="text-[#976df8] animate-spin mx-auto mb-3" />
+                    <div>Starting preview server...</div>
+                    <div className="text-white/30 mt-1 text-[10px]">{elapsed}s / 10s</div>
+                    <div className="mt-3 w-48 h-1 bg-white/10 rounded-full overflow-hidden mx-auto">
+                        <div
+                            className="h-full bg-[#976df8] rounded-full transition-all duration-1000"
+                            style={{ width: `${(elapsed / 10) * 100}%` }}
+                        />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const cacheBustUrl = iframeSrc.includes('?') ? `${iframeSrc}&_t=${iframeKey}` : `${iframeSrc}?_t=${iframeKey}`;
+
+    return (
+        <div className="w-full h-full relative">
+            <iframe
+                key={iframeKey}
+                src={cacheBustUrl}
+                className="w-full h-full border-none"
+                title="Grizon Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            />
+            <button
+                onClick={handleRefresh}
+                className="absolute top-2 right-2 px-2 py-1 bg-black/60 text-white/70 text-[10px] rounded hover:bg-black/80 hover:text-white transition-colors z-10"
+            >
+                Refresh
+            </button>
+            <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute top-2 right-[72px] px-2 py-1 bg-black/60 text-white/70 text-[10px] rounded hover:bg-black/80 hover:text-white transition-colors z-10 no-underline"
+            >
+                Open in Tab
+            </a>
+        </div>
+    );
+}
 
 export interface BrainEditorBuildJob {
     jobId: string;
@@ -56,7 +161,7 @@ export default function BrainEditorCanvas({
     activities = [],
     isSyncing = false,
 }: BrainEditorCanvasProps) {
-    const { previewUrl: wcPreviewUrl, previewPort: wcPreviewPort, setWorkspace } = useBrainWebContainer();
+    const { setWorkspace } = useBrainWebContainer();
     const [internalIsOpen, setInternalIsOpen] = useState(false);
     const isOpen = embedded ? true : (propsIsOpen !== undefined ? propsIsOpen : internalIsOpen);
 
@@ -138,15 +243,13 @@ export default function BrainEditorCanvas({
         setWorkspace(buildJobId, buildJobSyncUrl ?? null);
     }, [buildJobId, buildJobSyncUrl, buildJobFramework, setWorkspace]);
 
-    const effectivePreviewUrl = previewUrl || wcPreviewUrl || '';
-    const isSandboxTunnel = !!effectivePreviewUrl && /trycloudflare\.com|\.l\.trycloudflare\.com/.test(effectivePreviewUrl);
-    const hasLiveFrontendPreview =
-        !!effectivePreviewUrl &&
-        (!!previewUrl || isSandboxTunnel || (wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174|:3000/.test(effectivePreviewUrl)));
+    const effectivePreviewUrl = previewUrl || '';
+    const isSandboxTunnel = !!effectivePreviewUrl && /trycloudflare\.com/.test(effectivePreviewUrl);
+    const hasLiveFrontendPreview = !!effectivePreviewUrl && isSandboxTunnel;
 
     const showBuildingOverlay = embedded
         ? (forceBuilding || !buildComplete) && !hasLiveFrontendPreview
-        : forceBuilding || isBuilding || !buildComplete;
+        : (forceBuilding || isBuilding || !buildComplete) && !hasLiveFrontendPreview;
 
     const showPreviewIframe = !!previewUrl && hasLiveFrontendPreview && !showBuildingOverlay;
 
@@ -164,25 +267,14 @@ export default function BrainEditorCanvas({
     }, [buildComplete, embedded]);
 
     useEffect(() => {
-        if (!wcPreviewUrl) return;
-        const isTunnel = /trycloudflare\.com/.test(wcPreviewUrl);
-        const portOk = isTunnel || (wcPreviewPort ? isFrontendPreviewPort(wcPreviewPort) : /5173|5174/.test(wcPreviewUrl));
-        if (embeddedRef.current && !buildCompleteRef.current && !portOk) return;
-        setPreviewUrl(wcPreviewUrl);
-        if (portOk) setViewMode('preview');
-    }, [wcPreviewUrl, wcPreviewPort]);
-
-    useEffect(() => {
         const onPreview = (e: Event) => {
             const detail = (e as CustomEvent).detail || {};
             const url = detail.url || detail.streamUrl;
-            const port = detail.port as number | undefined;
             if (!url) return;
             const isTunnel = /trycloudflare\.com/.test(url);
-            const portOk = isTunnel || (port ? isFrontendPreviewPort(port) : /5173|5174/.test(url));
-            if (embeddedRef.current && !buildCompleteRef.current && !portOk) return;
+            if (!isTunnel) return;
             setPreviewUrl(url);
-            if (portOk) setViewMode('preview');
+            setViewMode('preview');
         };
         window.addEventListener('brainPreviewReady', onPreview);
         return () => window.removeEventListener('brainPreviewReady', onPreview);
@@ -572,7 +664,7 @@ export default function BrainEditorCanvas({
         : `fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-[#0a0a0a] border border-white/10 shadow-2xl overflow-hidden font-sans
             ${isFullScreen ? 'inset-4 rounded-xl' : 'right-4 top-4 bottom-4 w-[calc(100vw-450px)] max-w-[1400px] rounded-xl'}`;
 
-    const globalBuildingOverlay = (!buildComplete) && (
+    const globalBuildingOverlay = (!buildComplete && !hasLiveFrontendPreview) && (
         <div className="absolute inset-0 z-[100] flex flex-col bg-[#0a0a0a] overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 shrink-0">
@@ -845,15 +937,9 @@ export default function BrainEditorCanvas({
                                 </div>
 
                                 {/* BROWSER CONTENT */}
-                                <div className="flex-1 bg-[#0a0a0a] relative">
+                                <div className="flex-1 bg-white relative">
                                     {showPreviewIframe ? (
-                                        <iframe
-                                            key={previewUrl}
-                                            src={previewUrl}
-                                            className="w-full h-full border-none animate-in fade-in duration-500"
-                                            title="Grizon Preview"
-                                            allow="cross-origin-isolated"
-                                        />
+                                        <PreviewIframe url={previewUrl} sessionId={buildJobId || jobId || undefined} />
                                     ) : buildComplete && !hasLiveFrontendPreview ? (
                                         <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50 p-8 text-center">
                                             <Loader2 size={32} className="text-[#976df8] animate-spin" />

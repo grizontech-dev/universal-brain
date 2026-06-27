@@ -15,7 +15,7 @@ class RunnerAgent(BaseAgent):
         super().__init__(
             name="Runner",
             description="Deploys the built project to the remote sandbox MCP server.",
-            model_id="deepseek-chat"
+            model_id="gpt-4o-mini"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,96 +57,134 @@ class RunnerAgent(BaseAgent):
             },
         )
 
-        # Use deploy_workspace which tars the local workspace and uploads it
-        print(f"[RUNNER] Deploying workspace | entrypoint={entrypoint}")
-        deploy_result = await sandbox_mcp.deploy_workspace(
-            str(session_id), entrypoint
-        )
-        print(f"[RUNNER] Deploy done | status={deploy_result.get('status')} | tunnel={(deploy_result.get('tunnel_url') or 'none')[:60]}")
+        # Spawn deploy as a DETACHED background task so it survives
+        # the HTTP request cancel scope. The deploy takes 30-300s (npm install + tunnel).
+        # If awaited inside the request handler, anyio cancels it when the client disconnects.
+        import asyncio as _bgio
 
-        plan = state.get("plan", [])
-        for t in plan:
-            if t.get("category") == "runner":
-                t["status"] = "executing"
+        async def _background_deploy(_sid, _entrypoint, _state):
+            """Runs outside the HTTP request cancel scope."""
+            print(f"[RUNNER] _background_deploy started | session={_sid}")
+            try:
+                deploy_result = await sandbox_mcp.deploy_workspace(
+                    str(_sid), _entrypoint
+                )
+            except Exception as e:
+                print(f"[RUNNER] _background_deploy FAILED: {e}")
+                deploy_result = {"status": "error", "error": str(e)}
 
-        status = deploy_result.get("status", "unknown")
-        execution_output = deploy_result.get("raw") or deploy_result.get("execution_output", "")
-        tunnel_url = deploy_result.get("tunnel_url")
+            print(f"[RUNNER] _background_deploy done | status={deploy_result.get('status')} | tunnel={(deploy_result.get('tunnel_url') or 'none')[:80]}")
 
-        print(f"DEBUG: RunnerAgent deploy_result: {json.dumps(deploy_result, default=str)[:500]}")
-        print(f"DEBUG: RunnerAgent tunnel_url: {tunnel_url}")
+            execution_output = deploy_result.get("raw") or deploy_result.get("execution_output", "")
+            tunnel_url = deploy_result.get("tunnel_url")
 
-        # If tunnel_url in raw output, extract it
-        if not tunnel_url and execution_output:
-            import re
-            match = re.search(r'https://[\w-]+\.trycloudflare\.com', str(execution_output))
-            if match:
-                tunnel_url = match.group(0)
-                print(f"DEBUG: RunnerAgent extracted tunnel_url from output: {tunnel_url}")
+            if not tunnel_url and execution_output:
+                import re
+                match = re.search(r'https://[\w-]+\.trycloudflare\.com', str(execution_output))
+                if match:
+                    tunnel_url = match.group(0)
+                    print(f"[RUNNER] extracted tunnel_url from output: {tunnel_url}")
 
-        if "sandbox_job" not in state:
-            state["sandbox_job"] = {}
-        state["sandbox_job"]["runtime"] = RUNTIME_SANDBOX_MCP
-        state["sandbox_job"]["tunnel_url"] = tunnel_url
-        state["sandbox_job"]["deploy_result"] = deploy_result
-        state["sandbox_job"]["await_preview"] = True
+            sandbox_job = _state.get("sandbox_job", {})
+            sandbox_job["runtime"] = RUNTIME_SANDBOX_MCP
+            sandbox_job["tunnel_url"] = tunnel_url
+            sandbox_job["stream_url"] = tunnel_url
+            sandbox_job["deploy_result"] = deploy_result
+            sandbox_job["await_preview"] = True
+            if "sync_url" not in sandbox_job:
+                sandbox_job["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{_sid}"
 
-        # Broadcast the tunnel URL over WebSocket so the frontend canvas loads it
-        if tunnel_url:
-            print(f"[RUNNER] Broadcasting tunnel URL: {tunnel_url}")
-            await ws_manager.broadcast_to_sandbox(str(session_id), {
-                "type": "sandbox_ready",
-                "tunnel_url": tunnel_url,
-                "url": tunnel_url,
-                "stream_url": tunnel_url,
-            })
-            ready_act = {
-                "id": f"act-live-{int(time.time())}",
-                "type": "terminal_output",
-                "label": f"Live at: {tunnel_url}",
-                "status": "done",
-                "detail": tunnel_url,
-                "timestamp": int(time.time() * 1000),
-            }
-            await ws_manager.broadcast_to_sandbox(str(session_id), {
-                "type": "workspace_ops",
-                "ops": [],
-                "activities": [ready_act],
-                "progress_msg": f"Sandbox ready: {tunnel_url}",
-            })
-
-        state["status"] = "running" if status != "error" else "error"
-        print(f"[RUNNER] Final status: {state['status']} | tunnel_url={tunnel_url}")
-        state["run_report"] = (
-            f"### Sandbox Deployment\n"
-            f"Status: {status}\n"
-            f"Entrypoint: {entrypoint}\n"
-            f"Output:\n{execution_output}\n"
-        )
-        if tunnel_url:
-            state["run_report"] += f"\nTunnel URL: {tunnel_url}"
-
-        state["plan"] = plan
-        state["execute_sandbox"] = {
-            "workspace_ops": [],
-            "activities": [
-                {
-                    "id": f"act-deploy-done-{int(time.time())}",
-                    "type": "run_command",
-                    "label": f"Sandbox deployment: {status}",
-                    "status": "done" if status != "error" else "failed",
+            if tunnel_url:
+                sandbox_mcp.store_tunnel_url(str(_sid), tunnel_url)
+                print(f"[RUNNER] Broadcasting tunnel URL: {tunnel_url}")
+                await ws_manager.broadcast_to_sandbox(str(_sid), {
+                    "type": "sandbox_ready",
+                    "tunnel_url": tunnel_url,
+                    "url": tunnel_url,
+                    "stream_url": tunnel_url,
+                })
+                ready_act = {
+                    "id": f"act-live-{int(time.time())}",
+                    "type": "terminal_output",
+                    "label": f"Live at: {tunnel_url}",
+                    "status": "done",
+                    "detail": tunnel_url,
                     "timestamp": int(time.time() * 1000),
                 }
-            ],
-            "progress_msg": json.dumps({
+                await ws_manager.broadcast_to_sandbox(str(_sid), {
+                    "type": "workspace_ops",
+                    "ops": [],
+                    "activities": [ready_act],
+                    "progress_msg": f"Sandbox ready: {tunnel_url}",
+                })
+
+            status = deploy_result.get("status", "unknown")
+            exe_status = "running" if status != "error" else "error"
+            run_report = (
+                f"### Sandbox Deployment\n"
+                f"Status: {status}\n"
+                f"Entrypoint: {_entrypoint}\n"
+                f"Output:\n{execution_output}\n"
+            )
+            if tunnel_url:
+                run_report += f"\nTunnel URL: {tunnel_url}"
+
+            final_payload = {
                 "type": "build_success" if status != "error" else "build_error",
                 "status": status,
                 "tunnel_url": tunnel_url,
                 "timestamp": str(int(time.time() * 1000))
+            }
+            await ws_manager.broadcast_to_sandbox(str(_sid), {
+                "type": "workspace_ops",
+                "ops": [],
+                "activities": [
+                    {
+                        "id": f"act-deploy-done-{int(time.time())}",
+                        "type": "run_command",
+                        "label": f"Sandbox deployment: {status}",
+                        "status": "done" if status != "error" else "failed",
+                        "timestamp": int(time.time() * 1000),
+                    }
+                ],
+                "progress_msg": json.dumps(final_payload),
+                "sandbox_job": sandbox_job,
+                "plan": _state.get("plan", []),
+                "current_task_index": len(_state.get("plan", [])),
+            })
+
+            _state["sandbox_job"] = sandbox_job
+            _state["run_report"] = run_report
+            _state["status"] = exe_status
+            _state["tunnel_url"] = tunnel_url
+            print(f"[RUNNER] _background_deploy finished | session={_sid} | status={exe_status} | tunnel={tunnel_url}")
+
+        print(f"[RUNNER] Spawning detached deploy task | entrypoint={entrypoint}")
+        _bgio.create_task(_background_deploy(session_id, entrypoint, state))
+
+        state["status"] = "running"
+        existing_sj = state.get("sandbox_job") or {}
+        existing_sj["runtime"] = RUNTIME_SANDBOX_MCP
+        existing_sj["await_preview"] = True
+        if "sync_url" not in existing_sj:
+            existing_sj["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{session_id}"
+        state["sandbox_job"] = existing_sj
+        state["run_report"] = "Deploy started in background — tunnel URL will arrive via WebSocket."
+        state["execute_sandbox"] = {
+            "workspace_ops": [],
+            "activities": [
+                {
+                    "id": f"act-deploy-start-{int(time.time())}",
+                    "type": "run_command",
+                    "label": "Deploying workspace to sandbox…",
+                    "status": "running",
+                    "timestamp": int(time.time() * 1000),
+                }
+            ],
+            "progress_msg": json.dumps({
+                "type": "deploy_started",
+                "timestamp": str(int(time.time() * 1000))
             }),
-            "sandbox_job": state["sandbox_job"],
-            "plan": plan,
-            "current_task_index": len(plan),
         }
 
         return state

@@ -6,9 +6,11 @@ import base64
 import tarfile
 import logging
 import asyncio
-from typing import Any, Dict, List, Optional
+import threading
+from typing import Any, Dict, Optional
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,13 +22,18 @@ RUNTIME_SANDBOX_MCP = "sandbox_mcp"
 
 class SandboxMCPService:
     def __init__(self):
-        self._client: Optional[MultiServerMCPClient] = None
-        self._tools: Dict[str, Any] = {}
+        self._session: Optional[ClientSession] = None
         self._session_activity: Dict[str, float] = {}
         self.TTL_MINUTES = 30
         self._workspace_root: Optional[str] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._initialized = False
+        self._url: Optional[str] = None
+        self._token: Optional[str] = None
+        self._read_stream = None
+        self._write_stream = None
+        self._transport_ctx = None
+        self._tunnel_urls: Dict[str, str] = {}
 
     async def initialize(self):
         if self._initialized:
@@ -39,27 +46,157 @@ class SandboxMCPService:
             raise RuntimeError(
                 "SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment"
             )
-        self._client = MultiServerMCPClient({
-            "sandbox": {
-                "transport": "streamable_http",
-                "url": url,
-                "headers": {"Authorization": f"Bearer {token}"},
-                "sse_read_timeout": 30,
-            }
-        })
-        tools = await self._client.get_tools()
-        self._tools = {t.name: t for t in tools}
+        self._url = url
+        self._token = token
+        await self._connect()
+
+    async def _connect(self):
+        """Establish MCP session with server."""
+        print(f"[SANDBOX_MCP] Connecting to MCP server...")
+        self._transport_ctx = streamablehttp_client(
+            url=self._url,
+            headers={"Authorization": f"Bearer {self._token}"},
+            timeout=600,
+        )
+        transport = await self._transport_ctx.__aenter__()
+        self._read_stream, self._write_stream = transport[0], transport[1]
+
+        self._session_ctx = ClientSession(self._read_stream, self._write_stream)
+        self._session = await self._session_ctx.__aenter__()
+        await self._session.initialize()
+
+        tools_result = await self._session.list_tools()
+        tool_names = [t.name for t in tools_result.tools]
         self._initialized = True
-        print(f"[SANDBOX_MCP] Initialized OK | tools={list(self._tools.keys())}")
-        logger.info("Loaded %d tools from sandbox MCP server", len(self._tools))
+        print(f"[SANDBOX_MCP] Connected OK | tools={tool_names}")
+        logger.info("Loaded %d tools from sandbox MCP server: %s", len(tool_names), tool_names)
+
+    async def _disconnect(self):
+        """Reset MCP session state. Do NOT call __aexit__ from a different task — anyio forbids it."""
+        self._session = None
+        self._session_ctx = None
+        self._transport_ctx = None
+        self._read_stream = None
+        self._write_stream = None
+        self._initialized = False
+
+    async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
+        """Call an MCP tool using a FRESH session per call to avoid shared session corruption."""
+        if not self._initialized:
+            await self.initialize()
+
+        call_start_time = time.time()
+        print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args_keys={list(arguments.keys())}")
+
+        # Create a FRESH MCP session for each tool call to avoid:
+        # 1. GC killing the shared session mid-call
+        # 2. Concurrent calls corrupting the SSE stream
+        # 3. anyio cancel-scope cross-task errors
+        transport_ctx = streamablehttp_client(
+            url=self._url,
+            headers={"Authorization": f"Bearer {self._token}"},
+            timeout=timeout,
+        )
+        try:
+            # NO asyncio.wait_for here — anyio cancel scope can't handle it.
+            # Let the connection establish at its own pace.
+            print(f"[SANDBOX_MCP] Opening transport connection...")
+            transport = await transport_ctx.__aenter__()
+            read_stream, write_stream = transport[0], transport[1]
+
+            session_ctx = ClientSession(read_stream, write_stream)
+            print(f"[SANDBOX_MCP] Creating session...")
+            session = await session_ctx.__aenter__()
+            print(f"[SANDBOX_MCP] Initializing session...")
+            await session.initialize()
+
+            elapsed_setup = time.time() - call_start_time
+            print(f"[SANDBOX_MCP] Fresh session ready in {elapsed_setup:.1f}s, calling '{name}'...")
+
+            # Use asyncio.wait for timeout (NOT asyncio.wait_for which breaks on Windows)
+            task = asyncio.create_task(session.call_tool(name, arguments))
+            try:
+                done, pending = await asyncio.wait([task], timeout=timeout)
+                if pending:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=5)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+                    raise RuntimeError(f"MCP call_tool '{name}' timed out after {timeout}s")
+                result = task.result()
+                elapsed = time.time() - call_start_time
+                print(f"[SANDBOX_MCP] _call_tool '{name}' returned in {elapsed:.1f}s | type={type(result).__name__}")
+                return result
+            finally:
+                # Clean up session (best effort)
+                try:
+                    await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=5)
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=5)
+                except Exception:
+                    pass
+        except RuntimeError:
+            raise
+        except Exception as e:
+            elapsed = time.time() - call_start_time
+            print(f"[SANDBOX_MCP] _call_tool '{name}' ERROR after {elapsed:.1f}s: {e}")
+            try:
+                await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=5)
+            except Exception:
+                pass
+            raise
+
+    def _parse_response(self, result) -> Dict[str, Any]:
+        """Parse MCP CallToolResult into a dict."""
+        print(f"[SANDBOX_MCP] _parse_response result type={type(result).__name__}")
+        parts = []
+        if hasattr(result, "content") and result.content:
+            for i, item in enumerate(result.content):
+                print(f"[SANDBOX_MCP]   content[{i}] type={type(item).__name__}")
+                if hasattr(item, "text") and item.text:
+                    parts.append(item.text)
+                elif isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                else:
+                    parts.append(str(item))
+        elif isinstance(result, list):
+            for i, item in enumerate(result):
+                if hasattr(item, "text") and item.text:
+                    parts.append(item.text)
+                elif isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                else:
+                    parts.append(str(item))
+        else:
+            parts.append(str(result))
+
+        text = "\n".join(parts)
+        print(f"[SANDBOX_MCP]   FULL TEXT ({len(text)} chars):")
+        # Log full text in chunks to avoid truncation
+        for chunk_start in range(0, len(text), 500):
+            chunk = text[chunk_start:chunk_start+500]
+            print(f"[SANDBOX_MCP]   [{chunk_start}:{chunk_start+500}] {chunk}")
+        try:
+            parsed = json.loads(text)
+            print(f"[SANDBOX_MCP]   json.loads OK | keys={list(parsed.keys()) if isinstance(parsed, dict) else 'not dict'}")
+            # If parsed is a list with one dict element, unwrap it
+            if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+                print(f"[SANDBOX_MCP]   unwrapping single-element list")
+                parsed = parsed[0]
+            return parsed
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"[SANDBOX_MCP]   json.loads FAILED: {e}")
+            return {"raw": text}
 
     async def ensure_tool(self, name: str):
-        if name not in self._tools:
-            raise RuntimeError(f"MCP tool '{name}' not available from sandbox server")
+        if not self._initialized:
+            await self.initialize()
 
     def get_workspace_dir(self, session_id: str) -> str:
         if not self._workspace_root:
-            # Use SAME path as WorkspaceManager so agent files are visible here
             workspace_base = os.path.join(os.getcwd(), "workspaces")
             os.makedirs(workspace_base, exist_ok=True)
             self._workspace_root = workspace_base
@@ -80,57 +217,164 @@ class SandboxMCPService:
         return f"Saved {filename}"
 
     async def save_code_to_sandbox(self, session_id: str, filename: str, code: str) -> Dict[str, Any]:
-        await self.ensure_tool("save_code")
         try:
             logger.info(
                 "[sandbox_mcp] Saving '%s' directly to sandbox '%s' (%d bytes)",
                 filename, session_id, len(code),
             )
-            res = await self._tools["save_code"].ainvoke({
+            result = await self._call_tool("save_code", {
                 "session_id": session_id,
                 "filename": filename,
                 "code": code,
             })
             self._touch(session_id)
-            return self._parse_response(res)
+            return self._parse_response(result)
         except Exception as e:
             logger.error("[sandbox_mcp] save_code_to_sandbox failed: %s", e)
             return {"status": "error", "error": str(e)}
+
+    def _resolve_entrypoint(self, workspace_dir: str, entrypoint: str) -> str:
+        """Resolve entrypoint to full relative path. If 'main.jsx', find 'frontend/src/main.jsx'."""
+        if "/" in entrypoint or "\\" in entrypoint:
+            return entrypoint
+        for root, dirs, files in os.walk(workspace_dir):
+            for f in files:
+                if f == entrypoint:
+                    rel = os.path.relpath(os.path.join(root, f), workspace_dir)
+                    print(f"[SANDBOX_MCP] Resolved entrypoint '{entrypoint}' -> '{rel}'")
+                    return rel
+        print(f"[SANDBOX_MCP] WARNING: entrypoint '{entrypoint}' not found, using as-is")
+        return entrypoint
 
     async def deploy_workspace(
         self, session_id: str, entrypoint: str
     ) -> Dict[str, Any]:
         workspace_dir = self.get_workspace_dir(session_id)
+        entrypoint = self._resolve_entrypoint(workspace_dir, entrypoint)
         files = os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else []
         print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | entrypoint={entrypoint} | files={files}")
         if not os.path.isdir(workspace_dir):
             print(f"[SANDBOX_MCP] ERROR: workspace dir not found: {workspace_dir}")
             return {"status": "error", "error": f"Workspace {session_id} not found"}
+
+        # Enforce port 9999 + disable HMR in vite.config.js and package.json before archiving
+        import re as _re
+        vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
+        if os.path.exists(vite_cfg):
+            try:
+                with open(vite_cfg, "r") as f:
+                    content = f.read()
+                patched = _re.sub(r'port:\s*5173', 'port: 9999', content)
+                # Add base: './' so Vite generates relative paths for iframe proxy compatibility
+                if "base:" not in patched and "base :" not in patched:
+                    patched = patched.replace(
+                        'server: {',
+                        'base: "./",\n  server: {'
+                    ) if 'server: {' in patched else patched.replace(
+                        'server:{',
+                        'base:"./",server:{'
+                    )
+                # Disable HMR — Vite HMR WebSocket fails inside iframes/tunnels
+                if 'hmr' not in patched:
+                    patched = patched.replace(
+                        'server: {',
+                        'server: { hmr: false,'
+                    ) if 'server: {' in patched else patched.replace(
+                        'server:{',
+                        'server:{ hmr: false,'
+                    )
+                if patched != content:
+                    with open(vite_cfg, "w") as f:
+                        f.write(patched)
+                    print(f"[SANDBOX_MCP] Patched vite.config.js: base='./', port=9999, hmr=false")
+            except Exception as e:
+                print(f"[SANDBOX_MCP] Could not patch vite.config.js: {e}")
+
+        pkg_json = os.path.join(workspace_dir, "frontend", "package.json")
+        if os.path.exists(pkg_json):
+            try:
+                with open(pkg_json, "r") as f:
+                    content = f.read()
+                patched = content.replace("--port 5173", "--port 9999")
+                if patched != content:
+                    with open(pkg_json, "w") as f:
+                        f.write(patched)
+                    print(f"[SANDBOX_MCP] Patched package.json: 5173 -> 9999")
+            except Exception as e:
+                print(f"[SANDBOX_MCP] Could not patch package.json: {e}")
+
+        # Validate App.jsx imports match actual component files
+        app_jsx = os.path.join(workspace_dir, "frontend", "src", "App.jsx")
+        components_dir = os.path.join(workspace_dir, "frontend", "src", "components")
+        if os.path.exists(app_jsx):
+            try:
+                with open(app_jsx, "r") as f:
+                    app_content = f.read()
+                # Find all import paths from ./components/XXX
+                import_matches = _re.findall(r"import\s+\w+\s+from\s+['\"]\.\/components\/(\w+)", app_content)
+                # Also check ./pages/XXX imports
+                import_matches += _re.findall(r"import\s+\w+\s+from\s+['\"]\.\/pages\/(\w+)", app_content)
+
+                # Get actual files
+                actual_files = set()
+                if os.path.isdir(components_dir):
+                    for fname in os.listdir(components_dir):
+                        if fname.endswith(('.jsx', '.tsx', '.js', '.ts')):
+                            actual_files.add(fname.split('.')[0])
+                pages_dir = os.path.join(workspace_dir, "frontend", "src", "pages")
+                if os.path.isdir(pages_dir):
+                    for fname in os.listdir(pages_dir):
+                        if fname.endswith(('.jsx', '.tsx', '.js', '.ts')):
+                            actual_files.add(fname.split('.')[0])
+
+                # Check for missing imports
+                missing = [imp for imp in import_matches if imp not in actual_files]
+                if missing:
+                    print(f"[SANDBOX_MCP] WARNING: App.jsx imports missing components: {missing}")
+                    print(f"[SANDBOX_MCP] Actual files: {sorted(actual_files)}")
+                    # Auto-fix: rewrite App.jsx to only import existing components
+                    for imp in missing:
+                        # Remove the import line and any route using it
+                        app_content = _re.sub(rf"import\s+\w+\s+from\s+['\"]\.\/components\/{imp}['\"].*\n", "", app_content)
+                        app_content = _re.sub(rf"import\s+\w+\s+from\s+['\"]\.\/pages\/{imp}['\"].*\n", "", app_content)
+                        # Remove route lines referencing this component
+                        app_content = _re.sub(rf"<Route[^>]*component\s*=\s*{{?{imp}}}?[^/]*/?>\s*\n?", "", app_content)
+                    with open(app_jsx, "w") as f:
+                        f.write(app_content)
+                    print(f"[SANDBOX_MCP] Auto-fixed App.jsx: removed {len(missing)} broken imports")
+                else:
+                    print(f"[SANDBOX_MCP] Import validation OK: {len(import_matches)} imports match {len(actual_files)} files")
+            except Exception as e:
+                print(f"[SANDBOX_MCP] Could not validate App.jsx imports: {e}")
+
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            tar.add(workspace_dir, arcname=".")
+            for root, dirs, files in os.walk(workspace_dir):
+                if "node_modules" in dirs:
+                    dirs.remove("node_modules")
+                if ".git" in dirs:
+                    dirs.remove(".git")
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, workspace_dir)
+                    tar.add(full_path, arcname=rel_path)
         archive_b64 = base64.b64encode(buf.getvalue()).decode()
-        print(f"[SANDBOX_MCP] Archive ready | size={len(archive_b64)} chars")
-        await self.ensure_tool("execute_workspace_archive")
-        tool = self._tools["execute_workspace_archive"]
+        print(f"[SANDBOX_MCP] Archive ready | size={len(archive_b64)} chars | files={len([f for _, _, files in os.walk(workspace_dir) for f in files])} total")
+        deploy_start = time.time()
         try:
-            print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive...")
-            res = await tool.ainvoke({
+            print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (timeout=600s)...")
+            result = await self._call_tool("execute_workspace_archive", {
                 "session_id": session_id,
                 "entrypoint": entrypoint,
                 "archive_b64": archive_b64,
-            })
-            print(f"[SANDBOX_MCP] MCP raw response type={type(res).__name__}")
-            if isinstance(res, list):
-                for i, item in enumerate(res):
-                    print(f"[SANDBOX_MCP]   item[{i}] type={type(item).__name__} | val={str(item)[:200]}")
-            else:
-                print(f"[SANDBOX_MCP]   raw={str(res)[:300]}")
-            parsed = self._parse_response(res)
+            }, timeout=600)
+            elapsed = time.time() - deploy_start
+            print(f"[SANDBOX_MCP] MCP call completed in {elapsed:.1f}s | raw type={type(result).__name__}")
+            parsed = self._parse_response(result)
             status = parsed.get('status', 'unknown') if isinstance(parsed, dict) else 'unknown'
-            tunnel = (parsed.get('tunnel_url') or 'none')[:60] if isinstance(parsed, dict) else 'none'
+            tunnel = (parsed.get('tunnel_url') or 'none')[:80] if isinstance(parsed, dict) else 'none'
             output = (parsed.get('execution_output') or '')[:300] if isinstance(parsed, dict) else ''
-            print(f"[SANDBOX_MCP] Parsed result | status={status} | tunnel={tunnel}")
+            print(f"[SANDBOX_MCP] Parsed result | status={status} | tunnel={tunnel} | elapsed={elapsed:.1f}s")
             if output:
                 print(f"[SANDBOX_MCP] execution_output: {output}")
             if status == 'error':
@@ -138,88 +382,61 @@ class SandboxMCPService:
             self._touch(session_id)
             return parsed
         except Exception as e:
-            print(f"[SANDBOX_MCP] ERROR: deploy failed: {e}")
+            elapsed = time.time() - deploy_start
+            print(f"[SANDBOX_MCP] ERROR: deploy failed after {elapsed:.1f}s: {e}")
             logger.error("[sandbox_mcp] deploy_workspace failed: %s", e)
             return {"status": "error", "error": str(e)}
 
     async def get_sandbox_status(self, session_id: str) -> Dict[str, Any]:
-        await self.ensure_tool("get_sandbox_status")
         try:
-            res = await self._tools["get_sandbox_status"].ainvoke({
-                "session_id": session_id
+            result = await self._call_tool("get_sandbox_status", {
+                "session_id": session_id,
             })
             self._touch(session_id)
-            return self._parse_response(res)
+            return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def delete_sandbox(self, session_id: str) -> Dict[str, Any]:
-        await self.ensure_tool("delete_sandbox")
         try:
-            res = await self._tools["delete_sandbox"].ainvoke({
-                "session_id": session_id
+            result = await self._call_tool("delete_sandbox", {
+                "session_id": session_id,
             })
             self._session_activity.pop(session_id, None)
+            self._tunnel_urls.pop(session_id, None)
+            # Also clean up local workspace files
+            workspace_dir = self.get_workspace_dir(session_id)
+            if os.path.isdir(workspace_dir):
+                import shutil
+                shutil.rmtree(workspace_dir, ignore_errors=True)
+                print(f"[SANDBOX_MCP] Cleaned local workspace: {workspace_dir}")
             logger.info("[sandbox_mcp] Deleted sandbox '%s'", session_id)
-            return self._parse_response(res)
+            return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def list_sandboxes(self) -> Dict[str, Any]:
-        await self.ensure_tool("list_sandbox")
         try:
-            res = await self._tools["list_sandbox"].ainvoke({})
-            return self._parse_response(res)
+            result = await self._call_tool("list_sandboxes", {})
+            return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def execute_in_sandbox(
         self, session_id: str, entrypoint: str
     ) -> Dict[str, Any]:
-        await self.ensure_tool("execute_in_sandbox")
         try:
-            res = await self._tools["execute_in_sandbox"].ainvoke({
+            result = await self._call_tool("execute_in_sandbox", {
                 "session_id": session_id,
                 "entrypoint": entrypoint,
             })
             self._touch(session_id)
-            return self._parse_response(res)
+            return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     def _touch(self, session_id: str):
         self._session_activity[session_id] = time.time()
-
-    def _parse_response(self, res) -> Dict[str, Any]:
-        print(f"[SANDBOX_MCP] _parse_response input type={type(res).__name__}")
-        if isinstance(res, list):
-            parts = []
-            for i, item in enumerate(res):
-                print(f"[SANDBOX_MCP]   parsing item[{i}] type={type(item).__name__}")
-                if item is None:
-                    print(f"[SANDBOX_MCP]   item[{i}] is None, skipping")
-                    continue
-                if hasattr(item, "text") and item.text:
-                    parts.append(item.text)
-                elif isinstance(item, dict) and "text" in item:
-                    parts.append(item["text"])
-                elif hasattr(item, "content") and item.content:
-                    parts.append(str(item.content))
-                elif isinstance(item, dict) and "content" in item:
-                    parts.append(str(item["content"]))
-                else:
-                    parts.append(str(item))
-            text = "\n".join(parts)
-            print(f"[SANDBOX_MCP]   joined text ({len(text)} chars): {text[:200]}")
-        else:
-            text = str(res)
-        try:
-            parsed = json.loads(text)
-            print(f"[SANDBOX_MCP]   json.loads OK | keys={list(parsed.keys()) if isinstance(parsed, dict) else 'not dict'}")
-            return parsed
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"[SANDBOX_MCP]   json.loads FAILED: {e} | text={text[:200]}")
-            return {"raw": text}
 
     async def cleanup_expired(self):
         now = time.time()
@@ -228,14 +445,38 @@ class SandboxMCPService:
             for sid, last_activity in list(self._session_activity.items())
             if now - last_activity > self.TTL_MINUTES * 60
         ]
+        if expired:
+            print(f"[SANDBOX_MCP] Cleanup: {len(expired)} expired sandbox(es) to delete")
         for sid in expired:
             try:
+                print(f"[SANDBOX_MCP] Deleting expired sandbox: {sid} (idle {int((now - self._session_activity.get(sid, now)) / 60)}min)")
                 await self.delete_sandbox(sid)
-                logger.info("Cleaned up expired sandbox: %s", sid)
+                self._session_activity.pop(sid, None)
+                self._tunnel_urls.pop(sid, None)
+                print(f"[SANDBOX_MCP] Deleted expired sandbox: {sid}")
             except Exception as e:
-                logger.error("Failed to clean up sandbox %s: %s", sid, e)
+                print(f"[SANDBOX_MCP] Failed to delete sandbox {sid}: {e}")
+
+    async def cleanup_all(self) -> Dict[str, Any]:
+        """Delete ALL tracked sandboxes (active + expired)."""
+        all_sids = list(self._session_activity.keys())
+        if not all_sids and not self._tunnel_urls:
+            return {"status": "ok", "deleted": 0, "message": "No active sandboxes"}
+        results = []
+        for sid in set(all_sids + list(self._tunnel_urls.keys())):
+            try:
+                await self.delete_sandbox(sid)
+                results.append({"session_id": sid, "status": "deleted"})
+                print(f"[SANDBOX_MCP] cleanup_all: deleted {sid}")
+            except Exception as e:
+                results.append({"session_id": sid, "status": "error", "error": str(e)})
+                print(f"[SANDBOX_MCP] cleanup_all: failed {sid}: {e}")
+        self._session_activity.clear()
+        self._tunnel_urls.clear()
+        return {"status": "ok", "deleted": len(results), "results": results}
 
     async def background_cleanup_loop(self):
+        print(f"[SANDBOX_MCP] Cleanup loop running (checking every 60s, TTL={self.TTL_MINUTES}min)")
         while True:
             await asyncio.sleep(60)
             await self.cleanup_expired()
@@ -247,6 +488,14 @@ class SandboxMCPService:
     def record_activity(self, session_id: str):
         if session_id:
             self._touch(session_id)
+
+    def store_tunnel_url(self, session_id: str, tunnel_url: str):
+        if session_id and tunnel_url:
+            self._tunnel_urls[session_id] = tunnel_url
+            print(f"[SANDBOX_MCP] Stored tunnel URL for {session_id}: {tunnel_url[:60]}...")
+
+    def get_tunnel_url(self, session_id: str) -> Optional[str]:
+        return self._tunnel_urls.get(session_id)
 
 
 _sandbox_mcp_instance: Optional[SandboxMCPService] = None

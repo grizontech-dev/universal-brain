@@ -7,10 +7,6 @@ import { useBrainWorkspaceOps } from '../hooks/useBrainWorkspaceOps';
 interface BrainWebContainerContextValue {
     jobId: string | null;
     syncUrl: string | null;
-    previewUrl: string | null;
-    previewPort: number | null;
-    isBooting: boolean;
-    isReady: boolean;
     setWorkspace: (jobId: string, syncUrl?: string | null) => void;
     applyOps: (ops: WorkspaceOp[]) => void;
 }
@@ -20,10 +16,6 @@ const BrainWebContainerContext = createContext<BrainWebContainerContextValue | n
 export function BrainWebContainerProvider({ children }: { children: React.ReactNode }) {
     const [jobId, setJobId] = useState<string | null>(null);
     const [syncUrl, setSyncUrl] = useState<string | null>(null);
-    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-    const [previewPort, setPreviewPort] = useState<number | null>(null);
-    const [isBooting] = useState(false);
-    const [isReady, setIsReady] = useState(true);
     const workspaceKeyRef = useRef<string | null>(null);
 
     const { enqueueOps } = useBrainWorkspaceOps(jobId, syncUrl);
@@ -35,7 +27,6 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
         setJobId(id);
         if (sync !== undefined) setSyncUrl(sync);
         if (unchanged) return;
-        setIsReady(true);
     }, []);
 
     const applyOps = useCallback(
@@ -44,20 +35,6 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
         },
         [enqueueOps]
     );
-
-    useEffect(() => {
-        const onPreview = (e: Event) => {
-            const detail = (e as CustomEvent).detail || {};
-            const url = detail.url || detail.streamUrl;
-            const port = typeof detail.port === 'number' ? detail.port : null;
-            if (url) {
-                setPreviewUrl(url);
-                if (port) setPreviewPort(port);
-            }
-        };
-        window.addEventListener('brainPreviewReady', onPreview);
-        return () => window.removeEventListener('brainPreviewReady', onPreview);
-    }, []);
 
     useEffect(() => {
         const onOpen = (e: Event) => {
@@ -75,8 +52,8 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
     }, [setWorkspace]);
 
     const value = useMemo(
-        () => ({ jobId, syncUrl, previewUrl, previewPort, isBooting, isReady, setWorkspace, applyOps }),
-        [jobId, syncUrl, previewUrl, previewPort, isBooting, isReady, setWorkspace, applyOps]
+        () => ({ jobId, syncUrl, setWorkspace, applyOps }),
+        [jobId, syncUrl, setWorkspace, applyOps]
     );
 
     return (

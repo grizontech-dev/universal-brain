@@ -23,11 +23,12 @@ class ConnectionManager:
 
     async def broadcast_to_sandbox(self, sandbox_id: str, message: Dict[str, Any]):
         if sandbox_id in self.active_connections:
+            import asyncio
             # Create a list of dead connections to remove
             dead_connections = []
             for connection in self.active_connections[sandbox_id]:
                 try:
-                    await connection.send_json(message)
+                    await asyncio.wait_for(connection.send_json(message), timeout=1.0)
                 except Exception as e:
                     print(f"Error broadcasting to {sandbox_id}: {e}")
                     dead_connections.append(connection)
@@ -37,3 +38,4 @@ class ConnectionManager:
                 self.disconnect(dead, sandbox_id)
 
 ws_manager = ConnectionManager()
+

@@ -40,12 +40,10 @@ import {
 } from '../lib/buildActivity';
 import { saveBuildSession, resolveBuildSessionForReload } from '../lib/buildSession';
 import {
-    applyResumeToWebContainer,
     fetchResumePayload,
     normalizeTodosForResume,
     shouldStreamResumeBuild,
 } from '../lib/resumeBrainBuild';
-import { resetBrainWebContainer } from '../lib/brainWebContainer';
 
 interface ClarificationQuestion {
     id: string;
@@ -612,11 +610,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 })
             );
 
-            try {
-                await applyResumeToWebContainer(payload);
-            } catch (e) {
-                console.warn('[Brain] resume mount failed:', e);
+            const allOps = [...(payload.workspace_ops || []), ...(payload.startup_ops || [])];
+            if (allOps.length) {
+                window.dispatchEvent(
+                    new CustomEvent('applyBrainWorkspaceOps', { detail: { ops: allOps } })
+                );
             }
+            window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
 
             if (payload.build_complete) {
                 completeRunnerBuild();
@@ -858,7 +858,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             setBuildActivities([]);
             setBuildTodos([]);
             setIsEditorOpen(false);
-            resetBrainWebContainer();
             // Close canvas when starting new chat
             window.dispatchEvent(new CustomEvent('closeBrainCanvas'));
             window.dispatchEvent(new CustomEvent('closeBrainEditor'));
@@ -894,10 +893,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             // Always clear nav flag when we arrive and have no pending message
             setNavigatingFlag(false);
-
-            // Always reset the sandbox state before loading a new conversation
-            // to prevent files from leaking across workspaces!
-            resetBrainWebContainer();
 
             try {
                 const res = await conversationsApi.get(currentConversationId);

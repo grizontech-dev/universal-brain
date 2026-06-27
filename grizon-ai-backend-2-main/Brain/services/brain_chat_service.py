@@ -88,11 +88,8 @@ class BrainState(TypedDict):
 
 class BrainChatService:
     def __init__(self):
-        self.model = ChatOpenAI(
-            model="deepseek-chat", 
-            api_key=os.getenv("DEEPSEEK_API_KEY"), 
-            base_url="https://api.deepseek.com/v1"
-        )
+        from Brain.services.provider_router import ProviderRouter
+        self.model = ProviderRouter.get_model("gpt-4o-mini", temperature=0.3)
         self.workflow = self._create_workflow()
 
     def _create_workflow(self):
@@ -184,7 +181,7 @@ class BrainChatService:
             print("Plan already approved, skipping Leader Agent analysis logic.")
             return {"status": "plan_approved_bypassing"}
 
-        model_id = state.get("model_id") or "deepseek-chat"
+        model_id = state.get("model_id") or "gpt-4o-mini"
         leader_data = await LeaderAgent.analyze(state["content"], model_id)
         
         # Update DB with title
@@ -211,7 +208,7 @@ class BrainChatService:
         """Module B: Interaction Hub using ClarifierAgent."""
         from Brain.agents.clarifier_agent import ClarifierAgent
         
-        model_id = state.get("model_id") or "deepseek-chat"
+        model_id = state.get("model_id") or "gpt-4o-mini"
         clarification_data = await ClarifierAgent.clarify(state["content"], model_id)
         
         if clarification_data["needs_clarification"]:
@@ -269,7 +266,7 @@ class BrainChatService:
         """Module D: Architect high-level strategy using PlannerAgent."""
         from Brain.agents.planner_agent import PlannerAgent
         
-        model_id = state.get("model_id") or "deepseek-chat"
+        model_id = state.get("model_id") or "gpt-4o-mini"
         planning_data = await PlannerAgent.create_plan(
             state["content"], 
             state["search_results"], 
@@ -286,7 +283,7 @@ class BrainChatService:
         """Module E: Generate Todo List using TaskAgent."""
         from Brain.agents.task_agent import TaskAgent
         
-        model_id = state.get("model_id") or "deepseek-chat"
+        model_id = state.get("model_id") or "gpt-4o-mini"
         todo_list = await TaskAgent.create_todo_list(state["report"], model_id)
         
         return {
@@ -351,7 +348,7 @@ class BrainChatService:
             report = await ReporterAgent.synthesize(
                 state["content"], 
                 executed_tasks, 
-                state.get("model_id", "deepseek-chat")
+                state.get("model_id", "gpt-4o-mini")
             )
             
             final_report_content = f"""
@@ -476,7 +473,7 @@ Please review the **Technical Strategy** above and the granular **Todo List** be
             "plan_approved": request.get("plan_approved", False),
             "approved_plan": request.get("approved_plan"),
             "review_required": request.get("review_required", True),
-            "model_id": request.get("model_id", "deepseek-chat"),
+            "model_id": request.get("model_id", "gpt-4o-mini"),
             "current_task_index": 0,
             "executed_tasks": []
         }
@@ -520,7 +517,7 @@ Please review the **Technical Strategy** above and the granular **Todo List** be
             "plan_approved": request.get("plan_approved", False),
             "approved_plan": request.get("approved_plan"),
             "review_required": request.get("review_required", True),
-            "model_id": request.get("model_id", "deepseek-chat"),
+            "model_id": request.get("model_id", "gpt-4o-mini"),
             "current_task_index": 0,
             "executed_tasks": []
         }

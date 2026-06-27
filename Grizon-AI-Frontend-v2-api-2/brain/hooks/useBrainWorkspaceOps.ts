@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { WorkspaceOp } from '../lib/brainWebContainer';
-import { onBrainPreviewReady } from '../lib/brainWebContainer';
 import { parseProgressToActivity } from '../lib/buildActivity';
 
 export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | null) {
@@ -121,17 +120,6 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
             wsRef.current = null;
         };
     }, [syncUrl, jobId, enqueueOps]);
-
-    useEffect(() => {
-        const unsub = onBrainPreviewReady((url) => {
-            window.dispatchEvent(
-                new CustomEvent('brainPreviewReady', { detail: { url, streamUrl: url } })
-            );
-        });
-        return () => {
-            unsub();
-        };
-    }, []);
 
     return { enqueueOps };
 }

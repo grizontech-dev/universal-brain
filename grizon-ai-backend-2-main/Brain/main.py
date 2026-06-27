@@ -13,6 +13,7 @@ if parent_dir not in sys.path:
 
 import uvicorn
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,7 +33,21 @@ except ModuleNotFoundError:
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: start sandbox cleanup loop
+    from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
+    try:
+        sandbox_mcp = get_sandbox_mcp_service()
+        await sandbox_mcp.initialize()
+        sandbox_mcp.start_background_cleanup()
+        print("[STARTUP] Sandbox cleanup loop started (TTL=30min)")
+    except Exception as e:
+        print(f"[STARTUP] Sandbox cleanup not started: {e}")
+    yield
+    # Shutdown: nothing to clean up
+
+app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):

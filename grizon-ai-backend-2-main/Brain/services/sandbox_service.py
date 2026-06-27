@@ -44,7 +44,7 @@ class SandboxService:
             "job_id_external": job_id_external,
             "env": env_vars,
             "environment": env_vars,
-            "model": "deepseek-chat", 
+            "model": "gpt-4o-mini", 
             "provider": "openai",  
             "api_key": deepseek_key,  # Direct key injection
             "base_url": "https://api.deepseek.com/v1", # Direct URL injection

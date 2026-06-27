@@ -22,29 +22,6 @@ export interface FileNode {
 const outputListeners = new Set<(line: string) => void>();
 const outputBuffer: string[] = [];
 
-export function isWebContainerBooted(): boolean {
-    return true;
-}
-
-export function isFrontendPreviewPort(port: number): boolean {
-    return port === 5173 || (port >= 5174 && port <= 5180) || port === 3000 || port === 4173;
-}
-
-export function onBrainPreviewReady(cb: (url: string, port: number) => void) {
-    const handler = (e: Event) => {
-        const detail = (e as CustomEvent).detail || {};
-        if (detail.url) cb(detail.url, detail.port || 0);
-    };
-    if (typeof window !== 'undefined') {
-        window.addEventListener('brainPreviewReady', handler);
-    }
-    return () => {
-        if (typeof window !== 'undefined') {
-            window.removeEventListener('brainPreviewReady', handler);
-        }
-    };
-}
-
 export function onBrainTerminalOutput(cb: (line: string) => void) {
     outputListeners.add(cb);
     outputBuffer.forEach(line => cb(line));
@@ -55,16 +32,6 @@ export function emitOutput(line: string) {
     outputBuffer.push(line);
     if (outputBuffer.length > 500) outputBuffer.shift();
     outputListeners.forEach(fn => fn(line));
-}
-
-export async function getBrainWebContainer(): Promise<null> {
-    return null;
-}
-
-export async function resetBrainWebContainer() {
-}
-
-export function resetDevServers() {
 }
 
 export function sortWorkspaceOps(ops: WorkspaceOp[]): WorkspaceOp[] {

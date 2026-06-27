@@ -10,7 +10,7 @@ class BaseAgent(ABC):
     def __init__(self, name: str, description: str, model_id: Optional[str] = None):
         self.name = name
         self.description = description
-        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat")
+        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o-mini")
         self._model: Optional[BaseChatModel] = None
 
     def get_model(self, model_id: Optional[str] = None, temperature: float = 0.3) -> BaseChatModel:

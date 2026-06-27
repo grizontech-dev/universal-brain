@@ -1,4 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional
 from Brain.services.websocket_manager import ws_manager
 from Brain.services.workspace_watcher import watcher_manager
@@ -6,7 +7,9 @@ from Brain.services.workspace_manager import workspace_manager
 from Brain.services.template_service import get_bootstrap_ops, list_frameworks, normalize_framework
 from Brain.services.build_resume import get_resume_payload, latest_todo_list_from_messages
 from Brain.modules.conversations.service import conversation_service
+from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
 import os
+import httpx
 
 router = APIRouter(prefix="/brain/sandbox", tags=["sandbox"])
 
@@ -133,3 +136,81 @@ async def list_files(
         return {"files": tree, "runtime": "sandbox_mcp"}
     except Exception as e:
         return {"error": str(e)}
+
+
+@router.get("/proxy-tunnel/{session_id}/{path:path}")
+async def proxy_tunnel(session_id: str, path: str):
+    """Reverse-proxy a Cloudflare tunnel URL to avoid mixed-content blocking in iframes.
+
+    For HTML responses, rewrites absolute src="/..." and href="/..." to relative "./..."
+    so assets resolve through the proxy instead of hitting localhost:3000 directly.
+    """
+    import re as _re
+    sandbox_mcp = get_sandbox_mcp_service()
+    tunnel_url = sandbox_mcp.get_tunnel_url(session_id)
+    if not tunnel_url:
+        raise HTTPException(status_code=404, detail="No tunnel URL found for this session")
+
+    target = f"{tunnel_url.rstrip('/')}/{path}"
+    print(f"[PROXY] {session_id} -> {target}")
+    try:
+        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=30) as client:
+            resp = await client.get(target, headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
+
+        content_type = resp.headers.get("content-type", "application/octet-stream")
+        body = resp.content
+
+        if "text/html" in content_type:
+            html = body.decode("utf-8", errors="replace")
+            html = _re.sub(r'(src|href|action)="/', r'\1="./', html)
+            body = html.encode("utf-8")
+            headers_dict = {"content-type": "text/html; charset=utf-8", "Cross-Origin-Resource-Policy": "cross-origin"}
+        else:
+            headers_dict = {"content-type": content_type, "Cross-Origin-Resource-Policy": "cross-origin"}
+
+        excluded_headers = {"content-encoding", "transfer-encoding", "content-length", "connection", "content-type"}
+        for k, v in resp.headers.items():
+            if k.lower() not in excluded_headers:
+                headers_dict[k] = v
+
+        return StreamingResponse(
+            iter([body]),
+            status_code=resp.status_code,
+            headers=headers_dict,
+        )
+    except httpx.ConnectError as e:
+        print(f"[PROXY] Connect error: {e}")
+        raise HTTPException(status_code=502, detail=f"Tunnel unreachable: {e}")
+    except Exception as e:
+        print(f"[PROXY] Error: {e}")
+        raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
+
+
+@router.get("/proxy-tunnel/{session_id}")
+async def proxy_tunnel_root(session_id: str):
+    """Proxy the root path of a tunnel URL."""
+    return await proxy_tunnel(session_id, "")
+
+
+@router.post("/register-tunnel/{session_id}")
+async def register_tunnel(session_id: str, tunnel_url: str = Query(...)):
+    """Register a tunnel URL for proxy access (for existing sessions)."""
+    sandbox_mcp = get_sandbox_mcp_service()
+    sandbox_mcp.store_tunnel_url(session_id, tunnel_url)
+    return {"status": "ok", "session_id": session_id, "tunnel_url": tunnel_url}
+
+
+@router.post("/cleanup-all")
+async def cleanup_all_sandboxes():
+    """Delete ALL tracked sandboxes and clear all state."""
+    sandbox_mcp = get_sandbox_mcp_service()
+    result = await sandbox_mcp.cleanup_all()
+    return result
+
+
+@router.delete("/cleanup/{session_id}")
+async def cleanup_single_sandbox(session_id: str):
+    """Delete a specific sandbox by session ID."""
+    sandbox_mcp = get_sandbox_mcp_service()
+    result = await sandbox_mcp.delete_sandbox(session_id)
+    return result

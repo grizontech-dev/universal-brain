@@ -1,7 +1,7 @@
 import os
 import json
 from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import SystemMessage, HumanMessage
 from dotenv import load_dotenv
 
@@ -9,9 +9,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../../../.env'))
 
 class QualityReviewer:
     def __init__(self):
-        self.review_llm = ChatOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model="gpt-4o-mini",
+        self.review_llm = ProviderRouter.get_model(
+            "gpt-4o-mini",
             temperature=0
         )
 

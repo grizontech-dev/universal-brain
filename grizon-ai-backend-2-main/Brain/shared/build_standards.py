@@ -11,7 +11,19 @@ FULL_STACK_BUILD_STANDARDS = """
 - The live preview reads `frontend/src/App.jsx`. If components exist but App.jsx still shows "Grizon React", a counter demo, or "ready for Brain to extend" — the build FAILED.
 - NEVER leave orphan files under `frontend/src/components/` — every component MUST be imported and rendered from App.jsx (or a page imported by App.jsx).
 
+### CRITICAL: Import validation (NON-NEGOTIABLE)
+- **Every import in App.jsx MUST correspond to an actual file in the workspace.** Before writing App.jsx, the agent MUST list all component files it created and ONLY import those.
+- **NEVER import components that don't exist.** If you created `Home.jsx`, `About.jsx`, `Contact.jsx` — import those. If you created `Login.jsx`, `Register.jsx`, `TaskList.jsx` — import those. Match imports to actual files.
+- **NEVER import from paths like `./components/NotFound`** unless `NotFound.jsx` was explicitly created by the agent in the same task.
+- **Router routes MUST use the same component names as the imports.** If you import `Home`, use `<Home />`. If you import `TaskList`, use `<TaskList />`.
+- **Every page/component imported in App.jsx MUST exist as a file.** The agent must verify: "I created X files, I import X files, they match."
+- If the agent creates 5 components, App.jsx MUST import and render exactly those 5 components — no more, no fewer.
+
 ### Frontend (`frontend/`)
+- **CRITICAL PORT: Vite dev server MUST run on port 9999** (not 5173). The remote sandbox tunnel is bound to port 9999.
+  - In `vite.config.js`: `server: { port: 9999 }`
+  - In `package.json` dev script: `"dev": "vite --host 0.0.0.0 --port 9999"`
+  - If port is 5173, the live preview will show "refused to connect".
 - **NEVER create `frontend/src/App.tsx`.** Put all app wiring in **`frontend/src/App.jsx`** only (JavaScript JSX, not TypeScript).
 - If you wrote TypeScript by habit, rewrite the same content as `App.jsx` and do not output App.tsx.
 - Add `react-router-dom` in `frontend/package.json` when using multiple pages.
@@ -45,11 +57,13 @@ INTEGRATION_TASK_TEMPLATE = {
     "id": "t-integration",
     "title": "Wire App, Router, Backend & Supabase",
     "description": (
-        "MANDATORY: (1) Rewrite frontend/src/App.jsx — import ALL components from "
-        "frontend/src/components/, set up react-router-dom Routes matching Navbar links, "
-        "remove ALL template boilerplate. (2) Ensure backend/server.js mounts every routes/*.js "
+        "MANDATORY: (1) Rewrite frontend/src/App.jsx — import ONLY the components that actually exist in "
+        "frontend/src/components/. Before writing App.jsx, list all component files. Each import MUST "
+        "match a real file. (2) Ensure backend/server.js mounts every routes/*.js "
         "module under /api/*. (3) Connect forms via apiPost to backend endpoints that use Supabase. "
-        "(4) Delete frontend/src/App.tsx if it exists. (5) Add react-router-dom to frontend/package.json if missing."
+        "(4) Delete frontend/src/App.tsx if it exists. (5) Add react-router-dom to frontend/package.json if missing. "
+        "CRITICAL: If you created Home.jsx, About.jsx, Contact.jsx — import those. If you created Login.jsx, "
+        "Register.jsx, TaskList.jsx — import those. NEVER import a component that doesn't exist as a file."
     ),
     "category": "frontend",
     "skill_required": "integration",
