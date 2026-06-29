@@ -351,6 +351,8 @@ export interface AuthContextType {
         expires_in: number;
         user?: unknown;
     }) => Promise<void>;
+    /** Return the current access token (or empty string if unauthenticated). */
+    getAccessToken: () => string | null;
 }
 
 // Stream Types
