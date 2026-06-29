@@ -20,6 +20,19 @@ from Brain.modules.connectors.supabase.service import Connector
 # 10 minutes expiration for the state/PKCE challenge
 STATE_EXPIRATION = 600 
 
+@router.get("/status")
+async def get_supabase_status(current_user = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        connector = db.query(Connector).filter(
+            Connector.userId == current_user.id,
+            Connector.type == "supabase",
+            Connector.isActive == True
+        ).first()
+        return {"connected": connector is not None}
+    finally:
+        db.close()
+
 @router.get("/login")
 async def login(
     current_user = Depends(get_current_user)

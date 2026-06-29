@@ -22,6 +22,7 @@ export default function SettingsConnectionsPanel() {
   const { getAccessToken } = useAuth();
   const [connectors, setConnectors] = useState<Record<string, ConnectorState>>(initialConnectors);
   const [githubRepos, setGithubRepos] = useState<any[]>([]);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const token = getAccessToken?.() ?? null;
 
@@ -57,6 +58,30 @@ export default function SettingsConnectionsPanel() {
   }
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const provider = params.get('provider');
+      const status = params.get('status');
+      const errorMsg = params.get('error');
+
+      if (status === 'success') {
+        const name = provider === 'github' ? 'GitHub' : provider === 'supabase' ? 'Supabase' : provider;
+        setNotification({
+          type: 'success',
+          message: `Successfully connected to ${name}!`,
+        });
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (status === 'error' || errorMsg) {
+        setNotification({
+          type: 'error',
+          message: errorMsg || `Failed to connect integration.`,
+        });
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     if (!token) return;
     setConnectors({
       github: { status: 'loading' },
@@ -84,6 +109,30 @@ export default function SettingsConnectionsPanel() {
           Connect with third-party services to extend what the AI can do.
         </p>
       </div>
+
+      {notification && (
+        <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border ${
+          notification.type === 'success'
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200'
+            : 'bg-red-500/10 border-red-500/20 text-red-200'
+        }`}>
+          <div className='flex items-center gap-2.5'>
+            {notification.type === 'success' ? (
+              <CheckCircle className='w-5 h-5 text-emerald-400 shrink-0' />
+            ) : (
+              <XCircle className='w-5 h-5 text-red-400 shrink-0' />
+            )}
+            <span className='text-[13px] font-medium'>{notification.message}</span>
+          </div>
+          <button
+            type='button'
+            onClick={() => setNotification(null)}
+            className='text-text-faint hover:text-text-primary transition-colors text-xs font-bold uppercase tracking-wider'
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
         {/* GitHub */}

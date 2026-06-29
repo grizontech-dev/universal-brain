@@ -1,0 +1,83 @@
+DEBUG: Workspace path: /app/workspaces
+Grizon Brain Backend v2.5.2 starting up...
+[SANDBOX_MCP] Initializing... URL=MISSING...
+[SANDBOX_MCP] ERROR: SANDBOX_MCP_URL or SANDBOX_MCP_TOKEN not set!
+[STARTUP] Sandbox cleanup not started: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+INFO:     127.0.0.1:59822 - "GET /brain/memory/session/f8c60a3c-1fd5-41ad-8a50-546d91870f77 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62005 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+DEBUG: ManagerAgent requesting chat with model gpt-4o-mini
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Leader/Manager' raw response snippet: {   "analysis": "The user wants to develop a gym website, but we need more specific details about its features, target audience, and design preferences.",   "is_context_missing": true,   "missing_deta...
+DEBUG: ManagerAgent raw response: {
+  "analysis": "The user wants to develop a gym website, but we need more specific details about its features, target audience, and design preferences.",
+  "is_context_missing": true,
+  "missing_deta...
+DEBUG: ManagerAgent parsed analysis: {"analysis": "The user wants to develop a gym website, but we need more specific details about its features, target audience, and design preferences.", "is_context_missing": true, "missing_details": [...
+DEBUG: NODE [analyze_ingress] complete
+DEBUG: NODE [recursive_clarify] started
+DEBUG: QuestionsAgent requesting chat with model gpt-4o-mini
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Questions' raw response snippet: {   "preamble": "I see you're developing a gym website! To ensure we create the best experience for your users, I just need to clarify a few quick details about the features and audience.",   "questio...
+DEBUG: QuestionsAgent raw response: {
+  "preamble": "I see you're developing a gym website! To ensure we create the best experience for your users, I just need to clarify a few quick details about the features and audience.",
+  "questio...
+DEBUG: QuestionsAgent parsed data: {"preamble": "I see you're developing a gym website! To ensure we create the best experience for your users, I just need to clarify a few quick details about the features and audience.", "questions": ...
+DEBUG: NODE [recursive_clarify] complete
+DEBUG: Saving message to DB - Conv: f8c60a3c-1fd5-41ad-8a50-546d91870f77, Role: ASSISTANT, Content Snippet: __CLARIFY__:{"preamble": "I se
+DEBUG: Message saved successfully.
+INFO:     127.0.0.1:54196 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+DEBUG: ManagerAgent detected user answered questions (round 1)
+DEBUG: ManagerAgent re-evaluating post-answers with gpt-4o-mini
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Leader/Manager' raw response snippet: {   "analysis": "The user has provided a clear list of features for the gym website, identified the target audience, and specified a design preference. We have enough context to proceed with planning ...
+DEBUG: ManagerAgent re-eval result: {"analysis": "The user has provided a clear list of features for the gym website, identified the target audience, and specified a design preference. We have enough context to proceed with planning the...
+DEBUG: NODE [analyze_ingress] complete
+DEBUG: NODE [strategic_plan] started
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Planner' raw response snippet: {   "project_name": "Local Gym Website",   "markdown_plan": "# Overview\n\nThe Local Gym Website aims to provide a modern and minimalistic platform for local gym members. The website will feature esse...
+DEBUG: NODE [strategic_plan] complete
+DEBUG: Saving message to DB - Conv: f8c60a3c-1fd5-41ad-8a50-546d91870f77, Role: ASSISTANT, Content Snippet: ## Local Gym Website - Impleme
+DEBUG: Message saved successfully.
+INFO:     127.0.0.1:55108 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+DEBUG: NODE [create_tasks] started
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Todo' raw response snippet: ```json [   {     "id": "t1",     "title": "Database Schema: Create Supabase Tables",     "description": "Create SQL files for Users, Classes, Trainers, Blog Posts, and Events tables in backend/supaba...
+DEBUG: TodoAgent produced 8 tasks (clamp 3-15)
+DEBUG: NODE [create_tasks] complete
+DEBUG: Saving message to DB - Conv: f8c60a3c-1fd5-41ad-8a50-546d91870f77, Role: ASSISTANT, Content Snippet: ? I've broken down the project
+DEBUG: Message saved successfully.
+DEBUG: NODE [init_sandbox] started
+[SANDBOX_MCP] Initializing... URL=MISSING...
+[SANDBOX_MCP] ERROR: SANDBOX_MCP_URL or SANDBOX_MCP_TOKEN not set!
+ERROR in stream: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+INFO:     127.0.0.1:51654 - "GET /health HTTP/1.1" 200 OK
+Validation error for http://127.0.0.1:8001/brain/projects
+Error details: [{'type': 'missing', 'loc': ('query', 'owner_id'), 'msg': 'Field required', 'input': None}]
+Request body: None
+INFO:     127.0.0.1:61399 - "GET /brain/projects HTTP/1.1" 422 Unprocessable Content
+INFO:     127.0.0.1:61402 - "GET /brain/health HTTP/1.1" 404 Not Found
+Validation error for http://127.0.0.1:8001/brain/projects
+Error details: [{'type': 'missing', 'loc': ('query', 'owner_id'), 'msg': 'Field required', 'input': None}]
+Request body: None
+INFO:     127.0.0.1:57397 - "GET /brain/projects HTTP/1.1" 422 Unprocessable Content
+INFO:     127.0.0.1:59084 - "GET /brain/memory/session/f8c60a3c-1fd5-41ad-8a50-546d91870f77 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56481 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+DEBUG: NODE [create_tasks] started
+DEBUG: ProviderRouter requested model_id='gpt-4o-mini', is_known_id=True
+DEBUG: Using OpenAI model 'gpt-4o-mini'
+DEBUG: Agent 'Todo' raw response snippet: ```json [   {     "id": "t1",     "title": "Database Schema for Supabase",     "description": "Create SQL schema files for Users, Classes, Trainers, Blog Posts, and Events in backend/supabase/",     "...
+DEBUG: TodoAgent produced 8 tasks (clamp 3-15)
+DEBUG: NODE [create_tasks] complete
+DEBUG: Saving message to DB - Conv: f8c60a3c-1fd5-41ad-8a50-546d91870f77, Role: ASSISTANT, Content Snippet: ? I've broken down the project
+DEBUG: Message saved successfully.
+DEBUG: NODE [init_sandbox] started
+[SANDBOX_MCP] Initializing... URL=MISSING...
+[SANDBOX_MCP] ERROR: SANDBOX_MCP_URL or SANDBOX_MCP_TOKEN not set!
+ERROR in stream: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+INFO:     127.0.0.1:56675 - "GET /brain/memory/session/f8c60a3c-1fd5-41ad-8a50-546d91870f77 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51993 - "POST /brain/chat/stream HTTP/1.1" 200 OK

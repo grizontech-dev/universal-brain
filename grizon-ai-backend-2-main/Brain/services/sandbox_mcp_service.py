@@ -42,13 +42,16 @@ class SandboxMCPService:
         token = os.getenv("SANDBOX_MCP_TOKEN")
         print(f"[SANDBOX_MCP] Initializing... URL={url[:50] if url else 'MISSING'}...")
         if not url or not token:
-            print("[SANDBOX_MCP] ERROR: SANDBOX_MCP_URL or SANDBOX_MCP_TOKEN not set!")
-            raise RuntimeError(
-                "SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment"
-            )
+            print("[SANDBOX_MCP] WARNING: SANDBOX_MCP_URL or SANDBOX_MCP_TOKEN not set. Remote MCP Sandbox will be unavailable.")
+            self._initialized = False
+            return
         self._url = url
         self._token = token
-        await self._connect()
+        try:
+            await self._connect()
+        except Exception as e:
+            print(f"[SANDBOX_MCP] Connection failed: {e}")
+            self._initialized = False
 
     async def _connect(self):
         """Establish MCP session with server."""
@@ -84,6 +87,10 @@ class SandboxMCPService:
         """Call an MCP tool using a FRESH session per call to avoid shared session corruption."""
         if not self._initialized:
             await self.initialize()
+        if not self._initialized:
+            raise RuntimeError(
+                "MCP Sandbox is not initialized or configured (SANDBOX_MCP_URL / SANDBOX_MCP_TOKEN are missing or invalid)"
+            )
 
         call_start_time = time.time()
         print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args_keys={list(arguments.keys())}")

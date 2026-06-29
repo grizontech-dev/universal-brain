@@ -28,9 +28,9 @@ import SettingsSessionsPanel from '../settings/SettingsSessionsPanel';
 import SettingsUsagePanel from '../settings/SettingsUsagePanel';
 import SettingsWalletPanel from '../settings/SettingsWalletPanel';
 import SettingsBillingPanel from '../settings/SettingsBillingPanel';
+import SettingsConnectionsPanel from '../settings/SettingsConnectionsPanel';
 import ThemeStudio from '../settings/ThemeStudio';
 import { ApiError } from '@/lib/auth-api';
-import SettingsConnectionsPanel from '../settings/SettingsConnectionsPanel';
 interface SettingsTab {
   id: string;
   label: string;
@@ -401,6 +401,8 @@ export default function SettingsView({ section }: { section: SettingsSectionId }
             />
           ) : section === 'usage' ? (
             <SettingsUsagePanel />
+          ) : section === 'connections' ? (
+            <SettingsConnectionsPanel />
           ) : section === 'models' ? (
             <div className='animate-in fade-in slide-in-from-bottom-2 duration-300'>
               <Link
@@ -848,8 +850,6 @@ export default function SettingsView({ section }: { section: SettingsSectionId }
                 </div>
               </div>
             </div>
-          ) : section === 'connections' ? (
-            <SettingsConnectionsPanel />
           ) : (
             <div className='animate-in fade-in slide-in-from-bottom-2 duration-300'>
               <div className='flex flex-col items-center justify-center h-[50vh] text-center'>

@@ -36,11 +36,17 @@ export const brainApi = {
         });
 
         if (!response || !response.ok) {
-            let errorMessage = 'Brain stream initiation failed';
-            if (response) {
+            if (!response) {
+                throw new Error('Brain stream initiation failed: no response (network error or backend unreachable)');
+            }
+            let errorMessage = `Brain stream initiation failed: ${response.status}`;
+            try {
+                const error = await response.json();
+                if (error?.error) errorMessage = `Brain stream initiation failed: ${error.error} (${response.status})`;
+            } catch {
                 try {
-                    const error = await response.json();
-                    errorMessage = error?.error || `Server returned ${response.status}`;
+                    const text = await response.text();
+                    if (text) errorMessage = `Brain stream initiation failed: ${text.slice(0, 200)} (${response.status})`;
                 } catch {}
             }
             throw new Error(errorMessage);

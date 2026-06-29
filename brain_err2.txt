@@ -1,0 +1,114 @@
+C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\cache\base\__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+INFO:     Started server process [30588]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+Traceback (most recent call last):
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 536, in process_chat_stream
+    async for event in self.workflow.astream(initial_state):
+    ...<50 lines>...
+                        pass
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\main.py", line 3181, in astream
+    async for _ in runner.atick(
+    ...<16 lines>...
+            yield o
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_runner.py", line 304, in atick
+    await arun_with_retry(
+    ...<15 lines>...
+    )
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_retry.py", line 242, in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 705, in ainvoke
+    input = await asyncio.create_task(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        step.ainvoke(input, config, **kwargs), context=context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 473, in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 203, in node_init_sandbox
+    await sandbox_mcp.initialize()
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\services\sandbox_mcp_service.py", line 46, in initialize
+    raise RuntimeError(
+        "SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment"
+    )
+RuntimeError: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+During task with name 'init_sandbox' and id '2efbc9ce-a375-b4fd-f6bf-f2b954c542d2'
+Traceback (most recent call last):
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 536, in process_chat_stream
+    async for event in self.workflow.astream(initial_state):
+    ...<50 lines>...
+                        pass
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\main.py", line 3181, in astream
+    async for _ in runner.atick(
+    ...<16 lines>...
+            yield o
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_runner.py", line 304, in atick
+    await arun_with_retry(
+    ...<15 lines>...
+    )
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_retry.py", line 242, in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 705, in ainvoke
+    input = await asyncio.create_task(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        step.ainvoke(input, config, **kwargs), context=context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 473, in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 203, in node_init_sandbox
+    await sandbox_mcp.initialize()
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\services\sandbox_mcp_service.py", line 46, in initialize
+        self._initialized = False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+        return
+        ^^^^^^
+    self._url = url
+    ^^^^^
+RuntimeError: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+During task with name 'init_sandbox' and id '6993f622-ebf5-77b5-0000-9c059ec527c2'
+Traceback (most recent call last):
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 536, in process_chat_stream
+    async for event in self.workflow.astream(initial_state):
+    ...<50 lines>...
+                        pass
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\main.py", line 3181, in astream
+    async for _ in runner.atick(
+    ...<16 lines>...
+            yield o
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_runner.py", line 304, in atick
+    await arun_with_retry(
+    ...<15 lines>...
+    )
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\pregel\_retry.py", line 242, in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 705, in ainvoke
+    input = await asyncio.create_task(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        step.ainvoke(input, config, **kwargs), context=context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\AppData\Roaming\Python\Python314\site-packages\langgraph\_internal\_runnable.py", line 473, in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\modules\chat\service.py", line 203, in node_init_sandbox
+    await sandbox_mcp.initialize()
+  File "C:\Users\hp\Documents\brain\universal-brain\grizon-ai-backend-2-main\Brain\services\sandbox_mcp_service.py", line 46, in initialize
+        self._initialized = False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+        return
+        ^^^^^^
+    self._url = url
+    ^^^^^
+RuntimeError: SANDBOX_MCP_URL and SANDBOX_MCP_TOKEN must be set in environment
+During task with name 'init_sandbox' and id 'fd7c007d-09bc-6ba5-808c-fc45015b911e'
