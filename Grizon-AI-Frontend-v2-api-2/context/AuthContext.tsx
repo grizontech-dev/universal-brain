@@ -341,6 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     openAuthModal,
     closeAuthModal,
     applySessionFromTokenBundle,
+    getAccessToken: () => accessRef.current,
   };
 
   return (
