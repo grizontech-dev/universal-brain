@@ -608,8 +608,10 @@ class GitHubConnectorService:
             response = await client.post(
                 f"{self.api_base}/user/repos",
                 headers=self._request_headers(access_token),
-                json={"name": name, "description": description, "private": private, "auto_init": True},
+                json={"name": name, "description": description, "private": private, "auto_init": False},
             )
+            if response.status_code == 403:
+                raise ValueError("GitHub App missing Administration permission. Go to https://github.com/settings/apps/grizon-mcp/permissions → Set Administration to Read & Write → Save → Re-authorize installation.")
             if response.status_code == 422:
                 raise ValueError(f"Repository '{name}' already exists or name is invalid")
             response.raise_for_status()

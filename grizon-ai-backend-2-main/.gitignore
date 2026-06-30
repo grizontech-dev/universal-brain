@@ -80,3 +80,4 @@ secrets/
 # Claude Code local settings
 .claude/settings.local.json
 /.claude/worktrees
+grizon-mcp.2026-06-29.private-key.pem

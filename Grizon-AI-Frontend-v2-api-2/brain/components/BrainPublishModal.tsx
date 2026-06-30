@@ -1,49 +1,69 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Github, Globe, Loader2, CheckCircle2, XCircle, ArrowLeft, ExternalLink, Lock, Unlock,
+  Github, Globe, Loader2, CheckCircle2, XCircle, ArrowLeft, ExternalLink, Lock, Unlock, Key, RefreshCw,
 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 
-const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
+const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
+
+interface RepoInfo {
+  name: string;
+  full_name: string;
+  html_url: string;
+  clone_url: string;
+  default_branch: string;
+}
 
 interface BrainPublishModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPublish: (repoName: string, description: string, isPrivate: boolean) => Promise<{
+  fileCount: number;
+  onPublish: (repoName: string, description: string, isPrivate: boolean, githubToken?: string) => Promise<{
     success: boolean;
     repository?: { html_url: string; full_name: string };
     error?: string;
   }>;
+  onPushChanges: (files: { path: string; content: string }[]) => Promise<{
+    success: boolean;
+    files_pushed?: number;
+    error?: string;
+  }>;
 }
 
-type PublishStep = 'checking' | 'connect' | 'form' | 'publishing' | 'done' | 'error';
+type PublishStep = 'checking' | 'connect' | 'token' | 'checking-diff' | 'connected' | 'create' | 'pushing' | 'done' | 'error';
 
-export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainPublishModalProps) {
+export default function BrainPublishModal({ isOpen, onClose, fileCount, onPublish, onPushChanges }: BrainPublishModalProps) {
+  const { getAccessToken } = useAuth();
   const [step, setStep] = useState<PublishStep>('checking');
+  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
   const [repoName, setRepoName] = useState('');
   const [description, setDescription] = useState('');
   const [isPrivate, setIsPrivate] = useState(true);
-  const [result, setResult] = useState<{ html_url?: string; full_name?: string }>({});
   const [errorMsg, setErrorMsg] = useState('');
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setStep('checking');
-    setRepoName('');
-    setDescription('');
-    setIsPrivate(true);
-    setResult({});
-    setErrorMsg('');
-    checkConnection();
-  }, [isOpen]);
+  const [patInput, setPatInput] = useState('');
+  const [pushResult, setPushResult] = useState<{ files_pushed?: number } | null>(null);
+  const [hasChanges, setHasChanges] = useState(true);
+  const [changeCount, setChangeCount] = useState(0);
 
   async function checkConnection() {
     try {
-      const res = await fetch(`${BRAIN_URL}/connect-github/status`);
+      const token = getAccessToken?.() ?? '';
+      const res = await fetch(`${BRAIN_URL}/connect-github/status${token ? `?token=${encodeURIComponent(token)}` : ''}`);
       if (res.ok) {
         const data = await res.json();
-        setStep(data.connected ? 'form' : 'connect');
+        if (!data.connected) {
+          setStep('connect');
+        } else if (!data.has_token) {
+          setStep('token');
+        } else if (data.repo) {
+          setRepoInfo(data.repo);
+          setStep('checking-diff');
+          checkDiff(data.repo);
+        } else {
+          setStep('create');
+        }
       } else {
         setStep('connect');
       }
@@ -52,21 +72,169 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
     }
   }
 
-  const handleConnect = () => {
-    window.location.href = `${BRAIN_URL}/connect-github/login`;
+  useEffect(() => {
+    if (!isOpen) return;
+    setStep('checking');
+    setRepoName('');
+    setDescription('');
+    setIsPrivate(true);
+    setErrorMsg('');
+    setPatInput('');
+    setPushResult(null);
+    checkConnection();
+  }, [isOpen]);
+
+  const checkDiff = async (repo: RepoInfo) => {
+    try {
+      const wid = (window as any).__brainJobId || '';
+      const token = getAccessToken?.() ?? '';
+
+      const listRes = await fetch(`${BRAIN_URL}/brain/sandbox/list-files?workspace_id=${wid}&sandbox_id=${wid}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+      const listData = await listRes.json();
+      const allPaths: string[] = [];
+      const walk = (items: any[]) => {
+        for (const item of items) {
+          if (item.type === 'file' && item.path) allPaths.push(item.path);
+          if (item.children) walk(item.children);
+        }
+      };
+      walk(listData.files || []);
+
+      const fetchOne = async (path: string): Promise<{ path: string; content: string } | null> => {
+        try {
+          const res = await fetch(`${BRAIN_URL}/brain/sandbox/read-file?workspace_id=${wid}&path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+          if (res.ok) {
+            const data = await res.json();
+            return data.content != null ? { path, content: data.content } : null;
+          }
+        } catch {}
+        return null;
+      };
+
+      const results = await Promise.all(allPaths.map(fetchOne));
+      const localFiles = results.filter(Boolean) as { path: string; content: string }[];
+
+      let diffCount = 0;
+      for (const file of localFiles) {
+        try {
+          const ghRes = await fetch(
+            `${BRAIN_URL}/connect-github/github-file?full_name=${encodeURIComponent(repo.full_name)}&path=${encodeURIComponent(file.path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+          );
+          if (!ghRes.ok) { diffCount++; continue; }
+          const ghData = await ghRes.json();
+          if (!ghData.exists || ghData.content !== file.content) diffCount++;
+        } catch {
+          diffCount++;
+        }
+      }
+
+      setChangeCount(diffCount);
+      setHasChanges(diffCount > 0);
+      setStep('connected');
+    } catch {
+      setChangeCount(fileCount);
+      setHasChanges(true);
+      setStep('connected');
+    }
   };
 
-  const handlePublish = async () => {
+  const handleConnect = useCallback(() => {
+    const token = getAccessToken?.() ?? '';
+    const url = `${BRAIN_URL}/connect-github/login${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const popup = window.open(url, 'github-oauth', 'width=600,height=700');
+    const timer = setInterval(() => {
+      if (!popup || popup.closed) {
+        clearInterval(timer);
+        setTimeout(checkConnection, 500);
+      }
+    }, 1000);
+  }, [getAccessToken]);
+
+  const handleSaveToken = async () => {
+    if (!patInput.trim()) return;
+    try {
+      const token = getAccessToken?.() ?? '';
+      const res = await fetch(`${BRAIN_URL}/connect-github/save-pat${token ? `?token=${encodeURIComponent(token)}` : ''}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ token: patInput.trim() }),
+      });
+      if (res.ok) {
+        setStep('create');
+      } else {
+        setErrorMsg('Failed to save token');
+      }
+    } catch {
+      setErrorMsg('Network error');
+    }
+  };
+
+  const handleCreateRepo = async () => {
     if (!repoName.trim()) return;
-    setStep('publishing');
+    setStep('pushing');
     setErrorMsg('');
     try {
       const res = await onPublish(repoName.trim(), description.trim(), isPrivate);
       if (res.success && res.repository) {
-        setResult(res.repository);
+        setRepoInfo(res.repository as RepoInfo);
         setStep('done');
       } else {
-        setErrorMsg(res.error || 'Failed to publish repository');
+        setErrorMsg(res.error || 'Failed to create repository');
+        setStep('error');
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Something went wrong');
+      setStep('error');
+    }
+  };
+
+  const handlePushChanges = async () => {
+    setStep('pushing');
+    setPushResult(null);
+    setErrorMsg('');
+    try {
+      const token = getAccessToken?.() ?? '';
+      const wid = (window as any).__brainJobId || '';
+      const filesRes = await fetch(`${BRAIN_URL}/brain/sandbox/list-files?workspace_id=${wid}&sandbox_id=${wid}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+      const filesData = await filesRes.json();
+      const allPaths: string[] = [];
+      const walk = (items: any[]) => {
+        for (const item of items) {
+          if (item.type === 'file' && item.path) allPaths.push(item.path);
+          if (item.children) walk(item.children);
+        }
+      };
+      walk(filesData.files || []);
+
+      const fetchOne = async (path: string): Promise<{ path: string; content: string } | null> => {
+        try {
+          const res = await fetch(`${BRAIN_URL}/brain/sandbox/read-file?workspace_id=${wid}&path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+          if (res.ok) {
+            const data = await res.json();
+            return data.content ? { path, content: data.content } : null;
+          }
+        } catch {}
+        return null;
+      };
+
+      const results = await Promise.all(allPaths.map(fetchOne));
+      const files = results.filter(Boolean) as { path: string; content: string }[];
+
+      if (!files.length) {
+        setErrorMsg('No files to push');
+        setStep('connected');
+        return;
+      }
+
+      const pushRes = await onPushChanges(files);
+      if (pushRes.success) {
+        setPushResult({ files_pushed: pushRes.files_pushed });
+        setStep('done');
+      } else {
+        setErrorMsg(pushRes.error || 'Push failed');
         setStep('error');
       }
     } catch (e: any) {
@@ -114,7 +282,88 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
           </div>
         )}
 
-        {step === 'form' && (
+        {step === 'token' && (
+          <div className="flex flex-col py-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Key size={18} className="text-[#976df8]" />
+              <h2 className="text-lg font-bold">GitHub Token</h2>
+            </div>
+            <p className="text-sm text-white/50 mb-3">
+              Enter a Personal Access Token to create repositories on your account.
+            </p>
+            <div className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 mb-3">
+              <p className="text-xs text-white/40">
+                1. Go to <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer" className="text-[#976df8] hover:underline">github.com/settings/tokens/new</a>
+              </p>
+              <p className="text-xs text-white/40">2. Give it a name, select <strong className="text-white/60">repo</strong> scope</p>
+              <p className="text-xs text-white/40">3. Generate and paste below</p>
+            </div>
+            <input
+              type="password"
+              value={patInput}
+              onChange={(e) => setPatInput(e.target.value)}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#976df8]/50 transition-all mb-4"
+            />
+            {errorMsg && <p className="text-sm text-red-400 mb-3">{errorMsg}</p>}
+            <button
+              type="button"
+              onClick={handleSaveToken}
+              disabled={!patInput.trim()}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-gray-950 text-sm font-medium hover:bg-gray-100 transition-all disabled:opacity-40"
+            >
+              Save & Continue
+            </button>
+          </div>
+        )}
+
+        {step === 'checking-diff' && (
+          <div className="flex flex-col items-center py-8">
+            <Loader2 size={32} className="text-[#976df8] animate-spin mb-4" />
+            <p className="text-sm text-white/60">Checking for changes...</p>
+          </div>
+        )}
+
+        {step === 'connected' && repoInfo && (
+          <div className="py-4">
+            <div className="flex items-center gap-2 mb-4">
+              <CheckCircle2 size={18} className="text-emerald-400" />
+              <h2 className="text-lg font-bold">Connected</h2>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-5">
+              <p className="text-xs text-white/40 mb-1">Repository</p>
+              <a
+                href={repoInfo.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-sm text-[#976df8] hover:underline font-medium"
+              >
+                {repoInfo.full_name} <ExternalLink size={12} />
+              </a>
+            </div>
+            {hasChanges ? (
+              <>
+                <p className="text-sm text-white/50 mb-5">
+                  {changeCount} file{changeCount !== 1 ? 's' : ''} changed.
+                </p>
+                <button
+                  type="button"
+                  onClick={handlePushChanges}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-gray-950 text-sm font-medium hover:bg-gray-100 transition-all"
+                >
+                  <RefreshCw size={14} /> Push Changes
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                <CheckCircle2 size={16} className="text-emerald-400" />
+                <p className="text-sm text-emerald-300">No changes — everything is up to date.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === 'create' && (
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Globe size={18} className="text-[#976df8]" />
@@ -153,13 +402,11 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
               </button>
             </div>
 
-            {errorMsg && (
-              <p className="text-sm text-red-400 mt-3">{errorMsg}</p>
-            )}
+            {errorMsg && <p className="text-sm text-red-400 mt-3">{errorMsg}</p>}
 
             <button
               type="button"
-              onClick={handlePublish}
+              onClick={handleCreateRepo}
               disabled={!repoName.trim()}
               className="w-full mt-6 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-gray-950 text-sm font-medium hover:bg-gray-100 transition-all disabled:opacity-40"
             >
@@ -168,10 +415,10 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
           </div>
         )}
 
-        {step === 'publishing' && (
+        {step === 'pushing' && (
           <div className="flex flex-col items-center py-8">
             <Loader2 size={32} className="text-[#976df8] animate-spin mb-4" />
-            <p className="text-sm font-medium">Creating repository & pushing code...</p>
+            <p className="text-sm font-medium">Pushing code to GitHub...</p>
             <p className="text-xs text-white/40 mt-2">This may take a moment.</p>
           </div>
         )}
@@ -181,13 +428,17 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
             <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
               <CheckCircle2 size={28} className="text-emerald-400" />
             </div>
-            <h2 className="text-lg font-bold mb-1">Published!</h2>
-            <p className="text-sm text-white/50 mb-2">
-              Repository <span className="text-white font-medium">{result.full_name}</span> created.
-            </p>
-            {result.html_url && (
+            <h2 className="text-lg font-bold mb-1">
+              {pushResult ? 'Changes Pushed!' : 'Published!'}
+            </h2>
+            {pushResult && (
+              <p className="text-sm text-white/50 mb-2">
+                {pushResult.files_pushed} file{pushResult.files_pushed !== 1 ? 's' : ''} updated on GitHub.
+              </p>
+            )}
+            {repoInfo && (
               <a
-                href={result.html_url}
+                href={repoInfo.html_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 text-sm text-[#976df8] hover:underline mb-6"
@@ -210,12 +461,12 @@ export default function BrainPublishModal({ isOpen, onClose, onPublish }: BrainP
             <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4">
               <XCircle size={28} className="text-red-400" />
             </div>
-            <h2 className="text-lg font-bold mb-1">Publish Failed</h2>
+            <h2 className="text-lg font-bold mb-1">Failed</h2>
             <p className="text-sm text-red-400/80 text-center mb-6 max-w-sm">{errorMsg || 'Something went wrong.'}</p>
             <div className="flex gap-3">
               <button
                 type="button"
-                onClick={() => setStep('form')}
+                onClick={() => setStep(repoInfo ? 'connected' : 'create')}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-all"
               >
                 <ArrowLeft size={14} /> Try Again

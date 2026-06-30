@@ -5,7 +5,7 @@ import secrets
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from Brain.config.redis import redis_client
@@ -19,6 +19,7 @@ class CreateRepoRequest(BaseModel):
     description: str = ""
     private: bool = True
     files: list[dict[str, str]] = []
+    github_token: Optional[str] = None
 
 
 router = APIRouter(prefix="/connect-github", tags=["GitHub Integration"])
@@ -59,22 +60,27 @@ class WriteChangesRequest(BaseModel):
 
 @router.get("/login")
 async def login(current_user=Depends(get_current_user)):
+    existing = github_service.get_connection(current_user.id)
+    if existing and existing.config and existing.config.get("github_token"):
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        return RedirectResponse(url=f"{frontend_url}?provider=github&status=success")
+
     state = secrets.token_urlsafe(32)
     await redis_client.setex(
         f"github_oauth_state:{state}",
         STATE_EXPIRATION,
-        json.dumps({"user_id": current_user.id}),
+        json.dumps({"user_id": current_user.id, "phase": "install"}),
     )
     return RedirectResponse(url=github_service.get_install_url(state))
 
 
 @router.get("/oauth2/callback")
 async def oauth2_callback(
-    installation_id: str = Query(..., description="The GitHub App installation id"),
+    installation_id: str = Query(None),
     state: str = Query(..., description="The state parameter for CSRF validation"),
-    setup_action: Optional[str] = Query(None, description="The GitHub App setup action"),
-    error: Optional[str] = Query(None, description="Error from GitHub if any"),
-    error_description: Optional[str] = Query(None, description="Error description from GitHub"),
+    setup_action: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
 ):
     if error:
         raise HTTPException(status_code=400, detail=f"OAuth error: {error} - {error_description}")
@@ -82,27 +88,108 @@ async def oauth2_callback(
     redis_key = f"github_oauth_state:{state}"
     state_payload = await redis_client.get(redis_key)
     if not state_payload:
-        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+        return HTMLResponse(content='<html><body><script>window.close();</script></body></html>')
     await redis_client.delete(redis_key)
 
     try:
         state_data = json.loads(state_payload)
         user_id = state_data["user_id"]
     except (json.JSONDecodeError, KeyError):
-        raise HTTPException(status_code=400, detail="Corrupted state parameter payload")
+        return HTMLResponse(content='<html><body><script>window.close();</script></body></html>')
 
     try:
-        github_service.save_github_connection(user_id, installation_id, {"setup_action": setup_action})
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        return RedirectResponse(url=f"{frontend_url}/integrations?provider=github&status=success")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to process callback: {exc}")
+        if installation_id:
+            github_service.save_github_connection(user_id, installation_id, {"setup_action": setup_action})
+    except Exception:
+        pass
+
+    return HTMLResponse(content='<html><body><script>window.close();</script><p>Connected! You may close this window.</p></body></html>')
 
 
 @router.get("/status")
 async def status(current_user=Depends(get_current_user)):
     connector = github_service.get_connection(current_user.id)
-    return {"connected": connector is not None and connector.config is not None}
+    has_token = False
+    repo_info = None
+    if connector and connector.config:
+        has_token = bool(connector.config.get("github_token"))
+        repo_info = connector.config.get("last_repo")
+    return {"connected": connector is not None and connector.config is not None, "has_token": has_token, "repo": repo_info}
+
+
+@router.post("/push-changes")
+async def push_changes(req: dict, current_user=Depends(get_current_user)):
+    try:
+        connector = github_service.get_connection(current_user.id)
+        if not connector or not connector.config:
+            raise HTTPException(status_code=400, detail="GitHub connector not connected")
+        saved_token = connector.config.get("github_token")
+        repo_info = connector.config.get("last_repo")
+        if not saved_token or not repo_info:
+            raise HTTPException(status_code=400, detail="No token or repo info found")
+
+        full_name = repo_info.get("full_name")
+        files = req.get("files", [])
+        if not files:
+            raise HTTPException(status_code=400, detail="No files to push")
+
+        pushed = await github_service.push_files_to_repo(saved_token, full_name, files)
+        return {"success": True, "full_name": full_name, "files_pushed": len(pushed)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/save-pat")
+async def save_pat(req: dict, current_user=Depends(get_current_user)):
+    token = req.get("token", "")
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required")
+    connector = github_service.get_connection(current_user.id)
+    if not connector:
+        raise HTTPException(status_code=400, detail="GitHub connector not connected")
+    config = connector.config or {}
+    config["github_token"] = token
+    connector.config = config
+    from Brain.config.database import SessionLocal
+    db = SessionLocal()
+    try:
+        db.merge(connector)
+        db.commit()
+    finally:
+        db.close()
+    return {"success": True}
+
+@router.get("/github-file")
+async def read_github_file(
+    full_name: str = Query(...),
+    path: str = Query(...),
+    current_user=Depends(get_current_user),
+):
+    connector = github_service.get_connection(current_user.id)
+    if not connector or not connector.config:
+        raise HTTPException(status_code=400, detail="Not connected")
+    token = connector.config.get("github_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="No token")
+    try:
+        import httpx as hx
+        async with hx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                f"https://api.github.com/repos/{full_name}/contents/{path.lstrip('/')}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+            )
+            if r.status_code == 404:
+                return {"exists": False, "content": ""}
+            if r.status_code != 200:
+                return {"exists": False, "content": ""}
+            data = r.json()
+            import base64
+            content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace")
+            return {"exists": True, "content": content, "sha": data.get("sha")}
+    except Exception:
+        return {"exists": False, "content": ""}
 
 @router.post("/repositories/create")
 async def create_repository(req: CreateRepoRequest, current_user=Depends(get_current_user)):
@@ -111,7 +198,14 @@ async def create_repository(req: CreateRepoRequest, current_user=Depends(get_cur
         if not connector or not connector.config:
             raise HTTPException(status_code=400, detail="GitHub connector is not connected")
         installation_id = connector.config.get("installation_id")
-        access_token = await github_service.get_installation_token(installation_id)
+        saved_token = connector.config.get("github_token")
+
+        if req.github_token:
+            access_token = req.github_token
+        elif saved_token:
+            access_token = saved_token
+        else:
+            raise HTTPException(status_code=400, detail="No GitHub token available. Please enter a Personal Access Token.")
 
         repo_data = await github_service.create_repository(
             access_token, name=req.name, description=req.description, private=req.private
@@ -125,15 +219,26 @@ async def create_repository(req: CreateRepoRequest, current_user=Depends(get_cur
                 access_token, full_name, req.files, branch=default_branch
             )
 
+        config = connector.config or {}
+        config["last_repo"] = {
+            "name": repo_data["name"],
+            "full_name": full_name,
+            "html_url": repo_data["html_url"],
+            "clone_url": repo_data["clone_url"],
+            "default_branch": default_branch,
+        }
+        connector.config = config
+        from Brain.config.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.merge(connector)
+            db.commit()
+        finally:
+            db.close()
+
         return {
             "success": True,
-            "repository": {
-                "name": repo_data["name"],
-                "full_name": full_name,
-                "html_url": repo_data["html_url"],
-                "clone_url": repo_data["clone_url"],
-                "default_branch": default_branch,
-            },
+            "repository": config["last_repo"],
             "files_pushed": len(pushed),
         }
     except HTTPException:

@@ -22,3 +22,4 @@ qdrant-client
 openai
 PyJWT
 langchain-mcp-adapters
+mcp

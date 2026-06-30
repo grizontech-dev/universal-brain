@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     X, File, Folder, FolderOpen, ChevronRight, ChevronDown,
-    Terminal, Monitor, Code, Settings, Share, Download,
+    Terminal, Monitor, Code, Settings, Share, Download, Github,
     Play, Save, Search, Maximize2, Minimize2, Split,
     Eye, Layout, Database, ChevronLeft, RotateCcw,
     PlusSquare, FolderPlus, MoreHorizontal, History,
@@ -27,7 +27,7 @@ import { brainApiFetch } from '../lib/brainApiBase';
 import { sortFileTreeNodes, getFileTreeIcon } from '../lib/fileTreeUtils';
 import { DEFAULT_BRAIN_FRAMEWORK, normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
 
-const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
+const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
 
 function PreviewIframe({ url, sessionId }: { url: string; sessionId?: string }) {
     const [loadIframe, setLoadIframe] = useState(false);
@@ -203,27 +203,77 @@ export default function BrainEditorCanvas({
 
     const { getAccessToken } = useAuth();
     const [showPublish, setShowPublish] = useState(false);
+    const [showPublishMenu, setShowPublishMenu] = useState(false);
+    const publishMenuRef = useRef<HTMLDivElement>(null);
 
     const collectWorkspaceFiles = async (): Promise<{ path: string; content: string }[]> => {
         const files: { path: string; content: string }[] = [];
-        const walk = async (nodes: FileNode[]) => {
+        const wid = jobIdRef.current || jobId || '';
+        const collect = async (nodes: FileNode[]) => {
             for (const node of nodes) {
                 if (node.type === 'file' && node.path) {
-                    const content = node.content || '';
+                    let content = node.content || '';
+                    if (!content && wid) {
+                        try {
+                            const res = await brainApiFetch(
+                                `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(node.path)}`
+                            );
+                            if (res?.ok) {
+                                const result = await res.json();
+                                content = result.content || '';
+                            }
+                        } catch {}
+                    }
                     if (content) {
                         files.push({ path: node.path, content });
                     }
                 }
                 if (node.children) {
-                    await walk(node.children);
+                    await collect(node.children);
                 }
             }
         };
-        await walk(fileTree);
+        await collect(fileTree);
         return files;
     };
 
-    const handlePublish = async (name: string, description: string, isPrivate: boolean) => {
+    const fileCount = (() => {
+        let count = 0;
+        const walk = (nodes: FileNode[]) => {
+            for (const node of nodes) {
+                if (node.type === 'file') count++;
+                if (node.children) walk(node.children);
+            }
+        };
+        walk(fileTree);
+        return count;
+    })();
+
+    const handlePushChanges = async (files: { path: string; content: string }[]) => {
+        const token = getAccessToken?.() ?? '';
+        try {
+            const res = await fetch(
+                `${BRAIN_URL}/connect-github/push-changes${token ? `?token=${encodeURIComponent(token)}` : ''}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    body: JSON.stringify({ files }),
+                },
+            );
+            const data = await res.json();
+            if (!res.ok) {
+                return { success: false, error: data.detail || 'Push failed' };
+            }
+            return { success: true, files_pushed: data.files_pushed };
+        } catch (e: any) {
+            return { success: false, error: e.message || 'Network error' };
+        }
+    };
+
+    const handlePublish = async (name: string, description: string, isPrivate: boolean, githubToken?: string) => {
         const token = getAccessToken?.() ?? '';
         try {
             const files = await collectWorkspaceFiles();
@@ -235,7 +285,7 @@ export default function BrainEditorCanvas({
                         'Content-Type': 'application/json',
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
-                    body: JSON.stringify({ name, description, private: isPrivate, files }),
+                    body: JSON.stringify({ name, description, private: isPrivate, files, github_token: githubToken }),
                 },
             );
             const data = await res.json();
@@ -247,6 +297,61 @@ export default function BrainEditorCanvas({
             return { success: false, error: e.message || 'Network error' };
         }
     };
+
+    const handleDownloadZip = async () => {
+        setShowPublishMenu(false);
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        const wid = jobIdRef.current || jobId || '';
+
+        const allFiles: FileNode[] = [];
+        const collectNodes = (nodes: FileNode[]) => {
+            for (const node of nodes) {
+                if (node.type === 'file' && node.path) allFiles.push(node);
+                if (node.children) collectNodes(node.children);
+            }
+        };
+        collectNodes(fileTree);
+
+        const fetchOne = async (node: FileNode): Promise<{ path: string; content: string } | null> => {
+            let content = node.content || '';
+            if (!content && wid) {
+                try {
+                    const res = await brainApiFetch(
+                        `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(node.path)}`
+                    );
+                    if (res?.ok) {
+                        const r = await res.json();
+                        content = r.content || '';
+                    }
+                } catch {}
+            }
+            return content ? { path: node.path, content } : null;
+        };
+
+        const results = await Promise.all(allFiles.map(fetchOne));
+        for (const r of results) {
+            if (r) zip.file(r.path, r.content);
+        }
+
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'project.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (publishMenuRef.current && !publishMenuRef.current.contains(e.target as Node)) {
+                setShowPublishMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     useEffect(() => {
         const unsub = onBrainTerminalOutput((line) => {
@@ -824,13 +929,35 @@ export default function BrainEditorCanvas({
                         </button>
                     </div>
 
-                    <button
-                        onClick={() => setShowPublish(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-[12px] font-bold hover:bg-white/90 transition-all ml-1 shadow-[0_0_15px_rgba(255,255,255,0.1)] shrink-0"
-                    >
-                        <Globe size={14} />
-                        <span>Publish</span>
-                    </button>
+                    <div className="relative ml-1 shrink-0" ref={publishMenuRef}>
+                        <button
+                            onClick={() => setShowPublishMenu(!showPublishMenu)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black text-[12px] font-bold hover:bg-white/90 transition-all shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+                        >
+                            <Download size={14} />
+                            <span>Download</span>
+                            <ChevronDown size={12} />
+                        </button>
+                        {showPublishMenu && (
+                            <div className="absolute right-0 top-full mt-1 w-48 bg-[#1a1a1a] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                                <button
+                                    onClick={handleDownloadZip}
+                                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors"
+                                >
+                                    <Download size={14} />
+                                    Download as ZIP
+                                </button>
+                                <div className="border-t border-white/10" />
+                                <button
+                                    onClick={() => { setShowPublishMenu(false); setShowPublish(true); }}
+                                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors"
+                                >
+                                    <Github size={14} />
+                                    Export to GitHub
+                                </button>
+                            </div>
+                        )}
+                    </div>
 
                     {!embedded && (
                         <button
@@ -1053,7 +1180,9 @@ export default function BrainEditorCanvas({
             <BrainPublishModal
                 isOpen={showPublish}
                 onClose={() => setShowPublish(false)}
+                fileCount={fileCount}
                 onPublish={handlePublish}
+                onPushChanges={handlePushChanges}
             />
         </div>
     );
