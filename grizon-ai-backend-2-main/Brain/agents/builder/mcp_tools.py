@@ -56,9 +56,10 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
         "timestamp": str(int(time.time() * 1000))
     })
     
+    write_op = workspace_manager.build_op_write_file(file_path, code_content)
     await ws_manager.broadcast_to_sandbox(session_id, {
         "type": "workspace_ops",
-        "ops": [],
+        "ops": [write_op],
         "activities": [act],
         "progress_msg": progress_msg
     })

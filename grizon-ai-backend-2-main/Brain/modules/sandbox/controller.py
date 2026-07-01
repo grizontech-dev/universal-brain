@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from Brain.services.websocket_manager import ws_manager
@@ -92,6 +92,38 @@ async def read_file(
         with open(host_path, "r", encoding="utf-8") as f:
             content = f.read()
         return {"content": content}
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.post("/write-file")
+async def write_file(
+    request: Request,
+    sandbox_id: Optional[str] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+):
+    wid = workspace_id or sandbox_id
+    if not wid:
+        raise HTTPException(status_code=422, detail="sandbox_id or workspace_id is required")
+    workspace_path = workspace_manager.resolve_workspace_path(wid)
+    if not workspace_path:
+        return {"error": "Workspace not found"}
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON body")
+
+    path = body.get("path", "")
+    content = body.get("content")
+    if not path or content is None:
+        raise HTTPException(status_code=422, detail="path and content are required")
+
+    host_path = os.path.join(workspace_path, path.lstrip("/"))
+    try:
+        os.makedirs(os.path.dirname(host_path), exist_ok=True)
+        with open(host_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"success": True, "path": path}
     except Exception as e:
         return {"error": str(e)}
 

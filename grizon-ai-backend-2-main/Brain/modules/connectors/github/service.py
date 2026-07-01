@@ -189,17 +189,20 @@ class GitHubConnectorService:
             return response.json()
 
     def save_github_connection(self, user_id: str, installation_id: str, metadata: Optional[Dict[str, Any]] = None):
-        config = {
-            "installation_id": installation_id,
-            "metadata": metadata or {},
-        }
         db = SessionLocal()
         try:
             connector = db.query(Connector).filter(Connector.userId == user_id, Connector.type == "github").first()
             if connector:
-                connector.config = config
+                existing_config = connector.config or {}
+                existing_config["installation_id"] = installation_id
+                existing_config["metadata"] = metadata or {}
+                connector.config = existing_config
                 connector.updatedAt = datetime.utcnow()
             else:
+                config = {
+                    "installation_id": installation_id,
+                    "metadata": metadata or {},
+                }
                 connector = Connector(userId=user_id, type="github", config=config)
                 db.add(connector)
             db.commit()

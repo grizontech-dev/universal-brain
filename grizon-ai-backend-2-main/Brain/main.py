@@ -85,6 +85,26 @@ app.include_router(github_connector_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)
 
+from fastapi import Request as FastAPIRequest
+from Brain.services.workspace_manager import workspace_manager
+
+@app.post("/brain/sandbox/write-file")
+async def brain_write_file(request: FastAPIRequest, workspace_id: str = ""):
+    body = await request.json()
+    path = body.get("path", "")
+    content = body.get("content", "")
+    if not path:
+        return {"error": "path required"}
+    ws_path = workspace_manager.resolve_workspace_path(workspace_id)
+    if not ws_path:
+        return {"error": "Workspace not found"}
+    import os
+    host_path = os.path.join(ws_path, path.lstrip("/"))
+    os.makedirs(os.path.dirname(host_path), exist_ok=True)
+    with open(host_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"success": True, "path": path}
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "project-brain"}

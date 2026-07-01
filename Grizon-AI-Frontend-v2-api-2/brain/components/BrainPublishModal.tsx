@@ -118,7 +118,10 @@ export default function BrainPublishModal({ isOpen, onClose, fileCount, onPublis
       for (const file of localFiles) {
         try {
           const ghRes = await fetch(
-            `${BRAIN_URL}/connect-github/github-file?full_name=${encodeURIComponent(repo.full_name)}&path=${encodeURIComponent(file.path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+            `${BRAIN_URL}/connect-github/github-file?full_name=${encodeURIComponent(repo.full_name)}&path=${encodeURIComponent(file.path)}`,
+            {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            }
           );
           if (!ghRes.ok) { diffCount++; continue; }
           const ghData = await ghRes.json();
@@ -214,22 +217,39 @@ export default function BrainPublishModal({ isOpen, onClose, fileCount, onPublis
           const res = await fetch(`${BRAIN_URL}/brain/sandbox/read-file?workspace_id=${wid}&path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
           if (res.ok) {
             const data = await res.json();
-            return data.content ? { path, content: data.content } : null;
+            return data.content != null ? { path, content: data.content } : null;
           }
         } catch {}
         return null;
       };
 
       const results = await Promise.all(allPaths.map(fetchOne));
-      const files = results.filter(Boolean) as { path: string; content: string }[];
+      const localFiles = results.filter(Boolean) as { path: string; content: string }[];
 
-      if (!files.length) {
-        setErrorMsg('No files to push');
+      const changedFiles: { path: string; content: string }[] = [];
+      for (const file of localFiles) {
+        try {
+          const ghRes = await fetch(
+            `${BRAIN_URL}/connect-github/github-file?full_name=${encodeURIComponent(repoInfo!.full_name)}&path=${encodeURIComponent(file.path)}`,
+            {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            }
+          );
+          if (!ghRes.ok) { changedFiles.push(file); continue; }
+          const ghData = await ghRes.json();
+          if (!ghData.exists || ghData.content !== file.content) changedFiles.push(file);
+        } catch {
+          changedFiles.push(file);
+        }
+      }
+
+      if (!changedFiles.length) {
+        setErrorMsg('No changes detected');
         setStep('connected');
         return;
       }
 
-      const pushRes = await onPushChanges(files);
+      const pushRes = await onPushChanges(changedFiles);
       if (pushRes.success) {
         setPushResult({ files_pushed: pushRes.files_pushed });
         setStep('done');
@@ -355,11 +375,18 @@ export default function BrainPublishModal({ isOpen, onClose, fileCount, onPublis
                 </button>
               </>
             ) : (
-              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 mb-4">
                 <CheckCircle2 size={16} className="text-emerald-400" />
                 <p className="text-sm text-emerald-300">No changes — everything is up to date.</p>
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => setStep('create')}
+              className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white/60 text-sm font-medium hover:bg-white/10 hover:text-white transition-all"
+            >
+              <Github size={14} /> Create New Repository
+            </button>
           </div>
         )}
 
@@ -411,6 +438,13 @@ export default function BrainPublishModal({ isOpen, onClose, fileCount, onPublis
               className="w-full mt-6 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-gray-950 text-sm font-medium hover:bg-gray-100 transition-all disabled:opacity-40"
             >
               <Github size={16} /> Create Repository & Push
+            </button>
+            <button
+              type="button"
+              onClick={() => { setStep('checking'); checkConnection(); }}
+              className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white/50 text-sm hover:bg-white/10 hover:text-white transition-all"
+            >
+              <ArrowLeft size={14} /> Use Existing Repository
             </button>
           </div>
         )}

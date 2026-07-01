@@ -251,6 +251,7 @@ export default function BrainEditorCanvas({
 
     const handlePushChanges = async (files: { path: string; content: string }[]) => {
         const token = getAccessToken?.() ?? '';
+        const wid = jobIdRef.current || jobId || '';
         try {
             const res = await fetch(
                 `${BRAIN_URL}/connect-github/push-changes${token ? `?token=${encodeURIComponent(token)}` : ''}`,
@@ -260,7 +261,7 @@ export default function BrainEditorCanvas({
                         'Content-Type': 'application/json',
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
-                    body: JSON.stringify({ files }),
+                    body: JSON.stringify({ files, workspace_id: wid }),
                 },
             );
             const data = await res.json();
@@ -285,7 +286,7 @@ export default function BrainEditorCanvas({
                         'Content-Type': 'application/json',
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
-                    body: JSON.stringify({ name, description, private: isPrivate, files, github_token: githubToken }),
+                    body: JSON.stringify({ name, description, private: isPrivate, files, github_token: githubToken, workspace_id: jobIdRef.current || jobId || '' }),
                 },
             );
             const data = await res.json();
@@ -366,12 +367,40 @@ export default function BrainEditorCanvas({
     const jobIdRef = useRef<string | null>(null);
     useEffect(() => {
         jobIdRef.current = jobId;
+        if (jobId) {
+            (window as any).__brainJobId = jobId;
+        }
     }, [jobId]);
 
     const activeFilePathRef = useRef<string | null>(null);
     useEffect(() => {
         activeFilePathRef.current = activeFile?.path || null;
     }, [activeFile?.path]);
+
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const editorRef = useRef<any>(null);
+    const activeFileKeyRef = useRef<string>('');
+
+    const persistToFile = useCallback((filePath: string, content: string) => {
+        const wid = jobIdRef.current || jobId || '';
+        if (!wid || !filePath) return;
+        brainApiFetch(`sandbox/write-file?workspace_id=${encodeURIComponent(wid)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: filePath, content }),
+        }).catch(() => {});
+    }, [jobId]);
+
+    const handleEditorChange = useCallback((value: string | undefined) => {
+        if (value === undefined) return;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => {
+            const filePath = activeFilePathRef.current || '';
+            if (filePath) persistToFile(filePath, value);
+        }, 800);
+    }, [persistToFile]);
+
+    useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
 
     const buildJobId = buildJob?.jobId;
     const buildJobSyncUrl = buildJob?.syncUrl;
@@ -899,36 +928,7 @@ export default function BrainEditorCanvas({
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.03] border border-white/5 min-w-0 max-w-[400px]">
-                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />
-                    <span className="text-[12px] font-medium text-white/60 tracking-tight truncate">
-                        {jobId ? `sandbox / ${jobId.slice(0, 8)}` : 'grizon-brain / initializing'}
-                    </span>
-                    <ChevronDown size={14} className="text-white/20 shrink-0" />
-                </div>
-
                 <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
-                    <div className="flex items-center bg-white/[0.03] border border-white/5 p-0.5 rounded-lg mr-1 shrink-0">
-                        <button className="p-1.5 px-3 rounded-md text-[11px] font-bold text-white/60 hover:text-white transition-all flex items-center gap-2">
-                            <span>Latest</span>
-                            <ChevronDown size={12} />
-                        </button>
-                    </div>
-
-                    <div className="flex items-center gap-1 mr-1 shrink-0">
-                        <button className="p-1.5 text-white/40 hover:text-white hover:bg-white/5 rounded-md transition-all"><ChevronLeft size={16} /></button>
-                        <button className="p-1.5 text-white/40 hover:text-white hover:bg-white/5 rounded-md transition-all"><ChevronRight size={16} /></button>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                        <button className="p-1.5 text-white/40 hover:text-white hover:bg-white/5 rounded-md transition-all">
-                            <Settings size={18} />
-                        </button>
-                        <button className="p-1.5 text-white/40 hover:text-white hover:bg-white/5 rounded-md transition-all">
-                            <Share size={18} />
-                        </button>
-                    </div>
-
                     <div className="relative ml-1 shrink-0" ref={publishMenuRef}>
                         <button
                             onClick={() => setShowPublishMenu(!showPublishMenu)}
@@ -1037,11 +1037,12 @@ export default function BrainEditorCanvas({
                             <div className="flex-1 flex flex-col relative overflow-hidden">
                                 {activeFile ? (
                                     <Editor
+                                        key={activeFile.path}
                                         height="100%"
                                         defaultLanguage={activeFile.language || 'typescript'}
-                                        path={activeFile.path}
-                                        value={activeFile.content}
+                                        defaultValue={activeFile.content || ''}
                                         theme="vs-dark"
+                                        onChange={handleEditorChange}
                                         options={{
                                             fontSize: 13,
                                             fontFamily: "'Geist Mono', 'Fira Code', monospace",
@@ -1144,29 +1145,6 @@ export default function BrainEditorCanvas({
                             </div>
                         )}
                     </div>
-
-                    {/* STATUS BAR (V0 STYLE - VERY MINIMAL) */}
-                    <footer className="h-10 border-t border-white/5 bg-[#0a0a0a] flex items-center justify-between px-4 text-[11px] font-medium text-white/30 shrink-0">
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                                <History size={14} />
-                                <span>Saved just now</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Cpu size={14} />
-                                <span>Remote Sandbox Environment</span>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                                <Zap size={14} className="text-yellow-500/50" />
-                                <span>Fast Refresh active</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="uppercase tracking-widest">{activeFile?.language || 'typescript'}</span>
-                            </div>
-                        </div>
-                    </footer>
                 </main>
             </div>
 

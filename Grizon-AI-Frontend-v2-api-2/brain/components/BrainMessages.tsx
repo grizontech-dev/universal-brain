@@ -1970,46 +1970,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    {(activeSandboxJob || messages.some(m => m.sandboxJob)) && (
-                        <button
-                            onClick={() => {
-                                if (activeSandboxJob) {
-                                    // If already open, just make sure it stays open
-                                    window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: activeSandboxJob }));
-                                } else {
-                                    const latestJob = [...messages].reverse().find(m => m.sandboxJob);
-                                    if (latestJob) {
-                                        const jobData = {
-                                            streamUrl: latestJob.sandboxJob.streamUrl || latestJob.sandboxJob.stream_url,
-                                            jobId: latestJob.sandboxJob.jobId || latestJob.sandboxJob.job_id,
-                                            todoList: latestJob.todoList
-                                        };
-                                        setActiveSandboxJob(jobData);
-                                        window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: jobData }));
-                                    }
-                                }
-                            }}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-[10px] font-black text-white/70 uppercase tracking-widest hidden sm:flex"
-                        >
-                            <Terminal size={12} />
-                            <span>Terminal</span>
-                        </button>
-                    )}
-
-                    {sessionState?.workflow_state && sessionState.workflow_state !== 'done' && sessionState.workflow_state !== 'error' && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 shadow-inner">
-                            <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${workflowPhaseColor(sessionState.workflow_state).replace('text-', 'bg-')}`} />
-                            <span className={`text-[11px] font-bold tracking-tight ${workflowPhaseColor(sessionState.workflow_state)}`}>
-                                {workflowPhaseLabel(sessionState.workflow_state)}
-                            </span>
-                            {sessionState.current_agent && (
-                                <span className="text-[10px] text-white/30 hidden sm:inline">
-                                    · {sessionState.current_agent}
-                                </span>
-                            )}
-                        </div>
-                    )}
-
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 shadow-inner">
                         <Coins size={12} className="text-[#976df8]" />
                         <span className="text-[12px] font-black text-white/90 tabular-nums tracking-tighter">

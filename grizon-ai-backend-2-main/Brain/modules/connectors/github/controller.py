@@ -20,6 +20,7 @@ class CreateRepoRequest(BaseModel):
     private: bool = True
     files: list[dict[str, str]] = []
     github_token: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 
 router = APIRouter(prefix="/connect-github", tags=["GitHub Integration"])
@@ -111,10 +112,23 @@ async def status(current_user=Depends(get_current_user)):
     connector = github_service.get_connection(current_user.id)
     has_token = False
     repo_info = None
+    last_workspace_id = None
     if connector and connector.config:
         has_token = bool(connector.config.get("github_token"))
         repo_info = connector.config.get("last_repo")
-    return {"connected": connector is not None and connector.config is not None, "has_token": has_token, "repo": repo_info}
+        last_workspace_id = connector.config.get("last_workspace_id")
+    if not repo_info:
+        repos = github_service.list_repositories_for_user(current_user.id)
+        if repos:
+            last = repos[0]
+            repo_info = {
+                "name": last.name,
+                "full_name": last.fullName,
+                "html_url": last.htmlUrl,
+                "clone_url": last.cloneUrl,
+                "default_branch": last.defaultBranch or "main",
+            }
+    return {"connected": connector is not None and connector.config is not None, "has_token": has_token, "repo": repo_info, "last_workspace_id": last_workspace_id}
 
 
 @router.post("/push-changes")
@@ -130,10 +144,29 @@ async def push_changes(req: dict, current_user=Depends(get_current_user)):
 
         full_name = repo_info.get("full_name")
         files = req.get("files", [])
+        workspace_id = req.get("workspace_id")
         if not files:
             raise HTTPException(status_code=400, detail="No files to push")
 
-        pushed = await github_service.push_files_to_repo(saved_token, full_name, files)
+        file_names = [f.get("path", "").split("/")[-1] for f in files if f.get("path")]
+        if len(file_names) <= 3:
+            file_list = ", ".join(file_names)
+        else:
+            file_list = f"{', '.join(file_names[:3])} and {len(file_names) - 3} more"
+        commit_message = f"Update: {file_list}"
+
+        pushed = await github_service.push_files_to_repo(saved_token, full_name, files, message=commit_message)
+        if workspace_id:
+            config = connector.config or {}
+            config["last_workspace_id"] = workspace_id
+            connector.config = config
+            from Brain.config.database import SessionLocal
+            db = SessionLocal()
+            try:
+                db.merge(connector)
+                db.commit()
+            finally:
+                db.close()
         return {"success": True, "full_name": full_name, "files_pushed": len(pushed)}
     except HTTPException:
         raise
@@ -215,8 +248,14 @@ async def create_repository(req: CreateRepoRequest, current_user=Depends(get_cur
 
         pushed = []
         if req.files:
+            file_names = [f.get("path", "").split("/")[-1] for f in req.files if f.get("path")]
+            if len(file_names) <= 3:
+                file_list = ", ".join(file_names)
+            else:
+                file_list = f"{', '.join(file_names[:3])} and {len(file_names) - 3} more"
+            commit_message = f"Initial commit: {file_list}"
             pushed = await github_service.push_files_to_repo(
-                access_token, full_name, req.files, branch=default_branch
+                access_token, full_name, req.files, branch=default_branch, message=commit_message
             )
 
         config = connector.config or {}
@@ -227,6 +266,8 @@ async def create_repository(req: CreateRepoRequest, current_user=Depends(get_cur
             "clone_url": repo_data["clone_url"],
             "default_branch": default_branch,
         }
+        if req.workspace_id:
+            config["last_workspace_id"] = req.workspace_id
         connector.config = config
         from Brain.config.database import SessionLocal
         db = SessionLocal()
