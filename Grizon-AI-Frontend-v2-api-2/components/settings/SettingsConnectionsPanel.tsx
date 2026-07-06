@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Github, Database, CheckCircle, XCircle, Loader2, ExternalLink } from 'lucide-react';
+import { Github, Database, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
@@ -23,6 +23,7 @@ export default function SettingsConnectionsPanel() {
   const [connectors, setConnectors] = useState<Record<string, ConnectorState>>(initialConnectors);
   const [githubRepos, setGithubRepos] = useState<any[]>([]);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
   const token = getAccessToken?.() ?? null;
 
@@ -56,6 +57,29 @@ export default function SettingsConnectionsPanel() {
       setConnectors((prev) => ({ ...prev, [name]: { status: 'disconnected' } }));
     }
   }
+
+  const disconnectConnector = async (name: string) => {
+    setDisconnecting(name);
+    try {
+      const url = `${BRAIN_URL}/connect-${name}/disconnect${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        setConnectors((prev) => ({ ...prev, [name]: { status: 'disconnected' } }));
+        if (name === 'github') setGithubRepos([]);
+        const displayName = name === 'github' ? 'GitHub' : 'Supabase';
+        setNotification({ type: 'success', message: `Disconnected from ${displayName}.` });
+      } else {
+        setNotification({ type: 'error', message: `Failed to disconnect.` });
+      }
+    } catch {
+      setNotification({ type: 'error', message: `Failed to disconnect.` });
+    } finally {
+      setDisconnecting(null);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -97,7 +121,10 @@ export default function SettingsConnectionsPanel() {
   };
 
   const connectSupabase = () => {
-    const url = `${BRAIN_URL}/connect-supabase/login${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    params.set('return_url', `${window.location.origin}/settings/connections`);
+    const url = `${BRAIN_URL}/connect-supabase/login?${params.toString()}`;
     window.location.href = url;
   };
 
@@ -176,13 +203,28 @@ export default function SettingsConnectionsPanel() {
                   </div>
                 </div>
               )}
-              <button
-                type='button'
-                onClick={connectGitHub}
-                className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
-              >
-                <ExternalLink size={14} /> Manage
-              </button>
+              <div className='flex gap-2'>
+                <button
+                  type='button'
+                  onClick={connectGitHub}
+                  className='flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
+                >
+                  <ExternalLink size={14} /> Manage
+                </button>
+                <button
+                  type='button'
+                  onClick={() => disconnectConnector('github')}
+                  disabled={disconnecting === 'github'}
+                  className='flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-white/50 rounded-xl text-[13px] font-medium hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-all disabled:opacity-50'
+                >
+                  {disconnecting === 'github' ? (
+                    <Loader2 size={14} className='animate-spin' />
+                  ) : (
+                    <Unplug size={14} />
+                  )}
+                  Disconnect
+                </button>
+              </div>
             </div>
           ) : (
             <button
@@ -222,24 +264,44 @@ export default function SettingsConnectionsPanel() {
           <p className='text-[12px] text-text-muted leading-relaxed mb-4'>
             Connect your Supabase project. The AI can query your database, manage auth, and inspect your schema.
           </p>
-          <button
-            type='button'
-            onClick={connectSupabase}
-            disabled={connectors.supabase.status === 'loading'}
-            className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-gray-950 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-all disabled:opacity-50'
-          >
-            {connectors.supabase.status === 'loading' ? (
-              <Loader2 size={14} className='animate-spin' />
-            ) : connectors.supabase.status === 'connected' ? (
-              <>
+          {connectors.supabase.status === 'connected' ? (
+            <div className='flex gap-2'>
+              <button
+                type='button'
+                onClick={connectSupabase}
+                className='flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
+              >
                 <ExternalLink size={14} /> Reconnect
-              </>
-            ) : (
-              <>
-                <Database size={14} /> Connect Supabase
-              </>
-            )}
-          </button>
+              </button>
+              <button
+                type='button'
+                onClick={() => disconnectConnector('supabase')}
+                disabled={disconnecting === 'supabase'}
+                className='flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-white/50 rounded-xl text-[13px] font-medium hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-all disabled:opacity-50'
+              >
+                {disconnecting === 'supabase' ? (
+                  <Loader2 size={14} className='animate-spin' />
+                ) : (
+                  <Unplug size={14} />
+                )}
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button
+              type='button'
+              onClick={connectSupabase}
+              disabled={connectors.supabase.status === 'loading'}
+              className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-gray-950 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-all disabled:opacity-50'
+            >
+              {connectors.supabase.status === 'loading' ? (
+                <Loader2 size={14} className='animate-spin' />
+              ) : (
+                <Database size={14} />
+              )}
+              Connect Supabase
+            </button>
+          )}
         </div>
       </div>
     </div>

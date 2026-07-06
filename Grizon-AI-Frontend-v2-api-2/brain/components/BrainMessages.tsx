@@ -102,7 +102,8 @@ const normalizeClarificationQuestions = (raw: any) => {
 export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesProps) {
     const router = useRouter();
     const pathname = usePathname();
-    const { isAuthenticated, openAuthModal, user, isLoading: isAuthLoading } = useAuth();
+    const { isAuthenticated, openAuthModal, user, isLoading: isAuthLoading, getAccessToken } = useAuth();
+    const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
     const { currentConversationId, conversations, addConversation, touchConversation, fetchConversations, setConversationId } = useConversations();
     const { selectedModel } = useModels();
     const { balance, refreshBalance } = useCredits();
@@ -184,6 +185,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const [buildTick, setBuildTick] = useState(0);
     const buildSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const resumeAfterReloadRef = useRef(false);
+    const [supabaseConnected, setSupabaseConnected] = useState(false);
+    const [showSupabasePrompt, setShowSupabasePrompt] = useState(false);
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
 
@@ -443,7 +446,19 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 status: 'done',
             },
         ]);
-    }, [appendBuildActivities]);
+        // Check Supabase connection status after build completes
+        const token = getAccessToken?.() ?? '';
+        fetch(`${BRAIN_URL}/connect-supabase/status${token ? `?token=${encodeURIComponent(token)}` : ''}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data && !data.connected) {
+                    setShowSupabasePrompt(true);
+                } else {
+                    setSupabaseConnected(true);
+                }
+            })
+            .catch(() => {});
+    }, [appendBuildActivities, getAccessToken]);
 
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
@@ -2178,6 +2193,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                                     handleSendMessage("I reject this plan. Let's rethink the strategy.", 0.3);
                                                                 }
                                                             }}
+                                                            showSupabasePrompt={isBuildMode && index === messages.length - 1 && showSupabasePrompt && !supabaseConnected}
+                                                            supabaseWorkspaceId={buildJob?.jobId}
+                                                            onSupabaseConnected={() => { setSupabaseConnected(true); setShowSupabasePrompt(false); }}
                                                         />
                                                     </React.Fragment>
                                                 );
