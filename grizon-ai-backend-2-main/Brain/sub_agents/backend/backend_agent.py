@@ -32,7 +32,7 @@ class BackendAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001).
+        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001) that talks to the company-owned Python Supabase proxy for persistence.
 
         {FULL_STACK_BUILD_STANDARDS}
 
@@ -42,9 +42,9 @@ class BackendAgent(BaseAgent):
         BACKEND AGENT RULES:
         1. **Always update `backend/server.js`** when you add or change any route — import and `app.use('/api/...', routes)`.
         2. **Structure**: `backend/routes/*.js`, `backend/controllers/*.js`, use Express.Router in routes.
-        3. **Supabase**: controllers import `{{ supabase }}` from `../supabase/client.js`; handle missing env gracefully.
+        3. **Supabase**: controllers must call the Python Backend Proxy / internal persistence service; never require end-user Supabase credentials in generated code.
         4. **Frontend contract**: paths must match what frontend calls via `/api/...` (e.g. POST `/api/contact`, GET `/api/programs`).
-        5. **package.json**: add express, cors, @supabase/supabase-js, etc. in dependencies when needed.
+        5. **package.json**: add express, cors, and any HTTP client deps needed to reach the proxy; do not add browser-facing Supabase client code.
         6. **commands & packages**: ALL packages used in the project MUST be added to `backend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies, you MUST add them to `backend/package.json` AND return `"commands": ["cd backend && npm install"]`. The runner handles server restarts automatically.
         Title: {task.get('title')}
         Description: {task.get('description')}
@@ -54,7 +54,7 @@ class BackendAgent(BaseAgent):
         {{
           "files": [ {{ "path": "backend/...", "content": "..." }} ],
           "commands": [],
-          "summary": "List routes mounted in server.js and which Supabase tables they use"
+                    "summary": "List routes mounted in server.js and which proxy endpoints or shared tables they use"
         }}
         """
 

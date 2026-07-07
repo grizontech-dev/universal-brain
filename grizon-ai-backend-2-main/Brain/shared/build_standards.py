@@ -24,31 +24,33 @@ FULL_STACK_BUILD_STANDARDS = """
 ### Backend (`backend/`)
 - Express on port **3001**. Every new `routes/*.js` MUST be imported and mounted in `backend/server.js`:
   `app.use('/api/contact', contactRoutes);`
-- Controllers use `import { supabase } from '../supabase/client.js'` when persisting data (with graceful fallback if env missing).
+- Controllers must persist through the company-owned Python Supabase proxy; never ask users for their own Supabase credentials or expose database access in the browser.
 - JSON: `{ success: true, data }` or `{ success: false, error: "..." }`.
 - List all new deps in `backend/package.json` (Runner runs npm install).
 
 ### Database / Supabase
+- Use the Shared Table + JSONB Data Matrix Pattern for Supabase-backed features: a shared tenant-scoped table with JSONB payload fields, not one table per user.
 - Schema as `backend/supabase/*.sql` files only (no Supabase CLI commands).
-- Tables referenced in controllers must exist in SQL files.
-- Document required env vars in summary: `SUPABASE_URL`, `SUPABASE_ANON_KEY` in `backend/.env`.
+- Tables referenced in controllers must exist in SQL files, and indexes must reflect tenant filters plus JSONB search paths.
+- Keep payloads sparse and prune large blobs to respect the 500 MB free-tier storage constraint.
+- Document only server-side, company-owned env vars in summaries; never request user Supabase credentials.
 
 ### Task order (Todo Agent)
 1. Database schema (if needed)
 2. Backend routes + controllers + server.js mounts
 3. Frontend components + pages
-4. **Integration task** — rewrite App.jsx + verify server.js mounts + wire forms to API
+4. **Integration task** — rewrite App.jsx + verify server.js mounts + wire forms to API through the Python Supabase proxy
 5. Runner (install & start servers) — never duplicate in other tasks
 """
 
 INTEGRATION_TASK_TEMPLATE = {
-    "id": "t-integration",
-    "title": "Wire App, Router, Backend & Supabase",
-    "description": (
+  "id": "t-integration",
+  "title": "Wire App, Router, Backend Proxy & Company Supabase",
+  "description": (
         "MANDATORY: (1) Rewrite frontend/src/App.jsx — import ALL components from "
         "frontend/src/components/, set up react-router-dom Routes matching Navbar links, "
         "remove ALL template boilerplate. (2) Ensure backend/server.js mounts every routes/*.js "
-        "module under /api/*. (3) Connect forms via apiPost to backend endpoints that use Supabase. "
+    "module under /api/*. (3) Connect forms via apiPost to backend endpoints that use the Python Supabase proxy. "
         "(4) Delete frontend/src/App.tsx if it exists. (5) Add react-router-dom to frontend/package.json if missing."
     ),
     "category": "frontend",

@@ -1,6 +1,7 @@
 import os
 import sys
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,6 +21,8 @@ from Brain.modules.chat.controller import router as brain_chat_router
 from Brain.modules.conversations.controller import brain_conversations_router
 from Brain.memory.debug import router as brain_memory_router
 from Brain.modules.projects.controller import router as brain_projects_router
+from Brain.modules.supabase_proxy.controller import router as supabase_proxy_router
+from Brain.modules.supabase_proxy.service import proxy_client
 try:
     from Brain.modules.sandbox.controller import router as brain_sandbox_router
 except ModuleNotFoundError:
@@ -29,7 +32,17 @@ except ModuleNotFoundError:
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await proxy_client.init_client()
+    await proxy_client.start_housekeeping()
+    try:
+        yield
+    finally:
+        await proxy_client.close_client()
+
+
+app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -57,6 +70,7 @@ app.include_router(brain_chat_router)
 app.include_router(brain_conversations_router)
 app.include_router(brain_projects_router)
 app.include_router(brain_memory_router)
+app.include_router(supabase_proxy_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)
 
