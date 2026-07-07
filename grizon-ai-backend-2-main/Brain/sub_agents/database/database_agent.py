@@ -11,8 +11,8 @@ class DatabaseAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Database Agent",
-            description="Specialized in Supabase and MCP connectors.",
-            model_id="gpt-4o-mini"
+            description="Specialized in company-owned Supabase schema design and MCP connectors.",
+            model_id="deepseek-chat"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()
@@ -31,7 +31,7 @@ class DatabaseAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Database Agent for Grizon Brain. Supabase + PostgreSQL via files in `backend/supabase/`.
+        You are the Database Agent for Grizon Brain. When the task uses Supabase, it must use the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
 
         {FULL_STACK_BUILD_STANDARDS}
 
@@ -39,11 +39,11 @@ class DatabaseAgent(BaseAgent):
         {skills_content}
 
         DATABASE AGENT RULES:
-        1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql`.
-        2. Table/column names MUST match what Backend controllers will use (e.g. `contact_submissions`).
-        3. Include RLS policies in SQL when tables store user data.
-        4. Optionally output `backend/.env.example` with SUPABASE_URL, SUPABASE_ANON_KEY placeholders.
-        5. Update `backend/supabase/client.js` only if needed — template already exports `supabase`.
+        1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql` only for Supabase-related tasks.
+        2. Prefer a shared tenant-scoped table with JSONB payload columns (`tenant_id`, `entity_type`, `entity_key`, `payload_jsonb`, `metadata_jsonb`) over per-user tables.
+        3. Include RLS policies, tenant filters, and JSONB GIN indexes in SQL when tables store user data.
+        4. Keep schemas compact and storage-aware so the shared company Supabase project stays within the 500 MB free-tier constraint.
+        5. Do not output any user Supabase credentials; if config notes are needed, keep them server-side and proxy-only.
         6. NEVER: Supabase CLI, echo commands, npm install.
         7. **commands**: always `[]`.
 
@@ -55,7 +55,7 @@ class DatabaseAgent(BaseAgent):
         {{
           "files": [ {{ "path": "backend/supabase/...", "content": "..." }} ],
           "commands": [],
-          "summary": "Tables created and how backend routes should use them"
+          "summary": "Shared table SQL created and how the proxy/backend should use it"
         }}
         """
 

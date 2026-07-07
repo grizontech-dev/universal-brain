@@ -8,7 +8,7 @@ backend/
   server.js          # mount all routes here
   routes/*.js        # Express.Router per feature
   controllers/*.js   # business logic
-  supabase/client.js # Supabase client (from template)
+  supabase/client.js # optional local helper only; persistence should go through the Python proxy
   supabase/*.sql     # schema (files only, no CLI)
   package.json
 ```
@@ -21,8 +21,11 @@ app.use('/api/contact', contactRoutes);
 ```
 
 ## Supabase
-- `import {{ supabase }} from './supabase/client.js'`
-- Env: `SUPABASE_URL`, `SUPABASE_ANON_KEY` in `backend/.env` (document in summary, do not run echo/cp in commands)
+- When a feature uses Supabase, it must use the fixed company-owned Supabase project through the Python Backend Proxy API.
+- Do not ask end users for Supabase credentials or connection details.
+- The proxy must stamp each request with a validated tenant_id from the server session, never from the frontend.
+- The shared database shape should be a single tenant-scoped vault table with JSONB payload columns, RLS, and GIN indexes for JSONB search.
+- Keep payloads flat and compact so the shared free-tier Supabase project stays within the 500 MB limit.
 
 ## API contract
 - JSON responses: `{ success: true, data }` or `{ success: false, error: "message" }`
