@@ -491,6 +491,8 @@ class BrainChatService:
         
         conv_id, _ = conversation_service.ensure_brain_persistence(initial_state)
         initial_state["conversation_id"] = conv_id
+        if conv_id in self.STOP_REGISTRY:
+            self.STOP_REGISTRY.remove(conv_id)
         initial_state["messages"] = conversation_service.get_messages(conv_id)
 
         # Generate title for new conversation based on first message
@@ -602,7 +604,13 @@ class BrainChatService:
                 
                 last_index = -1
                 stuck_count = 0
+                stopped = False
                 while True:
+                    if conv_id in self.STOP_REGISTRY:
+                        yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
+                        stopped = True
+                        break
+
                     index = state.get("current_task_index", 0)
                     if index >= len(plan):
                         break
@@ -630,13 +638,18 @@ class BrainChatService:
                             todo_id=task.get("id")
                         )
                         task_log_ids[index] = log.id
-
+ 
                     # Emit task_started so UI shows live progress
                     current_task = plan[index] if index < len(plan) else {}
                     yield f"data: {json.dumps({'task_started': _sanitize_for_json({'current_task_index': index, 'total_tasks': len(plan), 'task_label': current_task.get('label', ''), 'plan': plan})})}\n\n"
                     
                     # Run builder for one task — stream each event
+                    stopped = False
                     async for ev in agent.execute(state):
+                        if conv_id in self.STOP_REGISTRY:
+                            yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
+                            stopped = True
+                            break
                         if isinstance(ev, dict):
                             if ev.get("execute_sandbox"):
                                 exe = ev["execute_sandbox"]
@@ -663,6 +676,9 @@ class BrainChatService:
                                 state.update(ev)
                         else:
                             state = ev
+
+                    if stopped:
+                        break
 
                     # Update session with current task progress
                     if mg:
@@ -714,7 +730,21 @@ class BrainChatService:
                             )
                         except RuntimeError:
                             pass
-                
+                if stopped or conv_id in self.STOP_REGISTRY:
+                    print(f"[Brain] Execution stopped by user. Bypassing Phase 3 (Runner). Index: {state.get('current_task_index', 0)}")
+                    conversation_service.save_message(
+                        conv_id, "ASSISTANT", state.get("report") or "Build execution stopped.",
+                        todo_list=list(plan),
+                        sandbox_job=state.get("sandbox_job"),
+                        metadata={
+                            "planContent": state.get("project_plan"),
+                            "agentStep": "execute_sandbox",
+                            "planApproved": True,
+                            "current_task_index": state.get("current_task_index", 0),
+                        }
+                    )
+                    return
+
                 # Phase 3: Runner — deploy runs as detached background task
                 runner = RunnerAgent()
                 runner_state = await runner.execute(state)

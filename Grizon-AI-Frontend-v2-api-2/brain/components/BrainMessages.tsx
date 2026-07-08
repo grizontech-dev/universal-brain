@@ -447,6 +447,24 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
+            if (event.status === 'stopped' || event.stopped) {
+                setIsLoading(false);
+                setAgentStep('idle');
+                setIsBuildSyncing(false);
+                useExecutionStore.getState().setStreamingMessage(null);
+                sendingRef.current = false;
+                appendBuildActivities([
+                    {
+                        id: `act-stopped-${Date.now()}`,
+                        type: 'narration',
+                        label: 'Project generation stopped.',
+                        timestamp: Date.now(),
+                        status: 'done',
+                    },
+                ]);
+                return;
+            }
+
             if (event.create_tasks) {
                 const tasks = ((event.create_tasks as Record<string, unknown>).plan || []) as BuildTodoItem[];
                 if (tasks.length) {
@@ -553,8 +571,80 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         ]
     );
 
-    const resumeBrainAfterReload = useCallback(
+    const startResumeStream = useCallback(
         async (conversationId: string, framework: string, todos: BuildTodoItem[]) => {
+            if (isLoading) return;
+
+            setIsLoading(true);
+            setAgentStep('executing');
+            sendingRef.current = true;
+
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            abortControllerRef.current = new AbortController();
+
+            appendBuildActivities([
+                {
+                    id: `act-resume-stream-${Date.now()}`,
+                    type: 'narration',
+                    label: 'Resuming project generation...',
+                    timestamp: Date.now(),
+                    status: 'running',
+                },
+            ]);
+
+            try {
+                await brainApi.streamChat(
+                    {
+                        user_id: user?.id || 'anonymous',
+                        conversation_id: conversationId,
+                        content: '__RESUME_BUILD__',
+                        model_id: selectedModel?.id || 'deepseek-chat',
+                        plan_approved: true,
+                        resume_build: true,
+                        framework,
+                        temperature: 0.3,
+                        question_rounds: questionRounds,
+                    },
+                    (event) => {
+                        if (!event || typeof event !== 'object') return;
+                        ingestSandboxStreamEvent(event as Record<string, unknown>);
+                    },
+                    abortControllerRef.current?.signal
+                );
+            } catch (e) {
+                console.error('[Brain] resume stream failed:', e);
+                setMessages(prev => [...prev, {
+                    id: `resume-stream-error-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build resume stream failed. The backend may be unavailable. Please try starting a new build.',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
+            } finally {
+                setIsLoading(false);
+                sendingRef.current = false;
+            }
+        },
+        [
+            user?.id,
+            selectedModel?.id,
+            questionRounds,
+            ingestSandboxStreamEvent,
+            setMessages,
+            appendBuildActivities,
+            isLoading,
+        ]
+    );
+
+    const handleResumeBuild = useCallback(async () => {
+        const convId = activeConvIdRef.current || currentConversationId;
+        if (!convId || isLoading) return;
+        await startResumeStream(convId, selectedFramework, buildTodos);
+    }, [currentConversationId, selectedFramework, buildTodos, startResumeStream, isLoading]);
+
+    const resumeBrainAfterReload = useCallback(
+        async (conversationId: string, framework: string, todos: BuildTodoItem[], autoStartStream = false) => {
             if (!conversationId || resumeAfterReloadRef.current) return;
             resumeAfterReloadRef.current = true;
 
@@ -591,9 +681,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     {
                         id: `act-resume-${payload.current_task_index}`,
                         type: 'narration',
-                        label: `Resuming build from task ${payload.current_task_index + 1}…`,
+                        label: `Restoring build state from task ${payload.current_task_index + 1}…`,
                         timestamp: Date.now(),
-                        status: 'running',
+                        status: 'done',
                     },
                 ]);
             }
@@ -618,64 +708,86 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             }
             window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
 
+            setIsBuildSyncing(false);
+            resumeAfterReloadRef.current = false;
+
             if (payload.build_complete) {
                 completeRunnerBuild();
                 return;
             }
 
-            if (!shouldStreamResumeBuild(todos, payload)) {
-                setIsBuildSyncing(false);
-                return;
-            }
-
-            setIsLoading(true);
-            setAgentStep('executing');
-            try {
-                await brainApi.streamChat(
-                    {
-                        user_id: user?.id || 'anonymous',
-                        conversation_id: conversationId,
-                        content: '__RESUME_BUILD__',
-                        model_id: selectedModel?.id || 'deepseek-chat',
-                        plan_approved: true,
-                        resume_build: true,
-                        framework,
-                        temperature: 0.3,
-                        question_rounds: questionRounds,
-                    },
-                    (event) => {
-                        if (!event || typeof event !== 'object') return;
-                        ingestSandboxStreamEvent(event as Record<string, unknown>);
-                    },
-                    abortControllerRef.current?.signal
-                );
-            } catch (e) {
-                console.error('[Brain] resume stream failed:', e);
-                setMessages(prev => [...prev, {
-                    id: `resume-stream-error-${Date.now()}`,
-                    role: 'agent',
-                    content: 'Build resume stream failed. The backend may be unavailable. Please try starting a new build.',
-                    timestamp: new Date().toLocaleTimeString()
-                }]);
-            } finally {
-                setIsLoading(false);
-                setIsBuildSyncing(false);
+            if (autoStartStream && shouldStreamResumeBuild(todos, payload)) {
+                void startResumeStream(conversationId, framework, normalized);
             }
         },
         [
-            user?.id,
-            selectedModel?.id,
-            questionRounds,
             appendBuildActivities,
             completeRunnerBuild,
-            ingestSandboxStreamEvent,
             setMessages,
+            startResumeStream,
         ]
     );
 
     useEffect(() => {
         resumeAfterReloadRef.current = false;
+
+        // Reset conversation and build specific states immediately to avoid stale closures and visual leaks
+        setMessages([]);
+        setIsBuildMode(false);
+        setBuildActivities([]);
+        setBuildTodos([]);
+        setBuildJob(null);
+        setBuildStartedAt(null);
+        setBuildFinishedAt(null);
+        setIsBuildSyncing(false);
+        setIsLoading(false);
+        setAgentStep('idle');
+        setActiveSandboxJob(null);
+        setIsEditorOpen(false);
     }, [currentConversationId]);
+
+    useEffect(() => {
+        const prevConvId = activeConvIdRef.current;
+        if (prevConvId && prevConvId !== currentConversationId) {
+            if (sendingRef.current) {
+                if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                    abortControllerRef.current = null;
+                }
+                void brainApi.stopChat(prevConvId).catch(err => {
+                    console.error('[Brain] Failed to stop chat for prev conv:', err);
+                });
+                sendingRef.current = false;
+                setIsLoading(false);
+            }
+        }
+        activeConvIdRef.current = currentConversationId;
+    }, [currentConversationId]);
+
+    useEffect(() => {
+        const handleUnload = () => {
+            if (sendingRef.current) {
+                const convId = activeConvIdRef.current;
+                if (convId && convId !== 'new') {
+                    const url = `/api/brain/chat/stop?conversation_id=${encodeURIComponent(convId)}`;
+                    navigator.sendBeacon(url);
+                }
+            }
+        };
+
+        window.addEventListener('beforeunload', handleUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleUnload);
+            if (sendingRef.current) {
+                const convId = activeConvIdRef.current;
+                if (convId && convId !== 'new') {
+                    void brainApi.stopChat(convId).catch(err => {
+                        console.error('[Brain] Failed to stop chat during unmount:', err);
+                    });
+                }
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (isBuildMode && buildTodos.length > 0 && isBuildTodosComplete(buildTodos)) {
@@ -1075,7 +1187,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 void resumeBrainAfterReload(
                                     currentConversationId,
                                     jobData.framework || selectedFramework,
-                                    todosForResume
+                                    todosForResume,
+                                    false
                                 );
                             }
                         }
@@ -1881,7 +1994,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         }
     };
 
-    const handleStopChat = () => {
+    const handleStopChat = useCallback(async () => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
@@ -1889,7 +2002,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         setIsLoading(false);
         setAgentStep('idle');
         useExecutionStore.getState().setStreamingMessage(null);
-    };
+        sendingRef.current = false;
+
+        const convId = activeConvIdRef.current || currentConversationId;
+        if (convId && convId !== 'new') {
+            try {
+                await brainApi.stopChat(convId);
+            } catch (err) {
+                console.error('[Brain] Failed to stop execution on backend:', err);
+            }
+        }
+    }, [currentConversationId]);
 
     const handleRegenerate = async (msgId: string) => {
         if (isLoading) return;
@@ -2241,23 +2364,39 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                         />
                                         {isLoading ? (
                                             <button
-                                                onClick={handleStopChat}
-                                                className="w-10 h-10 rounded-full transition-all flex items-center justify-center bg-white text-black hover:bg-white/80"
+                                                type="button"
+                                                onClick={() => void handleStopChat()}
+                                                className="w-10 h-10 rounded-full transition-all flex items-center justify-center bg-red-600 text-white hover:bg-red-700 shadow-[0_0_15px_rgba(220,38,38,0.3)] animate-pulse shrink-0"
+                                                title="Stop execution"
                                             >
-                                                <Square size={16} fill="currentColor" />
+                                                <Square size={14} fill="currentColor" />
                                             </button>
                                         ) : (
-                                            <button
-                                                id="brain-send-btn"
-                                                onClick={() => handleSendMessage()}
-                                                disabled={!input.trim()}
-                                                className={`w-10 h-10 rounded-full transition-all flex items-center justify-center ${input.trim()
-                                                    ? 'bg-white text-black'
-                                                    : 'bg-white/5 text-white/20'
-                                                    }`}
-                                            >
-                                                <ArrowRight size={20} />
-                                            </button>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                {isBuildMode && buildTodos.length > 0 && !isBuildTodosComplete(buildTodos) && !input.trim() && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleResumeBuild()}
+                                                        className="px-4 h-10 rounded-full bg-[#976df8] text-white hover:bg-[#8254e5] transition-all flex items-center gap-2 text-xs font-black uppercase tracking-wider shadow-[0_0_15px_rgba(151,109,248,0.2)]"
+                                                        title="Continue project generation"
+                                                    >
+                                                        <Activity size={14} className="animate-pulse" />
+                                                        <span>Continue</span>
+                                                    </button>
+                                                )}
+                                                <button
+                                                    id="brain-send-btn"
+                                                    type="button"
+                                                    onClick={() => handleSendMessage()}
+                                                    disabled={!input.trim()}
+                                                    className={`w-10 h-10 rounded-full transition-all flex items-center justify-center ${input.trim()
+                                                        ? 'bg-white text-black hover:bg-white/80'
+                                                        : 'bg-white/5 text-white/20'
+                                                        }`}
+                                                >
+                                                    <ArrowRight size={20} />
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
                                 </div>
