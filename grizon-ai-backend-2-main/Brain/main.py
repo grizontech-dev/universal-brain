@@ -1,6 +1,7 @@
 import os
 import sys
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,6 +27,8 @@ from Brain.modules.projects.controller import router as brain_projects_router
 from Brain.modules.projects.decisions import router as brain_decisions_router
 from Brain.modules.projects.execution import router as brain_execution_router
 from Brain.modules.projects.artifacts import router as brain_artifacts_router
+from Brain.modules.supabase_proxy.controller import router as supabase_proxy_router
+from Brain.modules.supabase_proxy.service import proxy_client
 try:
     from Brain.modules.sandbox.controller import router as brain_sandbox_router
 except ModuleNotFoundError:
@@ -46,8 +49,14 @@ async def lifespan(app: FastAPI):
         print("[STARTUP] Sandbox cleanup loop started (TTL=30min)")
     except Exception as e:
         print(f"[STARTUP] Sandbox cleanup not started: {e}")
-    yield
-    # Shutdown: nothing to clean up
+
+    # Startup: Supabase proxy
+    await proxy_client.init_client()
+    await proxy_client.start_housekeeping()
+    try:
+        yield
+    finally:
+        await proxy_client.close_client()
 
 app = FastAPI(title="Grizon AI: Project Brain Backend", version="2.5.2", lifespan=lifespan)
 
@@ -82,6 +91,7 @@ app.include_router(brain_artifacts_router)
 app.include_router(brain_memory_router)
 app.include_router(supabase_connector_router)
 app.include_router(github_connector_router)
+app.include_router(supabase_proxy_router)
 if brain_sandbox_router:
     app.include_router(brain_sandbox_router)
 

@@ -79,6 +79,7 @@ class PlannerAgent(BaseAgent):
         3. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
         4. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
         5. Plan for preview-visible UI — not isolated component files.
+        6. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
         """
 
         messages = [SystemMessage(content=system_prompt)]
@@ -101,8 +102,8 @@ class PlannerAgent(BaseAgent):
         if not isinstance(plan, dict) or plan.get("error"):
             plan = {
                 "project_name": "New Project",
-                "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Supabase\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
-                "tech_stack": ["React", "Tailwind", "Node", "Express", "Supabase"],
+                "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
+                "tech_stack": ["React", "Tailwind", "Node", "Express", "Python Proxy", "Supabase"],
                 "status": "proposed"
             }
 

@@ -131,6 +131,24 @@ async def status(current_user=Depends(get_current_user)):
     return {"connected": connector is not None and connector.config is not None, "has_token": has_token, "repo": repo_info, "last_workspace_id": last_workspace_id}
 
 
+@router.post("/disconnect")
+async def disconnect_github(current_user=Depends(get_current_user)):
+    from Brain.config.database import SessionLocal
+    from Brain.modules.connectors.supabase.service import Connector
+    db = SessionLocal()
+    try:
+        connector = db.query(Connector).filter(
+            Connector.userId == current_user.id,
+            Connector.type == "github"
+        ).first()
+        if connector:
+            db.delete(connector)
+            db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
 @router.post("/push-changes")
 async def push_changes(req: dict, current_user=Depends(get_current_user)):
     try:

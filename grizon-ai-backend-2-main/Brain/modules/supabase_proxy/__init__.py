@@ -1,0 +1,1 @@
+"""Supabase proxy routes for the company-owned shared vault."""

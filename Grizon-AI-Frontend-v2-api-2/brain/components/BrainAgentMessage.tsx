@@ -8,6 +8,7 @@ import BrainTodoCanvas from './BrainTodoCanvas';
 import BrainClarificationCard from './BrainClarificationCard';
 import BrainAgentStatus, { AgentStep } from './BrainAgentStatus';
 import BrainBuildActivityFeed from './BrainBuildActivityFeed';
+import BrainSupabasePrompt from './BrainSupabasePrompt';
 import type { BuildActivity, BuildTodoItem } from '../lib/buildActivity';
 
 export interface BrainAgentMessageProps {
@@ -38,6 +39,9 @@ export interface BrainAgentMessageProps {
   buildActivities?: BuildActivity[];
   buildTodos?: BuildTodoItem[];
   isBuildSyncing?: boolean;
+  showSupabasePrompt?: boolean;
+  supabaseWorkspaceId?: string;
+  onSupabaseConnected?: () => void;
 }
 
 export default function BrainAgentMessage({
@@ -64,6 +68,9 @@ export default function BrainAgentMessage({
   buildActivities,
   buildTodos,
   isBuildSyncing,
+  showSupabasePrompt = false,
+  supabaseWorkspaceId,
+  onSupabaseConnected,
 }: BrainAgentMessageProps) {
   const [isCopied, setIsCopied] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -151,13 +158,23 @@ export default function BrainAgentMessage({
           {/* Build Activity Feed (Inline v0 style) */}
           {(buildActivities !== undefined || buildTodos !== undefined) && (
              <div className="mt-4 pb-2 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                 <BrainBuildActivityFeed 
-                     activities={buildActivities || []} 
-                     todos={buildTodos || []} 
-                     isSyncing={isBuildSyncing} 
-                     className="bg-transparent border border-white/[0.05] rounded-xl overflow-hidden" 
+                 <BrainBuildActivityFeed
+                     activities={buildActivities || []}
+                     todos={buildTodos || []}
+                     isSyncing={isBuildSyncing}
+                     className="bg-transparent border border-white/[0.05] rounded-xl overflow-hidden"
                  />
              </div>
+          )}
+
+          {/* Supabase Connection Prompt (shown after build completes) */}
+          {showSupabasePrompt && (
+            <div className="mt-4 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
+              <BrainSupabasePrompt
+                workspaceId={supabaseWorkspaceId}
+                onConnected={onSupabaseConnected}
+              />
+            </div>
           )}
           
 

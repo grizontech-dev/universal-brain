@@ -132,10 +132,10 @@ class TodoAgent(BaseAgent):
         - Break down large frontend features into smaller, granular tasks (max 2-3 components per task). Do NOT group all frontend components into a single task.
 
         REQUIRED TASK ORDER (typical full-stack landing):
-        1. **database** — Supabase SQL schema in `backend/supabase/` (if project needs persistence).
-        2. **backend** — Express routes, controllers, mount all routes in `server.js`.
+        1. **database** — Shared Supabase schema in `backend/supabase/` using the Shared Table + JSONB Data Matrix Pattern (if project needs persistence).
+        2. **backend** — Express routes, controllers, and the Python Backend Proxy integration; mount all routes in `server.js`.
         3. **frontend** — Components, pages, Tailwind styling (Navbar, Hero, Features, Contact, etc.).
-        4. **frontend** — "Wire App, Router, Backend & Supabase" — rewrite `App.jsx`, react-router-dom, api.js forms, verify server.js mounts (acceptance: preview shows full site, not template demo).
+        4. **frontend** — "Wire App, Router, Backend Proxy & Company Supabase" — rewrite `App.jsx`, react-router-dom, api.js forms, verify server.js mounts (acceptance: preview shows full site, not template demo).
         5. **runner** — last task only; title like "Runner: Install Dependencies & Start Servers".
 
         RULES:
@@ -174,19 +174,19 @@ class TodoAgent(BaseAgent):
             tasks = [
                 {
                     "id": "t1",
-                    "title": "Supabase schema",
-                    "description": "SQL tables in backend/supabase/ for project data.",
+                    "title": "Shared Supabase schema",
+                    "description": "SQL tables in backend/supabase/ using the Shared Table + JSONB Data Matrix Pattern.",
                     "category": "database",
                     "skill_required": "database",
-                    "acceptance_criteria": "Schema file matches API needs",
+                    "acceptance_criteria": "Schema file matches API needs and keeps tenant data isolated",
                 },
                 {
                     "id": "t2",
-                    "title": "Express API routes",
-                    "description": "Routes, controllers, mount all in backend/server.js.",
+                    "title": "Express API routes + Python proxy",
+                    "description": "Routes, controllers, and the Python Backend Proxy integration mounted in backend/server.js.",
                     "category": "backend",
                     "skill_required": "backend",
-                    "acceptance_criteria": "All /api/* routes mounted in server.js",
+                    "acceptance_criteria": "All /api/* routes mounted in server.js and persistence flows through the proxy",
                 },
                 {
                     "id": "t3",
@@ -198,8 +198,8 @@ class TodoAgent(BaseAgent):
                 },
                 {
                     "id": "t4",
-                    "title": "Wire App, Router, Backend & Supabase",
-                    "description": "Rewrite App.jsx, react-router-dom, api.js forms, server.js mounts.",
+                    "title": "Wire App, Router, Backend Proxy & Company Supabase",
+                    "description": "Rewrite App.jsx, react-router-dom, api.js forms, and backend proxy wiring.",
                     "category": "frontend",
                     "skill_required": "integration",
                     "acceptance_criteria": "Preview shows full site, not template demo",

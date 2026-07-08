@@ -1096,18 +1096,18 @@ export default function BrainEditorCanvas({
                                 )}
                             </div>
                         ) : viewMode === 'preview' ? (
-                            <div className="flex-1 bg-[#121212] flex flex-col min-h-0 overflow-hidden">
+                            <div className="flex-1 bg-white flex flex-col min-h-0 overflow-hidden">
                                 {/* BROWSER ADDRESS BAR */}
-                                <div className="h-[40px] border-b border-white/5 flex items-center px-3 bg-[#0a0a0a] shrink-0 gap-3">
+                                <div className="h-[40px] border-b border-gray-200 flex items-center px-3 bg-gray-50 shrink-0 gap-3">
                                     <div className="flex items-center gap-1">
-                                        <button className="p-1 text-white/30 hover:text-white transition-colors"><ArrowLeft size={14} /></button>
-                                        <button className="p-1 text-white/30 hover:text-white transition-colors"><ArrowRight size={14} /></button>
-                                        <button className="p-1 text-white/30 hover:text-white transition-colors"><RotateCw size={14} /></button>
+                                        <button className="p-1 text-gray-400 hover:text-gray-600 transition-colors"><ArrowLeft size={14} /></button>
+                                        <button className="p-1 text-gray-400 hover:text-gray-600 transition-colors"><ArrowRight size={14} /></button>
+                                        <button className="p-1 text-gray-400 hover:text-gray-600 transition-colors"><RotateCw size={14} /></button>
                                     </div>
 
-                                    <div className="flex-1 max-w-[600px] h-7 bg-white/[0.03] border border-white/5 rounded-md flex items-center px-3 gap-2 group focus-within:border-white/20 transition-all">
-                                        <Shield size={12} className="text-white/20 group-hover:text-white/40" />
-                                        <span className="text-[12px] text-white/60 select-none truncate">
+                                    <div className="flex-1 max-w-[600px] h-7 bg-white border border-gray-200 rounded-md flex items-center px-3 gap-2 group transition-all">
+                                        <Shield size={12} className="text-gray-400" />
+                                        <span className="text-[12px] text-gray-500 select-none truncate">
                                             {previewUrl ? previewUrl.replace(/^https?:\/\//, '').slice(0, 48) : 'Waiting for Sandbox (port 9999)…'}
                                         </span>
                                     </div>
@@ -1123,16 +1123,16 @@ export default function BrainEditorCanvas({
                                     {showPreviewIframe ? (
                                         <PreviewIframe url={previewUrl} sessionId={buildJobId || jobId || undefined} />
                                     ) : buildComplete && !hasLiveFrontendPreview ? (
-                                        <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50 p-8 text-center">
+                                        <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
                                             <Loader2 size={32} className="text-[#976df8] animate-spin" />
-                                            <p className="text-sm font-medium text-white/80">Starting frontend dev server on port 9999…</p>
-                                            <p className="text-xs text-white/40 max-w-md">The remote sandbox is installing dependencies and starting the server. This may take a moment.</p>
+                                            <p className="text-sm font-medium text-gray-700">Starting frontend dev server on port 9999…</p>
+                                            <p className="text-xs text-gray-400 max-w-md">The remote sandbox is installing dependencies and starting the server. This may take a moment.</p>
 
-                                            <div className="mt-6 bg-black/40 rounded-lg p-3 w-full max-w-lg text-left text-[11px] font-mono text-white/50 border border-white/5 shadow-inner">
+                                            <div className="mt-6 bg-gray-100 rounded-lg p-3 w-full max-w-lg text-left text-[11px] font-mono text-gray-500 border border-gray-200">
                                                 {recentTerminalLines.length > 0 ? recentTerminalLines.map((line, i) => (
                                                     <div key={i} className="truncate">{line.replace(/\x1b\[[0-9;]*m/g, '')}</div>
                                                 )) : (
-                                                    <div className="animate-pulse">Waiting for terminal output...</div>
+                                                    <div className="animate-pulse text-gray-400">Waiting for terminal output...</div>
                                                 )}
                                             </div>
                                         </div>
