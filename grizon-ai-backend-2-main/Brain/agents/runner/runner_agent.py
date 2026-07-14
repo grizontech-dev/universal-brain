@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.sandbox_mcp_service import (
     get_sandbox_mcp_service,
@@ -9,21 +10,23 @@ from Brain.services.websocket_manager import ws_manager
 import json
 import time
 
+LOG = "[RUNNER]"
 
 class RunnerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Runner",
             description="Deploys the built project to the remote sandbox MCP server.",
-            model_id="gpt-4o-mini"
+            model_id="gpt-4o"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("current_job_id")
-        print(f"[RUNNER] execute called | session={session_id}")
+        print(f"{LOG} ═══ EXECUTE ═══ session={session_id} | tasks={len(state.get('plan', []))}", flush=True)
         if not session_id:
             state["run_report"] = "Error: No workspace found."
-            return state
+            yield state
+            return
 
         # Determine entrypoint — prefer frontend (Vite) over backend
         tasks = state.get("plan", [])
@@ -31,8 +34,32 @@ class RunnerAgent(BaseAgent):
         entrypoint = "frontend/src/main.jsx" if has_frontend else (state.get("sandbox_entrypoint") or "backend/server.js")
 
         sandbox_mcp = get_sandbox_mcp_service()
+        sandbox_available = False
         if not sandbox_mcp._initialized:
-            await sandbox_mcp.initialize()
+            try:
+                await asyncio.wait_for(sandbox_mcp.initialize(), timeout=15)
+                sandbox_available = True
+            except asyncio.TimeoutError:
+                print("[RUNNER] WARNING: Sandbox MCP init timed out after 15s. Skipping remote deploy.")
+            except Exception as e:
+                print(f"[RUNNER] WARNING: Sandbox MCP init failed: {e}. Skipping remote deploy.")
+        else:
+            sandbox_available = True
+
+        if not sandbox_available:
+            print("[RUNNER] Sandbox MCP unavailable — skipping remote deploy. Code is in workspace.")
+            state["status"] = "complete"
+            state["run_report"] = "Build complete. Code saved to workspace. Remote sandbox unavailable — preview not generated."
+            state["sandbox_job"] = state.get("sandbox_job") or {}
+            state["sandbox_job"]["runtime"] = "local"
+            state["sandbox_job"]["await_preview"] = False
+            state["execute_sandbox"] = {
+                "workspace_ops": [],
+                "status": "complete_local",
+                "progress_msg": "Build complete (local mode — no remote preview)",
+            }
+            yield state
+            return
 
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",
@@ -65,6 +92,15 @@ class RunnerAgent(BaseAgent):
         async def _background_deploy(_sid, _entrypoint, _state):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
+
+            # Kill any existing sandbox for this session to free port 9999
+            try:
+                print(f"[RUNNER] Cleaning up old sandbox for session={_sid}...")
+                await sandbox_mcp.delete_sandbox(str(_sid))
+                print(f"[RUNNER] Old sandbox cleaned for session={_sid}")
+            except Exception as cleanup_err:
+                print(f"[RUNNER] Cleanup failed (non-fatal): {cleanup_err}")
+
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(
                     str(_sid), _entrypoint
@@ -187,5 +223,5 @@ class RunnerAgent(BaseAgent):
             }),
         }
 
-        return state
-
+        yield state
+        return

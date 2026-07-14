@@ -10,7 +10,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../../../.env'))
 class QualityReviewer:
     def __init__(self):
         self.review_llm = ProviderRouter.get_model(
-            "gpt-4o-mini",
+            "gpt-4o",
             temperature=0
         )
 
@@ -48,14 +48,14 @@ class QualityReviewer:
                 name, ext = os.path.splitext(basename)
                 if ext in [".js", ".jsx", ".ts", ".tsx"]:
                     file_map[name] = content
-            
+
             # Find the root node
             root_node = None
             if "App" in file_map:
                 root_node = "App"
             elif "main" in file_map:
                 root_node = "main"
-                
+
             if not root_node:
                 # If they created components but forgot App.jsx, fail them!
                 has_components = any("components/" in f.get("path", "") or "pages/" in f.get("path", "") for f in files)
@@ -65,6 +65,85 @@ class QualityReviewer:
                         "feedback": "CRITICAL FAILURE: You created frontend components but DID NOT return `frontend/src/App.jsx`. You MUST include `App.jsx` in your files list to prove the components are properly imported and rendered. App.jsx is the single source of truth. Try again and include App.jsx."
                     }
 
+            # CRITICAL: Check React Router v6 syntax
+            if "App" in file_map:
+                app_content = file_map["App"]
+                if "<Switch>" in app_content or "Switch" in app_content:
+                    return {
+                        "passed": False,
+                        "feedback": "CRITICAL FAILURE: You used React Router v5 syntax `<Switch>`. You MUST use `<Routes>` (React Router v6). Replace `<Switch>` with `<Routes>` and close with `</Routes>`. Also change `component={Home}` to `element={<Home />}`. Try again with v6 syntax."
+                    }
+                if "component={" in app_content:
+                    return {
+                        "passed": False,
+                        "feedback": "CRITICAL FAILURE: You used React Router v5 syntax `component={Component}`. You MUST use `element={<Component />}` (React Router v6). Example: `<Route path=\"/\" element={<Home />} />` not `<Route path=\"/\" component={Home} />`. Try again."
+                    }
+
+            # CRITICAL: Check for placeholder components
+            placeholder_patterns = ["<h1>Home Page</h1>", "<h1>Home</h1>", "<p>Coming soon</p>", "<div>Todo App</div>"]
+            for name, content in file_map.items():
+                for pattern in placeholder_patterns:
+                    if pattern in content and len(content.strip().split("\n")) < 10:
+                        return {
+                            "passed": False,
+                            "feedback": f"CRITICAL FAILURE: `{name}.jsx` contains placeholder content `{pattern}`. Every component MUST have REAL UI with Tailwind CSS styling, not just a single heading. Add proper styling, sections, images, forms, etc. Try again with real content."
+                        }
+
+            # CRITICAL: Check for duplicate files across components/ and pages/
+            component_names = set()
+            pages_names = set()
+            for name, content in file_map.items():
+                for file in files:
+                    path = file.get("path", "")
+                    if file.get("path", "").startswith("frontend/src/components/") and name == os.path.splitext(os.path.basename(path))[0]:
+                        component_names.add(name)
+                    elif file.get("path", "").startswith("frontend/src/pages/") and name == os.path.splitext(os.path.basename(path))[0]:
+                        pages_names.add(name)
+            duplicates = component_names & pages_names
+            if duplicates:
+                return {
+                    "passed": False,
+                    "feedback": f"CRITICAL DUPLICATE FILE FAILURE: You created the same component(s) {duplicates} in BOTH `frontend/src/components/` AND `frontend/src/pages/`. This creates orphan files. Choose ONE directory per component type: pages/ for route pages, components/ for reusable UI blocks. Delete the duplicate and try again."
+                }
+            for name, content in file_map.items():
+                if "@supabase/supabase-js" in content:
+                    # Check if package.json includes it
+                    package_json = generated_content.get("files", [])
+                    for file in package_json:
+                        if file.get("path", "").endswith("package.json"):
+                            pkg_content = file.get("content", "")
+                            if "@supabase/supabase-js" not in pkg_content:
+                                return {
+                                    "passed": False,
+                                    "feedback": "CRITICAL FAILURE: You imported `@supabase/supabase-js` but it's NOT in package.json dependencies. Add `\"@supabase/supabase-js\": \"^2.45.0\"` to dependencies and return `\"commands\": [\"cd frontend && npm install\"]`."
+                                }
+
+            # CRITICAL: Check if axios is in package.json when axios is used
+            for name, content in file_map.items():
+                if "import axios" in content or "from 'axios'" in content or 'from "axios"' in content:
+                    package_json = generated_content.get("files", [])
+                    for file in package_json:
+                        if file.get("path", "").endswith("package.json"):
+                            pkg_content = file.get("content", "")
+                            if "axios" not in pkg_content:
+                                return {
+                                    "passed": False,
+                                    "feedback": "CRITICAL FAILURE: You imported `axios` but it's NOT in package.json dependencies. Add `\"axios\": \"^1.7.0\"` to dependencies and return `\"commands\": [\"cd frontend && npm install\"]`."
+                                }
+
+            # CRITICAL: Check if ALL imports in App.jsx are in file_map
+            if "App" in file_map:
+                app_content = file_map["App"]
+                import re
+                # Find all imports from local files
+                local_imports = re.findall(r"import\s+\w+\s+from\s+['\"]\.\/(?:components\/|pages\/|)(\w+)['\"]", app_content)
+                for imp in local_imports:
+                    if imp not in file_map and imp not in ["App", "main"]:
+                        return {
+                            "passed": False,
+                            "feedback": f"CRITICAL FAILURE: App.jsx imports `{imp}` but this file is NOT in your response. You MUST include ALL imported files. Either create `{imp}.jsx` or remove the import. Try again."
+                        }
+
             if root_node and len(file_map) > 1:
                 # Build adjacency list: node -> set of nodes it imports/mentions
                 graph = {node: set() for node in file_map.keys()}
@@ -72,7 +151,7 @@ class QualityReviewer:
                     for potential_dep in file_map.keys():
                         if node != potential_dep and potential_dep in content:
                             graph[node].add(potential_dep)
-                
+
                 # BFS Traversal
                 visited = set()
                 queue = [root_node]
@@ -83,7 +162,7 @@ class QualityReviewer:
                         for neighbor in graph[curr]:
                             if neighbor not in visited:
                                 queue.append(neighbor)
-                
+
                 # Identify true orphans
                 orphans = [node for node in file_map.keys() if node not in visited]
                 if orphans:

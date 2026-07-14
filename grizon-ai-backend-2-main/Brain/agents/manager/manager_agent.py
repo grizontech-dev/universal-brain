@@ -1,14 +1,17 @@
 from typing import Any, Dict, List
 import json
+import os
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage
+
+LOG = "[MANAGER]"
 
 class ManagerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Leader/Manager",
             description="Analyzes user intent, ensures context is complete, and coordinates the workflow.",
-            model_id="gpt-4o-mini"
+            model_id="gpt-4o"
         )
 
     def _build_rich_thought(self, prompt: str, analysis: dict, is_post_answers: bool = False) -> str:
@@ -75,6 +78,7 @@ class ManagerAgent(BaseAgent):
         - If clear → go to planner_agent
         """
         prompt = state.get("content", "")
+        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | rounds={state.get('question_rounds', 0)}", flush=True)
         history = state.get("messages", [])
         current_rounds = state.get("question_rounds", 0)
         is_post_answers = self._is_answering_questions(history)
@@ -155,7 +159,7 @@ class ManagerAgent(BaseAgent):
             re_eval_messages.append(HumanMessage(content=f"User answers: {user_answers}"))
 
             print(f"DEBUG: ManagerAgent re-evaluating post-answers with {self.model_id}")
-            response_content = await self.chat(re_eval_messages)
+            response_content = await self.chat(re_eval_messages, model_id=os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o"), max_tokens=600)
             analysis = self._format_json_response(response_content)
             print(f"DEBUG: ManagerAgent re-eval result: {json.dumps(analysis)[:200]}...")
 
@@ -219,7 +223,7 @@ class ManagerAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current User Input: {prompt}"))
 
         print(f"DEBUG: ManagerAgent requesting chat with model {self.model_id}")
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, model_id=os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o"), max_tokens=600)
         print(f"DEBUG: ManagerAgent raw response: {response_content[:200]}...")
         analysis = self._format_json_response(response_content)
         print(f"DEBUG: ManagerAgent parsed analysis: {json.dumps(analysis)[:200]}...")
@@ -248,4 +252,5 @@ class ManagerAgent(BaseAgent):
             state["next_agent"] = analysis.get("next_agent", "questions")
             state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
 
+        print(f"{LOG} → next_agent='{state['next_agent']}' | status='{state['status']}' | confidence={state.get('intent_confidence', 'N/A')}", flush=True)
         return state

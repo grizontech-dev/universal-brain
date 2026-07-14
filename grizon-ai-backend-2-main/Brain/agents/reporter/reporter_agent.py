@@ -4,13 +4,14 @@ from typing import Any, Dict, List
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage
 
+LOG = "[REPORTER]"
 
 class ReporterAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Reporter",
             description="Generates a final technical report based on the full execution state.",
-            model_id="gpt-4o-mini"
+            model_id="gpt-4o"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -24,6 +25,7 @@ class ReporterAgent(BaseAgent):
         """
         project_plan = state.get("project_plan", {})
         executed_tasks: List[Dict[str, Any]] = state.get("executed_tasks", [])
+        print(f"{LOG} ═══ EXECUTE ═══ project='{project_plan.get('project_name', 'N/A')}' | tasks_done={len(executed_tasks)}", flush=True)
         run_config = state.get("run_config", {})
         sandbox_id = state.get("current_job_id") or state.get("sandbox_id", "N/A")
         error_msg = state.get("error_msg", "")
@@ -34,10 +36,10 @@ class ReporterAgent(BaseAgent):
         for i, task in enumerate(executed_tasks, 1):
             task_entry = {
                 "order": i,
-                "title": task.get("task", "Unknown"),
+                "title": task.get("title", task.get("task", "Unknown")),
                 "category": task.get("category", "general"),
                 "status": task.get("status", "unknown"),
-                "summary": task.get("summary", ""),
+                "summary": task.get("summary", task.get("result", "")),
             }
             if task.get("error"):
                 task_entry["error"] = task.get("error")

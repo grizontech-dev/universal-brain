@@ -148,6 +148,7 @@ class BrainChatService:
     # --- Nodes ---
 
     async def node_manager(self, state: BrainState) -> Dict[str, Any]:
+        print("DEBUG: NODE [analyze_ingress] started", flush=True)
         if state.get("resume_build"):
             return {"status": "plan_approved", "plan_approved": True, "resume_build": True}
 
@@ -156,7 +157,15 @@ class BrainChatService:
             return {"status": "plan_approved", "plan_approved": True}
         
         # If there's an existing plan and it hasn't been approved, treat this input as feedback
-        if state.get("project_plan") and state.get("plan_approved") is False:
+        pp = state.get("project_plan")
+        if isinstance(pp, str):
+            try:
+                import json as _json
+                pp = _json.loads(pp)
+                state["project_plan"] = pp
+            except Exception:
+                pp = {}
+        if isinstance(pp, dict) and pp and state.get("plan_approved") is False:
             thoughts = f"The user provided feedback on the plan: '{state.get('content', '')}'. Updating the requirements and calling the **Planner Agent** to revise the technical roadmap."
             return {
                 "status": "ready_to_plan", 
@@ -167,41 +176,75 @@ class BrainChatService:
 
         agent = ManagerAgent()
         result = await agent.execute(state)
-        print("DEBUG: NODE [analyze_ingress] complete")
+        print(f"DEBUG: NODE [analyze_ingress] complete | next_agent={result.get('next_agent')} | status={result.get('status')}", flush=True)
         return result
 
     async def node_clarifier(self, state: BrainState) -> Dict[str, Any]:
-        print("DEBUG: NODE [recursive_clarify] started")
+        print("DEBUG: NODE [recursive_clarify] started", flush=True)
         agent = QuestionsAgent()
         state = await agent.execute(state)
         state["report"] = f"__CLARIFY__:{json.dumps(state.get('questions_data'))}"
-        print("DEBUG: NODE [recursive_clarify] complete")
+        print(f"DEBUG: NODE [recursive_clarify] complete | questions_count={len(state.get('questions_data', {}).get('questions', []))}", flush=True)
         return state
 
     async def node_planner(self, state: BrainState) -> Dict[str, Any]:
-        print("DEBUG: NODE [strategic_plan] started")
+        print("DEBUG: NODE [strategic_plan] started", flush=True)
         agent = PlannerAgent()
         state = await agent.execute(state)
         state["report"] = state.get("project_report")
-        print("DEBUG: NODE [strategic_plan] complete")
+        
+        # Safety: ensure project_plan is always a dict
+        pp = state.get("project_plan")
+        if isinstance(pp, str):
+            print(f"[CHAT-SERVICE] WARN: planner returned project_plan as str, parsing...", flush=True)
+            try:
+                import json as _json
+                state["project_plan"] = _json.loads(pp)
+            except Exception:
+                state["project_plan"] = {"markdown_plan": pp, "project_name": "Project"}
+        
+        plan = state.get("project_plan", {})
+        if not isinstance(plan, dict):
+            plan = {"project_name": "Project"}
+            state["project_plan"] = plan
+            
+        print(f"DEBUG: NODE [strategic_plan] complete | plan_name='{plan.get('project_name', 'N/A')}' | has_markdown={bool(plan.get('markdown_plan'))}", flush=True)
         return state
 
     async def node_todo(self, state: BrainState) -> Dict[str, Any]:
-        print("DEBUG: NODE [create_tasks] started")
+        print("DEBUG: NODE [create_tasks] started", flush=True)
+        
+        # Safety: ensure project_plan is a dict, not a string
+        pp = state.get("project_plan")
+        if isinstance(pp, str):
+            print(f"[CHAT-SERVICE] WARN: project_plan is str, attempting parse: {pp[:200]}", flush=True)
+            try:
+                import json as _json
+                state["project_plan"] = _json.loads(pp)
+            except Exception:
+                state["project_plan"] = {"markdown_plan": pp, "project_name": "Project"}
+            print(f"[CHAT-SERVICE] Fixed project_plan to dict: {type(state['project_plan']).__name__}", flush=True)
+        
         agent = TodoAgent()
         state = await agent.execute(state)
         # TodoAgent returns tasks in state['tasks'], but Builder expects state['plan']
         state["plan"] = state.get("tasks", [])
         state["report"] = f"✅ I've broken down the project into {len(state['plan'])} executable tasks. Starting the build process now..."
-        print("DEBUG: NODE [create_tasks] complete")
+        print(f"DEBUG: NODE [create_tasks] complete | plan_len={len(state['plan'])} | type(plan)={type(state['plan']).__name__}", flush=True)
+        print(f"DEBUG: NODE [create_tasks] state keys: {list(state.keys())}", flush=True)
         return state
 
     async def node_init_sandbox(self, state: BrainState) -> Dict[str, Any]:
-        """Initializes the sandbox MCP workspace."""
-        print("DEBUG: NODE [init_sandbox] started")
+        """Initializes the sandbox MCP workspace with graceful fallback."""
+        print(f"DEBUG: NODE [init_sandbox] started | conv={state.get('conversation_id')}", flush=True)
         sandbox_mcp = get_sandbox_mcp_service()
-        await sandbox_mcp.initialize()
-        sandbox_mcp.start_background_cleanup()
+        sandbox_available = False
+        try:
+            await sandbox_mcp.initialize()
+            sandbox_mcp.start_background_cleanup()
+            sandbox_available = True
+        except Exception as e:
+            print(f"WARNING: Sandbox MCP unavailable ({e}). Proceeding with local workspace only.", flush=True)
 
         if not state.get("current_job_id"):
             print(f"DEBUG: Creating workspace for conversation {state['conversation_id']}")
@@ -230,15 +273,17 @@ class BrainChatService:
             bootstrap_ops = apply_templates_to_workspace(job_id, framework)
             progress_msg = f"[TEMPLATE] Loaded express, supabase, and {framework} frontend template"
 
+        runtime = RUNTIME_SANDBOX_MCP if sandbox_available else "local"
         sandbox_job = {
             "job_id": job_id,
-            "runtime": RUNTIME_SANDBOX_MCP,
+            "runtime": runtime,
             "framework": framework,
-            "await_preview": True,
-            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}",
+            "await_preview": sandbox_available,
+            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}" if sandbox_available else None,
         }
 
-        sandbox_mcp.record_activity(str(job_id))
+        if sandbox_available:
+            sandbox_mcp.record_activity(str(job_id))
 
         template_activities = [
             {
@@ -264,7 +309,14 @@ class BrainChatService:
             },
         ]
 
-        print(f"DEBUG: NODE [init_sandbox] complete - Job: {job_id}, framework: {framework}")
+        sandbox_status = "building" if sandbox_available else "building_local"
+        report_msg = f"Sandbox workspace ready ({framework})."
+        if sandbox_available:
+            report_msg += " Express + Supabase + frontend template loaded."
+        else:
+            report_msg += " Running in local mode (remote sandbox unavailable)."
+
+        print(f"DEBUG: NODE [init_sandbox] complete - Job: {job_id}, framework: {framework}, sandbox_available={sandbox_available}")
         return {
             "current_job_id": job_id,
             "framework": framework,
@@ -274,11 +326,11 @@ class BrainChatService:
                 "workspace_ops": bootstrap_ops,
                 "activities": template_activities,
                 "plan": state.get("plan", []),
-                "status": "building",
-                "progress_msg": f"[TEMPLATE] Bootstrapped {framework} stack",
+                "status": sandbox_status,
+                "progress_msg": f"[TEMPLATE] Bootstrapped {framework} stack" + (" (local mode)" if not sandbox_available else ""),
             },
-            "status": "building",
-            "report": f"Sandbox workspace ready ({framework}). Express + Supabase + frontend template loaded.",
+            "status": sandbox_status,
+            "report": report_msg,
         }
 
     async def node_execute_sandbox(self, state: BrainState) -> Dict[str, Any]:
@@ -351,9 +403,12 @@ class BrainChatService:
         }
 
     async def node_runner(self, state: BrainState) -> Dict[str, Any]:
-        print("DEBUG: NODE [runner] started")
+        print(f"DEBUG: NODE [runner] started | session={state.get('current_job_id')}", flush=True)
         agent = RunnerAgent()
-        state = await agent.execute(state)
+        async for ev in agent.execute(state):
+            if isinstance(ev, dict):
+                state = ev
+        print(f"DEBUG: NODE [runner] complete | status={state.get('status')}", flush=True)
         
         sandbox_job = state.get("sandbox_job")
         runner_exe = state.get("execute_sandbox") or {}
@@ -533,65 +588,143 @@ class BrainChatService:
                 pass
 
         state = initial_state
+        # SAVE plan before Phase 1 — LangGraph may overwrite it during state updates
+        _saved_plan = list(state.get("plan", []))
+        _saved_plan_approved = state.get("plan_approved", False)
         try:
             # Phase 1: LangGraph workflow up to init_sandbox
-            async for event in self.workflow.astream(initial_state):
-                if initial_state["conversation_id"] in self.STOP_REGISTRY:
-                    yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
-                    break
+            try:
+                async for event in self.workflow.astream(initial_state):
+                    if initial_state["conversation_id"] in self.STOP_REGISTRY:
+                        yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
+                        break
 
-                yield f"data: {json.dumps(_sanitize_for_json(event))}\n\n"
+                    # Safety: ensure event is a dict before processing
+                    if not isinstance(event, dict):
+                        print(f"[CHAT-SERVICE] WARN: event is not a dict: {type(event).__name__} = {str(event)[:200]}", flush=True)
+                        continue
 
-                for node_name, node_data in event.items():
-                    initial_state.update(node_data)
-                    report = node_data.get("report") or node_data.get("progress_msg")
-                    if node_name == "init_sandbox":
-                        self._save_phase_message(conv_id, initial_state, node_name)
+                    yield f"data: {json.dumps(_sanitize_for_json(event))}\n\n"
 
-                    if report or node_name in ("recursive_clarify", "strategic_plan"):
-                        if node_name == "strategic_plan":
+                    for node_name, node_data in event.items():
+                        if isinstance(node_data, str):
+                            print(f"[CHAT-SERVICE] WARN: node_data is str for '{node_name}': {node_data[:200]}", flush=True)
+                            initial_state["report"] = node_data
+                            node_data = {"report": node_data}
+                        elif not isinstance(node_data, dict):
+                            print(f"[CHAT-SERVICE] WARN: unexpected node_data type for '{node_name}': {type(node_data).__name__}", flush=True)
+                            node_data = {}
+                        initial_state.update(node_data)
+                        # SAVE plan after every node update — plan is created by create_tasks node
+                        if initial_state.get("plan"):
+                            _saved_plan = list(initial_state["plan"])
+                            _saved_plan_approved = initial_state.get("plan_approved", False)
+                        report = node_data.get("report") or node_data.get("progress_msg")
+                        if node_name == "init_sandbox":
+                            self._save_phase_message(conv_id, initial_state, node_name)
+
+                        if report or node_name in ("recursive_clarify", "strategic_plan"):
+                            if node_name == "strategic_plan":
+                                leader_analysis = initial_state.get("leader_analysis") or {}
+                                thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
+                                if not thoughts:
+                                    thoughts = "Analyzing requirements and calling **Planner Agent** to create the technical roadmap."
+                            elif initial_state.get("next_agent") == "questions" or initial_state.get("status") == "needs_clarification":
+                                leader_analysis = initial_state.get("leader_analysis") or {}
+                                thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
+                                if not thoughts:
+                                    thoughts = "Calling Questions Agent to gather missing context..."
+                            else:
+                                thoughts = ""
+
+                            todo_list = initial_state.get("plan")
+                            sandbox_job = initial_state.get("sandbox_job")
                             leader_analysis = initial_state.get("leader_analysis") or {}
-                            thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
-                            if not thoughts:
-                                thoughts = "Analyzing requirements and calling **Planner Agent** to create the technical roadmap."
-                        elif initial_state.get("next_agent") == "questions" or initial_state.get("status") == "needs_clarification":
-                            leader_analysis = initial_state.get("leader_analysis") or {}
-                            thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
-                            if not thoughts:
-                                thoughts = "Calling Questions Agent to gather missing context..."
-                        else:
-                            thoughts = ""
-
-                        todo_list = initial_state.get("plan")
-                        sandbox_job = initial_state.get("sandbox_job")
-                        leader_analysis = initial_state.get("leader_analysis") or {}
-                        metadata = {
-                            "planContent": initial_state.get("project_plan"),
-                            "agentStep": node_name,
-                            "questions_data": initial_state.get("questions_data"),
-                            "planApproved": initial_state.get("plan_approved", False),
-                            "thoughts": thoughts,
-                            "current_task_index": initial_state.get("current_task_index", 0),
-                        }
-                        conversation_service.save_message(
-                            conv_id, "ASSISTANT", report or "",
-                            todo_list=todo_list if isinstance(todo_list, list) else None,
-                            sandbox_job=sandbox_job,
-                            metadata=metadata
+                            metadata = {
+                                "planContent": initial_state.get("project_plan"),
+                                "agentStep": node_name,
+                                "questions_data": initial_state.get("questions_data"),
+                                "planApproved": initial_state.get("plan_approved", False),
+                                "thoughts": thoughts,
+                                "current_task_index": initial_state.get("current_task_index", 0),
+                            }
+                            conversation_service.save_message(
+                                conv_id, "ASSISTANT", report or "",
+                                todo_list=todo_list if isinstance(todo_list, list) else None,
+                                sandbox_job=sandbox_job,
+                                metadata=metadata
+                            )
+                            if mg:
+                                import asyncio
+                                try:
+                                    asyncio.get_event_loop().create_task(
+                                        mg.short_term.append("assistant", report or "", node_name)
+                                    )
+                                except RuntimeError:
+                                    pass
+            except Exception as phase1_err:
+                print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+                print(f"[CHAT-SERVICE] ✖ Phase 1 error: {type(phase1_err).__name__}: {phase1_err}", flush=True)
+                import traceback
+                traceback.print_exc()
+                print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+                import traceback
+                traceback.print_exc()
+                if mg:
+                    try:
+                        _asyncio.get_event_loop().create_task(
+                            mg.session.update_workflow_state("error", str(phase1_err)[:200])
                         )
-                        if mg:
-                            import asyncio
-                            try:
-                                asyncio.get_event_loop().create_task(
-                                    mg.short_term.append("assistant", report or "", node_name)
-                                )
-                            except RuntimeError:
-                                pass
+                    except RuntimeError:
+                        pass
+                    mg.errors.record_error(str(phase1_err), state.get("framework", "unknown"), "runtime", {
+                        "description": str(phase1_err)
+                    })
 
-            # Phase 2: Stream execute_sandbox events individually if plan exists
+            print(f"[CHAT-SERVICE] ═══ PHASE 1 COMPLETE ═══ plan_len={len(state.get('plan', []))} plan_approved={state.get('plan_approved')}", flush=True)
+
+            # Phase 2: Run builder in background task (survives client disconnect)
             plan = state.get("plan", [])
+            # RESTORE plan if LangGraph lost it during state updates
+            if not plan and _saved_plan:
+                print(f"[CHAT-SERVICE] RESTORE: Plan was lost during Phase 1, restoring {len(_saved_plan)} tasks from pre-phase snapshot", flush=True)
+                plan = _saved_plan
+                state["plan"] = plan
+                state["plan_approved"] = _saved_plan_approved
+            # Also try loading from conversation messages if still empty
+            if not plan:
+                try:
+                    conv_id = state.get("conversation_id")
+                    if conv_id:
+                        msgs = conversation_service.get_messages(conv_id)
+                        for m in reversed(msgs):
+                            tl = m.get("todoList") or (m.get("metadata", {}) or {}).get("plan")
+                            if isinstance(tl, list) and len(tl) > 0:
+                                print(f"[CHAT-SERVICE] RESTORE: Loaded {len(tl)} tasks from conversation message", flush=True)
+                                plan = tl
+                                state["plan"] = plan
+                                state["plan_approved"] = True
+                                break
+                except Exception as restore_err:
+                    print(f"[CHAT-SERVICE] RESTORE failed: {restore_err}", flush=True)
             task_log_ids = {}
+            print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+            print(f"[CHAT-SERVICE] Phase 2 DEBUG: plan_type={type(plan).__name__} plan_len={len(plan)} plan_approved={state.get('plan_approved')} plan_approved_raw={state.get('plan_approved', 'MISSING')}", flush=True)
+            print(f"[CHAT-SERVICE] Phase 2 DEBUG: _saved_plan_len={len(_saved_plan)} _saved_plan_approved={_saved_plan_approved}", flush=True)
+            print(f"[CHAT-SERVICE] Phase 2 DEBUG: plan_truthy={bool(plan)} approved_truthy={bool(state.get('plan_approved', False))}", flush=True)
+            print(f"[CHAT-SERVICE] Phase 2: Building | plan_approved={state.get('plan_approved')} | tasks={len(plan)}", flush=True)
+            for i, t in enumerate(plan):
+                cat = t.get("category", "?")
+                title = t.get("title") or t.get("task") or f"Task {i+1}"
+                print(f"[CHAT-SERVICE]   [{i+1}/{len(plan)}] {cat}: {title}", flush=True)
+            print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
             if plan and state.get("plan_approved", False):
+                # Run builder in background task to survive client disconnect
+                import asyncio as _bgio
+                _bgio.get_event_loop().create_task(
+                    self._run_builder_background(state, plan, conv_id, mg)
+                )
+                print(f"[CHAT-SERVICE] Builder started as background task for {len(plan)} tasks", flush=True)
                 if mg:
                     import asyncio as _asyncio2
                     try:
@@ -602,6 +735,23 @@ class BrainChatService:
                         pass
                 agent = BuilderAgent()
                 
+<<<<<<< HEAD
+                last_completed_index = -1
+                retry_count = {}
+                MAX_RETRIES_PER_TASK = 1
+                MAX_TOTAL_ITERATIONS = len(plan) * 3  # Safety: max 3x the plan size
+                iteration_count = 0
+
+                while True:
+                    iteration_count += 1
+                    if iteration_count > MAX_TOTAL_ITERATIONS:
+                        print(f"[CHAT-SERVICE] SAFETY: Hit max iterations ({MAX_TOTAL_ITERATIONS}). Force completing remaining tasks.", flush=True)
+                        for i in range(state.get("current_task_index", 0), len(plan)):
+                            if plan[i].get("status") not in ("completed", "failed"):
+                                plan[i]["status"] = "failed"
+                                plan[i]["result"] = "Task skipped: global iteration limit reached"
+                        state["current_task_index"] = len(plan)
+=======
                 last_index = -1
                 stuck_count = 0
                 stopped = False
@@ -609,24 +759,26 @@ class BrainChatService:
                     if conv_id in self.STOP_REGISTRY:
                         yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
                         stopped = True
+>>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
                         break
 
                     index = state.get("current_task_index", 0)
                     if index >= len(plan):
                         break
-                    
-                    # Stuck loop protection
-                    if index == last_index:
-                        stuck_count += 1
-                        if stuck_count >= 2:
-                            print(f"WARNING: BuilderAgent is stuck at task index {index}. Manually advancing to prevent infinite loop.")
-                            state["current_task_index"] = index + 1
+
+                    # Stuck loop protection: if index didn't advance after a full agent.execute cycle
+                    if index <= last_completed_index:
+                        retries = retry_count.get(index, 0)
+                        if retries >= MAX_RETRIES_PER_TASK:
+                            print(f"WARNING: Task {index} failed after {MAX_RETRIES_PER_TASK} retries. Skipping.", flush=True)
                             state["plan"][index]["status"] = "failed"
-                            state["plan"][index]["result"] = "Task timed out or agent loop did not complete."
+                            state["plan"][index]["result"] = "Task failed after retries."
+                            state["current_task_index"] = index + 1
+                            retry_count[index] = 0
                             continue
-                    else:
-                        last_index = index
-                        stuck_count = 0
+                        else:
+                            retry_count[index] = retries + 1
+                            print(f"WARNING: Task {index} did not advance. Retry {retries + 1}/{MAX_RETRIES_PER_TASK}.", flush=True)
                     
                     # Start execution log for this task
                     if mg and index not in task_log_ids:
@@ -641,9 +793,20 @@ class BrainChatService:
  
                     # Emit task_started so UI shows live progress
                     current_task = plan[index] if index < len(plan) else {}
+                    print(f"[CHAT-SERVICE] ▶ Executing task {index+1}/{len(plan)}: {current_task.get('title', 'N/A')} ({current_task.get('category', '?')})", flush=True)
                     yield f"data: {json.dumps({'task_started': _sanitize_for_json({'current_task_index': index, 'total_tasks': len(plan), 'task_label': current_task.get('label', ''), 'plan': plan})})}\n\n"
                     
                     # Run builder for one task — stream each event
+<<<<<<< HEAD
+                    try:
+                        async for ev in agent.execute(state):
+                            if isinstance(ev, dict):
+                                if ev.get("execute_sandbox"):
+                                    exe = ev["execute_sandbox"]
+                                    exe["plan"] = plan
+                                    exe["current_task_index"] = state.get("current_task_index", index + 1)
+                                    yield f"data: {json.dumps({'execute_sandbox': _sanitize_for_json(exe)})}\n\n"
+=======
                     stopped = False
                     async for ev in agent.execute(state):
                         if conv_id in self.STOP_REGISTRY:
@@ -656,26 +819,38 @@ class BrainChatService:
                                 exe["plan"] = plan
                                 exe["current_task_index"] = state.get("current_task_index", index + 1)
                                 yield f"data: {json.dumps({'execute_sandbox': _sanitize_for_json(exe)})}\n\n"
+>>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
 
-                                # Register artifacts from workspace_ops
-                                if mg and exe.get("workspace_ops"):
-                                    for op in exe["workspace_ops"]:
-                                        if op.get("op") in ("create_file", "write_file"):
-                                            path = op.get("path", "")
-                                            if path:
-                                                try:
-                                                    mg.artifacts.register(mg.project_id, {
-                                                        "name": path.split("/")[-1],
-                                                        "filePath": path,
-                                                        "type": "component",
-                                                        "createdBy": "BuilderAgent",
-                                                    })
-                                                except Exception as artifact_err:
-                                                    print(f"DEBUG: artifact register skipped ({artifact_err})")
+                                    # Register artifacts from workspace_ops
+                                    if mg and exe.get("workspace_ops"):
+                                        for op in exe["workspace_ops"]:
+                                            if op.get("op") in ("create_file", "write_file"):
+                                                path = op.get("path", "")
+                                                if path:
+                                                    try:
+                                                        mg.artifacts.register(mg.project_id, {
+                                                            "name": path.split("/")[-1],
+                                                            "filePath": path,
+                                                            "type": "component",
+                                                            "createdBy": "BuilderAgent",
+                                                        })
+                                                    except Exception as artifact_err:
+                                                        print(f"DEBUG: artifact register skipped ({artifact_err})")
+                                else:
+                                    state.update(ev)
                             else:
-                                state.update(ev)
-                        else:
-                            state = ev
+                                state = ev
+                    except Exception as build_err:
+                        print(f"[CHAT-SERVICE] ✖ Builder error for task {index+1}: {type(build_err).__name__}: {build_err}", flush=True)
+                        import traceback
+                        traceback.print_exc()
+                        # Mark task as failed and continue to next
+                        state["plan"][index]["status"] = "failed"
+                        state["plan"][index]["result"] = f"Builder error: {build_err}"
+                        state["current_task_index"] = index + 1
+
+                    # Track completed index AFTER agent.execute finishes
+                    last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
 
                     if stopped:
                         break
@@ -703,6 +878,11 @@ class BrainChatService:
                     # Complete execution log
                     if mg and index in task_log_ids:
                         mg.execution.complete_task(task_log_ids[index])
+                    
+                    # Log task completion
+                    completed_task = plan[index] if index < len(plan) else {}
+                    new_index = state.get("current_task_index", index + 1)
+                    print(f"[CHAT-SERVICE] ✓ Task {index+1} done: {completed_task.get('title', 'N/A')} → next_index={new_index}/{len(plan)}", flush=True)
                     
                     # Save message with updated plan after each task
                     sandbox_job = state.get("sandbox_job")
@@ -746,8 +926,14 @@ class BrainChatService:
                     return
 
                 # Phase 3: Runner — deploy runs as detached background task
+                print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+                print(f"[CHAT-SERVICE] Phase 3: Runner — deploying to sandbox", flush=True)
+                print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
                 runner = RunnerAgent()
-                runner_state = await runner.execute(state)
+                runner_state = state
+                async for ev in runner.execute(state):
+                    if isinstance(ev, dict):
+                        runner_state = ev
                 tasks = runner_state.get("plan", plan)
                 sandbox_job = state.get("sandbox_job")
                 runner_exe = runner_state.get("execute_sandbox") or {}
@@ -773,16 +959,17 @@ class BrainChatService:
                     except RuntimeError:
                         pass
 
+                runner_status = runner_state.get("status", "deploying")
                 final_payload = {
                     "execute_sandbox": {
                         "sandbox_job": sandbox_job,
                         "plan": tasks,
-                        "status": "deploying",
+                        "status": runner_status,
                         "workspace_ops": runner_exe.get("workspace_ops", []),
                         "progress_msg": runner_exe.get("progress_msg"),
                     },
                     "plan": tasks,
-                    "status": "deploying",
+                    "status": runner_status,
                     "report": runner_state.get("run_report"),
                 }
                 yield f"data: {json.dumps({'final_report': _sanitize_for_json(final_payload)})}\n\n"
@@ -810,7 +997,11 @@ class BrainChatService:
                         pass
                     
         except Exception as e:
-            print(f"ERROR in stream: {e}")
+            import traceback
+            print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+            print(f"[CHAT-SERVICE] ✖ STREAM ERROR: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
             if mg:
                 import asyncio as _asyncio5
                 try:
@@ -912,6 +1103,108 @@ class BrainChatService:
         finally:
             if mg:
                 mg.close_all()
+
+    async def _run_builder_background(self, state, plan, conv_id, mg):
+        """Phase 2: Run builder loop in background task (survives client disconnect)."""
+        import asyncio
+        print(f"[CHAT-SERVICE] BG-TASK: Builder background task started | {len(plan)} tasks", flush=True)
+        try:
+            agent = BuilderAgent()
+            last_completed_index = -1
+            retry_count = {}
+            MAX_RETRIES_PER_TASK = 1
+            MAX_TOTAL_ITERATIONS = len(plan) * 3
+            iteration_count = 0
+            task_log_ids = {}
+
+            while True:
+                iteration_count += 1
+                if iteration_count > MAX_TOTAL_ITERATIONS:
+                    print(f"[CHAT-SERVICE] BG-TASK: SAFETY: Hit max iterations ({MAX_TOTAL_ITERATIONS}). Force completing.", flush=True)
+                    for i in range(state.get("current_task_index", 0), len(plan)):
+                        if plan[i].get("status") not in ("completed", "failed"):
+                            plan[i]["status"] = "failed"
+                            plan[i]["result"] = "Task skipped: global iteration limit reached"
+                    state["current_task_index"] = len(plan)
+                    break
+
+                index = state.get("current_task_index", 0)
+                if index >= len(plan):
+                    break
+
+                if index <= last_completed_index:
+                    retries = retry_count.get(index, 0)
+                    if retries >= MAX_RETRIES_PER_TASK:
+                        print(f"[CHAT-SERVICE] BG-TASK: Task {index} failed after {MAX_RETRIES_PER_TASK} retries. Skipping.", flush=True)
+                        state["plan"][index]["status"] = "failed"
+                        state["plan"][index]["result"] = "Task failed after retries."
+                        state["current_task_index"] = index + 1
+                        retry_count[index] = 0
+                        continue
+                    else:
+                        retry_count[index] = retries + 1
+                        print(f"[CHAT-SERVICE] BG-TASK: Task {index} did not advance. Retry {retries + 1}/{MAX_RETRIES_PER_TASK}.", flush=True)
+
+                current_task = plan[index] if index < len(plan) else {}
+                print(f"[CHAT-SERVICE] BG-TASK: Executing task {index+1}/{len(plan)}: {current_task.get('title', 'N/A')} ({current_task.get('category', '?')})", flush=True)
+
+                try:
+                    async for ev in agent.execute(state):
+                        if isinstance(ev, dict):
+                            state.update(ev)
+                        else:
+                            state = ev
+                except Exception as build_err:
+                    print(f"[CHAT-SERVICE] BG-TASK: Builder error for task {index+1}: {type(build_err).__name__}: {build_err}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    state["plan"][index]["status"] = "failed"
+                    state["plan"][index]["result"] = f"Builder error: {build_err}"
+                    state["current_task_index"] = index + 1
+
+                last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
+
+                if mg:
+                    try:
+                        asyncio.get_event_loop().create_task(
+                            mg.short_term.append("assistant", f"Task {index+1} completed", "builder")
+                        )
+                    except RuntimeError:
+                        pass
+
+            # Mark all remaining tasks as completed
+            for t in plan:
+                if t.get("status") not in ("completed", "failed"):
+                    t["status"] = "completed"
+
+            # Runner phase
+            print(f"[CHAT-SERVICE] BG-TASK: All tasks done — running runner", flush=True)
+            runner = RunnerAgent()
+            runner_state = state
+            async for ev in runner.execute(state):
+                if isinstance(ev, dict):
+                    runner_state = ev
+
+            tasks = runner_state.get("plan", plan)
+            for t in tasks:
+                if t.get("status") == "failed":
+                    continue
+                t["status"] = "completed"
+
+            report = runner_state.get("run_report") or "Build complete."
+            conversation_service.save_message(
+                conv_id, "ASSISTANT", report,
+                todo_list=list(tasks),
+                sandbox_job=state.get("sandbox_job"),
+                metadata={"agentStep": "final_report", "planApproved": True, "current_task_index": len(tasks)}
+            )
+
+            print(f"[CHAT-SERVICE] BG-TASK: BUILD COMPLETE for {conv_id}", flush=True)
+
+        except Exception as e:
+            print(f"[CHAT-SERVICE] BG-TASK: FATAL ERROR: {type(e).__name__}: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     def stop_execution(self, conversation_id: str):
         """Stops an active conversation execution."""

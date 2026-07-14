@@ -11,6 +11,8 @@ from Brain.services.workspace_manager import workspace_manager
 from Brain.services.websocket_manager import ws_manager
 from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
 
+LOG = "[MCP_TOOLS]"
+
 def _make_activity(act_type: str, label: str, path: str = "", task_title: str = "") -> Dict[str, Any]:
     return {
         "id": f"act-{int(time.time() * 1000)}-{act_type}",
@@ -28,25 +30,27 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
     
-    print(f"[MCP_TOOLS] client_save_code called | file={file_path} | session={session_id}")
+    print(f"{LOG} client_save_code | file={file_path} | size={len(code_content)} chars | session={session_id}", flush=True)
 
     if not session_id:
+        print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id (thread_id) not provided in config."
 
     ws_root = workspace_manager.resolve_workspace_path(str(session_id))
     if not ws_root:
-        print(f"[MCP_TOOLS] ERROR: workspace not found for session={session_id}")
+        print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return f"ERROR: Could not resolve workspace path for session '{session_id}'."
 
     abs_path = os.path.abspath(os.path.join(ws_root, file_path))
     if not abs_path.startswith(os.path.abspath(ws_root)):
+        print(f"{LOG} ✖ ERROR: Invalid file path (path traversal attempt): {file_path}", flush=True)
         return "ERROR: Invalid file path."
 
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(code_content)
 
-    print(f"[MCP_TOOLS] Saved OK | {file_path} -> {abs_path} | size={len(code_content)}")
+    print(f"{LOG} ✓ Saved: {file_path} → {abs_path} ({len(code_content)} chars)", flush=True)
 
     # Emit WebSocket event
     act = _make_activity("edit_file", f"Saved {file_path}", path=file_path, task_title=task_title)
@@ -74,9 +78,9 @@ def _resolve_entrypoint(ws_root: str, entry_file: str) -> str:
         for f in files:
             if f == entry_file:
                 rel = os.path.relpath(os.path.join(root, f), ws_root)
-                print(f"[MCP_TOOLS] Resolved entrypoint '{entry_file}' -> '{rel}'")
+                print(f"{LOG} Resolved entrypoint '{entry_file}' → '{rel}'", flush=True)
                 return rel
-    print(f"[MCP_TOOLS] WARNING: entrypoint '{entry_file}' not found, using as-is")
+    print(f"{LOG} WARNING: entrypoint '{entry_file}' not found, using as-is", flush=True)
     return entry_file
 
 
@@ -86,18 +90,19 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Deploying")
 
-    print(f"[MCP_TOOLS] client_execute_in_sandbox called | session={session_id} | entry={entry_file}")
+    print(f"{LOG} client_execute_in_sandbox | session={session_id} | entry={entry_file}", flush=True)
 
     if not session_id:
+        print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id not provided."
         
     ws_root = workspace_manager.resolve_workspace_path(str(session_id))
     if not ws_root or not os.path.exists(ws_root):
-        print(f"[MCP_TOOLS] ERROR: workspace not found for session={session_id}")
+        print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return "ERROR: Workspace directory not found."
 
     entry_file = _resolve_entrypoint(ws_root, entry_file)
-    print(f"[MCP_TOOLS] Packaging workspace from: {ws_root} | entrypoint={entry_file}")
+    print(f"{LOG} Packaging workspace from: {ws_root} | entrypoint={entry_file}", flush=True)
 
     # Package workspace to base64
     memory_file = io.BytesIO()
@@ -114,7 +119,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     
     memory_file.seek(0)
     encoded_archive = base64.b64encode(memory_file.read()).decode("utf-8")
-    print(f"[MCP_TOOLS] Archive ready | size={len(encoded_archive)} chars")
+    print(f"{LOG} Archive ready | size={len(encoded_archive)} chars", flush=True)
 
     act = _make_activity("terminal", f"Running '{' && '.join(commands_to_run)}'", task_title=task_title)
     await ws_manager.broadcast_to_sandbox(session_id, {
@@ -129,20 +134,20 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         await sandbox_mcp.initialize()
 
     try:
-        print(f"[MCP_TOOLS] Calling MCP execute_workspace_archive (timeout=600s)...")
+        print(f"{LOG} Calling MCP execute_workspace_archive (timeout=600s)...", flush=True)
         result = await sandbox_mcp._call_tool("execute_workspace_archive", {
             "session_id": session_id,
             "entrypoint": entry_file,
             "archive_b64": encoded_archive,
         }, timeout=600)
-        print(f"[MCP_TOOLS] MCP result type: {type(result).__name__}")
+        print(f"{LOG} MCP result type: {type(result).__name__}", flush=True)
         output_data = sandbox_mcp._parse_response(result)
                 
         if isinstance(output_data, dict):
             output_text = output_data.get("output", output_data.get("execution_output", str(output_data)))
             tunnel_url = output_data.get("tunnel_url", "")
             if tunnel_url:
-                print(f"[MCP_TOOLS] TUNNEL URL: {tunnel_url}")
+                print(f"{LOG} TUNNEL URL: {tunnel_url}", flush=True)
                 output_text += f"\nTunnel URL: {tunnel_url}"
                 # Broadcast dedicated sandbox_ready event so the frontend canvas loads the preview
                 await ws_manager.broadcast_to_sandbox(session_id, {
@@ -172,5 +177,5 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         return f"Execution Output:\n{output_data}"
         
     except Exception as e:
-        print(f"[MCP_TOOLS] ERROR in execute_in_sandbox: {e}")
+        print(f"{LOG} ✖ ERROR in execute_in_sandbox: {type(e).__name__}: {e}", flush=True)
         return f"ERROR: Remote execution call failed: {e}"

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Github, Database, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
+import { Github, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
@@ -15,7 +15,6 @@ interface ConnectorState {
 
 const initialConnectors = {
   github: { status: 'loading' as ConnectorStatus },
-  supabase: { status: 'loading' as ConnectorStatus },
 };
 
 export default function SettingsConnectionsPanel() {
@@ -69,7 +68,7 @@ export default function SettingsConnectionsPanel() {
       if (res.ok) {
         setConnectors((prev) => ({ ...prev, [name]: { status: 'disconnected' } }));
         if (name === 'github') setGithubRepos([]);
-        const displayName = name === 'github' ? 'GitHub' : 'Supabase';
+        const displayName = name;
         setNotification({ type: 'success', message: `Disconnected from ${displayName}.` });
       } else {
         setNotification({ type: 'error', message: `Failed to disconnect.` });
@@ -89,7 +88,7 @@ export default function SettingsConnectionsPanel() {
       const errorMsg = params.get('error');
 
       if (status === 'success') {
-        const name = provider === 'github' ? 'GitHub' : provider === 'supabase' ? 'Supabase' : provider;
+        const name = provider === 'github' ? 'GitHub' : provider;
         setNotification({
           type: 'success',
           message: `Successfully connected to ${name}!`,
@@ -109,10 +108,8 @@ export default function SettingsConnectionsPanel() {
     if (!token) return;
     setConnectors({
       github: { status: 'loading' },
-      supabase: { status: 'loading' },
     });
     void checkConnector('github', '/connect-github/status');
-    void checkConnector('supabase', '/connect-supabase/status');
   }, [token]);
 
   const connectGitHub = () => {
@@ -120,13 +117,7 @@ export default function SettingsConnectionsPanel() {
     window.location.href = url;
   };
 
-  const connectSupabase = () => {
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    params.set('return_url', `${window.location.origin}/settings/connections`);
-    const url = `${BRAIN_URL}/connect-supabase/login?${params.toString()}`;
-    window.location.href = url;
-  };
+
 
   return (
     <div className='animate-in fade-in slide-in-from-bottom-2 duration-300'>
@@ -243,66 +234,6 @@ export default function SettingsConnectionsPanel() {
           )}
         </div>
 
-        {/* Supabase */}
-        <div className='bg-card border border-border-subtle rounded-2xl p-6 hover:border-accent/30 transition-all group'>
-          <div className='flex items-start justify-between mb-4'>
-            <div className='flex items-center gap-3'>
-              <div className='w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent border border-accent/20'>
-                <Database size={20} />
-              </div>
-              <div>
-                <h3 className='text-[15px] font-bold text-text-primary group-hover:text-accent transition-colors'>
-                  Supabase
-                </h3>
-                <span className='text-[10px] font-bold text-text-faint uppercase tracking-widest'>
-                  Database & Auth
-                </span>
-              </div>
-            </div>
-            <StatusBadge status={connectors.supabase.status} />
-          </div>
-          <p className='text-[12px] text-text-muted leading-relaxed mb-4'>
-            Connect your Supabase project. The AI can query your database, manage auth, and inspect your schema.
-          </p>
-          {connectors.supabase.status === 'connected' ? (
-            <div className='flex gap-2'>
-              <button
-                type='button'
-                onClick={connectSupabase}
-                className='flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
-              >
-                <ExternalLink size={14} /> Reconnect
-              </button>
-              <button
-                type='button'
-                onClick={() => disconnectConnector('supabase')}
-                disabled={disconnecting === 'supabase'}
-                className='flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-white/50 rounded-xl text-[13px] font-medium hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-all disabled:opacity-50'
-              >
-                {disconnecting === 'supabase' ? (
-                  <Loader2 size={14} className='animate-spin' />
-                ) : (
-                  <Unplug size={14} />
-                )}
-                Disconnect
-              </button>
-            </div>
-          ) : (
-            <button
-              type='button'
-              onClick={connectSupabase}
-              disabled={connectors.supabase.status === 'loading'}
-              className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-gray-950 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-all disabled:opacity-50'
-            >
-              {connectors.supabase.status === 'loading' ? (
-                <Loader2 size={14} className='animate-spin' />
-              ) : (
-                <Database size={14} />
-              )}
-              Connect Supabase
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );

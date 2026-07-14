@@ -343,7 +343,7 @@ export interface AuthContextType {
     authModalScreen: AuthModalScreen;
     openAuthModal: (screen?: AuthModalScreen) => void;
     closeAuthModal: () => void;
-    getAccessToken?: () => string | null;
+    getAccessToken: () => string | null;
     /** After password reset / flows that return access + refresh tokens (+ optional user). */
     applySessionFromTokenBundle: (bundle: {
         access_token: string;
@@ -351,8 +351,6 @@ export interface AuthContextType {
         expires_in: number;
         user?: unknown;
     }) => Promise<void>;
-    /** Return the current access token (or empty string if unauthenticated). */
-    getAccessToken: () => string | null;
 }
 
 // Stream Types

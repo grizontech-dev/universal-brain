@@ -53,9 +53,9 @@ class LongTermMemory:
             filter_condition = Filter(
                 must=[FieldCondition(key="memory_type", match=MatchValue(value=memory_type))]
             )
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             query_filter=filter_condition
         )
@@ -68,7 +68,7 @@ class LongTermMemory:
                 "metadata": r.payload.get("metadata"),
                 "similarity": r.score
             }
-            for r in results
+            for r in results.points
         ]
 
     def find_similar_projects(self, project_description: str) -> list:

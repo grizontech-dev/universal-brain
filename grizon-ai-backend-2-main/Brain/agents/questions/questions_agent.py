@@ -3,12 +3,14 @@ import json
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage
 
+LOG = "[QUESTIONS]"
+
 class QuestionsAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Questions",
             description="Asks follow-up questions to gather missing context.",
-            model_id="gpt-4o-mini"
+            model_id="gpt-4o"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -17,6 +19,7 @@ class QuestionsAgent(BaseAgent):
         """
         prompt = state.get("content", "")
         analysis = state.get("leader_analysis", {})
+        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:150]}' | missing_count={len(analysis.get('missing_details', []))}", flush=True)
         if isinstance(analysis, str):
             analysis = {"missing_details": [analysis]}
         

@@ -1,7 +1,7 @@
 import json
+import asyncio
 from datetime import datetime
 from Brain.config.redis import redis_client
-
 
 class ShortTermMemory:
     def __init__(self, session_id: str):
@@ -15,14 +15,24 @@ class ShortTermMemory:
             "agent": agent,
             "timestamp": datetime.utcnow().isoformat()
         })
-        await redis_client.lpush(self.key, entry)
-        await redis_client.expire(self.key, self.ttl)
+        try:
+            await asyncio.wait_for(redis_client.lpush(self.key, entry), timeout=5.0)
+            await asyncio.wait_for(redis_client.expire(self.key, self.ttl), timeout=5.0)
+        except Exception as e:
+            print(f"[ShortTermMemory] Redis error on append: {e}", flush=True)
 
     async def get_recent(self, limit: int = 20) -> list:
-        raw = await redis_client.lrange(self.key, 0, limit - 1)
-        entries = [json.loads(r) for r in raw]
-        entries.reverse()
-        return entries
+        try:
+            raw = await asyncio.wait_for(redis_client.lrange(self.key, 0, limit - 1), timeout=5.0)
+            entries = [json.loads(r) for r in raw]
+            entries.reverse()
+            return entries
+        except Exception as e:
+            print(f"[ShortTermMemory] Redis error on get_recent: {e}", flush=True)
+            return []
 
     async def clear(self):
-        await redis_client.delete(self.key)
+        try:
+            await asyncio.wait_for(redis_client.delete(self.key), timeout=5.0)
+        except Exception as e:
+            print(f"[ShortTermMemory] Redis error on clear: {e}", flush=True)

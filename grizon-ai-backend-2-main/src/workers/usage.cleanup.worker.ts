@@ -1,4 +1,4 @@
-import { getPool } from "../db/pool.js";
+import { getPool, retryQuery } from "../db/pool.js";
 import { messageService } from "../services/message.service.js";
 import { usageTracker } from "../services/usageTracker.service.js";
 import { walletService } from "../services/wallet.service.js";
@@ -13,7 +13,7 @@ const STALE_CHAT_JOB_MINUTES = 30;
  */
 export async function runUsageCleanupOnce() {
   const pool = getPool();
-  const stale = await pool.query(
+  const stale = await retryQuery(
     `
     SELECT cj.*, m.id AS assistant_message_id
     FROM chat_jobs cj

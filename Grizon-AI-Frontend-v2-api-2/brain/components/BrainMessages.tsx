@@ -185,8 +185,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const [buildTick, setBuildTick] = useState(0);
     const buildSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const resumeAfterReloadRef = useRef(false);
-    const [supabaseConnected, setSupabaseConnected] = useState(false);
-    const [showSupabasePrompt, setShowSupabasePrompt] = useState(false);
+
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
 
@@ -446,19 +445,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 status: 'done',
             },
         ]);
-        // Check Supabase connection status after build completes
-        const token = getAccessToken?.() ?? '';
-        fetch(`${BRAIN_URL}/connect-supabase/status${token ? `?token=${encodeURIComponent(token)}` : ''}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (data && !data.connected) {
-                    setShowSupabasePrompt(true);
-                } else {
-                    setSupabaseConnected(true);
-                }
-            })
-            .catch(() => {});
-    }, [appendBuildActivities, getAccessToken]);
+    }, [appendBuildActivities]);
 
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
@@ -731,8 +718,48 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
+<<<<<<< HEAD
+            if (!shouldStreamResumeBuild(todos, payload)) {
+                setIsBuildSyncing(false);
+                return;
+            }
+
+            setIsLoading(true);
+            setAgentStep('executing');
+            try {
+                await brainApi.streamChat(
+                    {
+                        user_id: user?.id || 'anonymous',
+                        conversation_id: conversationId,
+                        content: '__RESUME_BUILD__',
+                        model_id: selectedModel?.id || 'gpt-5.4',
+                        plan_approved: true,
+                        resume_build: true,
+                        framework,
+                        temperature: 0.3,
+                        question_rounds: questionRounds,
+                    },
+                    (event) => {
+                        if (!event || typeof event !== 'object') return;
+                        ingestSandboxStreamEvent(event as Record<string, unknown>);
+                    },
+                    abortControllerRef.current?.signal
+                );
+            } catch (e) {
+                console.error('[Brain] resume stream failed:', e);
+                setMessages(prev => [...prev, {
+                    id: `resume-stream-error-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build resume stream failed. The backend may be unavailable. Please try starting a new build.',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
+            } finally {
+                setIsLoading(false);
+                setIsBuildSyncing(false);
+=======
             if (autoStartStream && shouldStreamResumeBuild(todos, payload)) {
                 void startResumeStream(conversationId, framework, normalized);
+>>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
             }
         },
         [
@@ -1411,7 +1438,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         isPlanApproval,
                         approvedPlan,
                         targetMessageId,
-                        modelId: selectedModel?.id || 'deepseek-chat',
+                        modelId: selectedModel?.id || 'gpt-5.4',
                         framework: selectedFramework,
                         questionRounds,
                         userId: user?.id || 'anonymous',
@@ -1516,7 +1543,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 user_id: user?.id || 'anonymous',
                 conversation_id: activeId as string | undefined,
                 content: userText,
-                model_id: selectedModel?.id || 'deepseek-chat',
+                model_id: selectedModel?.id || 'gpt-5.4',
                 plan_approved: isApproval,
                 approved_plan: isApproval ? approvedPlanContent : undefined,
                 question_rounds: questionRounds,
@@ -1776,6 +1803,31 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         if (typeof taskIndex === 'number' && typeof totalTasks === 'number') {
                             chunkUpdate = `🔄 Task ${taskIndex + 1}/${totalTasks}: ${taskLabel}`;
                         }
+                    }
+
+                    // --- Task Failed ---
+                    if (event.task_failed) {
+                        const tf = event.task_failed;
+                        const failedIndex = tf.current_task_index as number | undefined;
+                        const reason = tf.reason as string || 'Task failed';
+                        const planFromFailed = tf.plan as BuildTodoItem[] | undefined;
+
+                        if (Array.isArray(planFromFailed) && planFromFailed.length > 0) {
+                            currentTodoList = planFromFailed;
+                            applyPlanToTodos(planFromFailed, {
+                                activeIndex: typeof failedIndex === 'number' ? failedIndex + 1 : undefined,
+                                buildPhase: 'building',
+                            });
+                        }
+
+                        chunkUpdate = `⚠️ Task failed: ${reason}`;
+                        appendBuildActivities([{
+                            id: `act-fail-${Date.now()}`,
+                            type: 'task_failed',
+                            label: reason,
+                            timestamp: Date.now(),
+                            status: 'failed',
+                        }]);
                     }
 
                     // --- Tasks (second handler) ---
@@ -2316,9 +2368,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                                     handleSendMessage("I reject this plan. Let's rethink the strategy.", 0.3);
                                                                 }
                                                             }}
-                                                            showSupabasePrompt={isBuildMode && index === messages.length - 1 && showSupabasePrompt && !supabaseConnected}
-                                                            supabaseWorkspaceId={buildJob?.jobId}
-                                                            onSupabaseConnected={() => { setSupabaseConnected(true); setShowSupabasePrompt(false); }}
+
                                                         />
                                                     </React.Fragment>
                                                 );

@@ -25,39 +25,33 @@ class SandboxService:
 
     async def create_job(self, repo_url: str, user_intent: str, job_id_external: Optional[str] = None) -> Dict[str, Any]:
         """Submits a job to the remote sandbox."""
-        # The "Deep-Trick" Configuration
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         ant_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        
+        openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
+
         env_vars = {
-            "ANTHROPIC_API_KEY": deepseek_key,
-            "ANTHROPIC_BASE_URL": "https://api.deepseek.com/v1",
-            "DEEPSEEK_API_KEY": deepseek_key,
-            "OPENAI_API_KEY": deepseek_key,
-            "OPENAI_BASE_URL": "https://api.deepseek.com/v1",
+            "OPENAI_API_KEY": openai_key,
+            "OPENAI_BASE_URL": openai_base or "https://api.openai.com/v1",
         }
 
-        # Tricking the hardcoded Claude agent into using DeepSeek
         payload = {
             "repo_url": repo_url,
             "user_intent": user_intent,
             "job_id_external": job_id_external,
             "env": env_vars,
             "environment": env_vars,
-            "model": "gpt-4o-mini", 
-            "provider": "openai",  
-            "api_key": deepseek_key,  # Direct key injection
-            "base_url": "https://api.deepseek.com/v1", # Direct URL injection
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "api_key": openai_key,
+            "base_url": openai_base or "https://api.openai.com/v1",
             "api_keys": env_vars
         }
 
 
 
-        # Header-level injection (Cleaned)
         request_headers = {
             **self.headers,
-            "X-Anthropic-Api-Key": ant_key or deepseek_key or "",
-            "X-DeepSeek-Api-Key": deepseek_key or "",
+            "X-OpenAI-Api-Key": openai_key or "",
         }
 
 

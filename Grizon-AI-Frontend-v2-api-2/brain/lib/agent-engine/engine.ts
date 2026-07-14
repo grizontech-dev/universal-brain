@@ -1,6 +1,13 @@
 import { useExecutionStore } from '../../store/execution-store';
 import { generateDynamicMessage, generateDynamicQuestions, generateSmartTodos } from '../agents/dynamic-prompts';
 
+export interface AgentTask {
+    agent: string;
+    task: string;
+    files: string[];
+    dependencies?: string[];
+}
+
 export class AgentEngine {
     constructor() {}
 
@@ -8,41 +15,48 @@ export class AgentEngine {
         const store = useExecutionStore.getState();
         store.resetExecution();
         
-        // 1. ANALYZING PHASE
+        // 1. ANALYZING PHASE - Leader analyzes the prompt
         store.setPhase('ANALYZING');
-        store.updateAgent('leader', { status: 'THINKING', currentTask: 'Analyzing prompt' });
-        store.setStreamingMessage("I'm analyzing the project architecture and breaking down the requirements...");
-        await this.delay(3000);
+        store.updateAgent('leader', { status: 'THINKING', currentTask: 'Analyzing project requirements' });
+        store.setStreamingMessage("Analyzing your request and understanding the project scope...");
+        await this.delay(2000);
         
-        store.addTimelineEvent("Prompt received and parsed.", "SUCCESS");
+        store.addTimelineEvent("Prompt received and parsed successfully.", "SUCCESS");
+        store.addTimelineEvent("Identifying project type and complexity.", "INFO");
         
-        // 2. PLANNING PHASE
+        // 2. PLANNING PHASE - Architect creates the plan
         store.setPhase('PLANNING');
-        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Orchestrating agents' });
-        store.updateAgent('planner', { status: 'THINKING', currentTask: 'Generating architecture' });
+        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Coordinating architecture design' });
+        store.updateAgent('planner', { status: 'THINKING', currentTask: 'Designing system architecture' });
         
-        const dynamicMsg = generateDynamicMessage({ type: 'stack' });
-        store.setStreamingMessage(dynamicMsg);
+        const stackMsg = generateDynamicMessage({ type: 'stack' });
+        store.setStreamingMessage(stackMsg);
+        await this.delay(1500);
         
         store.addFileOperation({ filename: 'architecture.md', operation: 'CREATE' });
-        await this.delay(2000);
+        store.addTimelineEvent("Generating component hierarchy.", "INFO");
+        await this.delay(1500);
         store.updateFileOperation(store.fileOperations[store.fileOperations.length - 1]?.id || '', 'COMPLETED');
-        store.addTimelineEvent("Architecture plan generated.", "SUCCESS");
         
-        // 3. QUESTIONING PHASE (If needed)
+        store.addFileOperation({ filename: 'package.json', operation: 'CREATE' });
+        store.updateAgent('planner', { status: 'WORKING', currentTask: 'Defining dependencies' });
+        await this.delay(1000);
+        store.updateFileOperation(store.fileOperations[store.fileOperations.length - 1]?.id || '', 'COMPLETED');
+        store.addTimelineEvent("Architecture plan generated with component tree.", "SUCCESS");
+        
+        // 3. QUESTIONING PHASE
         store.setPhase('QUESTIONING');
         store.updateAgent('planner', { status: 'DONE' });
-        store.updateAgent('leader', { status: 'THINKING', currentTask: 'Formulating questions' });
+        store.updateAgent('leader', { status: 'THINKING', currentTask: 'Formulating clarification questions' });
         
-        store.setStreamingMessage("I need a few clarifications before I start generating the code.");
+        store.setStreamingMessage("I have a few questions to ensure the output matches your vision.");
         const questions = generateDynamicQuestions(prompt);
-        await this.delay(2000);
+        await this.delay(1500);
         
         store.addTimelineEvent(`Generated ${questions.length} clarification questions.`, "INFO");
         store.setPhase('WAITING_FOR_USER');
         store.updateAgent('leader', { status: 'IDLE' });
         
-        // Return questions to the UI so it can render a form
         return questions;
     }
 
@@ -50,50 +64,118 @@ export class AgentEngine {
         const store = useExecutionStore.getState();
         
         store.setPhase('EXECUTING');
-        store.addTimelineEvent("User answers analyzed.", "SUCCESS");
-        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Delegating tasks' });
+        store.addTimelineEvent("User answers received and analyzed.", "SUCCESS");
+        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Delegating build tasks' });
         
-        store.setStreamingMessage("Answers received. Generating smart todos and initializing execution pipeline...");
-        await this.delay(2000);
+        store.setStreamingMessage("Initializing execution pipeline and assigning agents...");
+        await this.delay(1500);
         
+        // Generate smart todos based on the prompt
         const todos = generateSmartTodos(prompt);
         todos.forEach(t => store.addTodo({ text: t }));
         
-        store.addTimelineEvent("Execution pipeline initialized.", "SUCCESS");
+        store.addTimelineEvent("Execution pipeline initialized with task queue.", "SUCCESS");
+        store.addTimelineEvent("Agent roles assigned: Frontend Builder, Backend Builder.", "INFO");
 
-        // Kick off Frontend Builder
-        this.runFrontendAgent();
+        // Run agents in sequence
+        await this.runOrchestratedBuild(prompt);
     }
 
-    private async runFrontendAgent() {
+    private async runOrchestratedBuild(prompt: string) {
         const store = useExecutionStore.getState();
-        store.updateAgent('frontend', { status: 'WORKING', currentTask: 'Building components' });
+        const todos = store.dynamicTodos;
+        
+        // Phase 1: Frontend Agent builds UI components
+        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Supervising frontend build' });
+        store.updateAgent('frontend', { status: 'THINKING', currentTask: 'Analyzing UI requirements' });
         
         const uiMsg = generateDynamicMessage({ type: 'ui' });
         store.setStreamingMessage(uiMsg);
+        await this.delay(1000);
         
-        const fileNames = ['layout.tsx', 'sidebar.tsx', 'hero.tsx', 'theme-provider.ts'];
+        store.updateAgent('frontend', { status: 'WORKING', currentTask: 'Building layout components' });
         
-        for (const [index, todo] of store.dynamicTodos.entries()) {
+        const frontendFiles = [
+            'app/layout.tsx',
+            'components/sidebar.tsx',
+            'components/hero.tsx',
+            'components/ui/button.tsx',
+            'components/ui/card.tsx',
+            'context/theme-provider.tsx'
+        ];
+        
+        // Process first batch of todos (frontend tasks)
+        const frontendEnd = Math.min(Math.ceil(todos.length * 0.6), todos.length);
+        for (let i = 0; i < frontendEnd; i++) {
+            const todo = todos[i];
             store.updateTodo(todo.id, 'IN_PROGRESS');
             
-            store.addFileOperation({ filename: fileNames[index % fileNames.length], operation: 'CREATE' });
+            const fileName = frontendFiles[i % frontendFiles.length];
+            store.addFileOperation({ filename: fileName, operation: 'CREATE' });
             
-            await this.delay(2500);
+            store.setStreamingMessage(`Building: ${todo.text}`);
+            await this.delay(1800);
             
             store.updateTodo(todo.id, 'COMPLETED');
             store.updateFileOperation(store.fileOperations[store.fileOperations.length - 1]?.id || '', 'COMPLETED');
+            store.addTimelineEvent(`Completed: ${todo.text}`, "SUCCESS");
         }
-
-        store.setPhase('SYNCING');
+        
         store.updateAgent('frontend', { status: 'DONE' });
+        
+        // Phase 2: Backend Agent builds API and logic
+        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Supervising backend build' });
+        store.updateAgent('backend', { status: 'THINKING', currentTask: 'Designing API routes' });
+        
+        const backendMsg = generateDynamicMessage({ type: 'backend' });
+        store.setStreamingMessage(backendMsg);
+        await this.delay(1000);
+        
+        store.updateAgent('backend', { status: 'WORKING', currentTask: 'Implementing server logic' });
+        
+        const backendFiles = [
+            'api/routes.ts',
+            'lib/auth.ts',
+            'db/schema.ts',
+            'lib/validators.ts'
+        ];
+        
+        // Process remaining todos (backend tasks)
+        for (let i = frontendEnd; i < todos.length; i++) {
+            const todo = todos[i];
+            store.updateTodo(todo.id, 'IN_PROGRESS');
+            
+            const fileName = backendFiles[(i - frontendEnd) % backendFiles.length];
+            store.addFileOperation({ filename: fileName, operation: 'CREATE' });
+            
+            store.setStreamingMessage(`Implementing: ${todo.text}`);
+            await this.delay(1800);
+            
+            store.updateTodo(todo.id, 'COMPLETED');
+            store.updateFileOperation(store.fileOperations[store.fileOperations.length - 1]?.id || '', 'COMPLETED');
+            store.addTimelineEvent(`Completed: ${todo.text}`, "SUCCESS");
+        }
+        
+        store.updateAgent('backend', { status: 'DONE' });
+        
+        // Phase 3: Final sync
+        store.setPhase('SYNCING');
+        store.updateAgent('leader', { status: 'WORKING', currentTask: 'Syncing generated files' });
+        store.setStreamingMessage("All components built. Syncing files to sandbox environment...");
+        
+        store.addFileOperation({ filename: 'node_modules/', operation: 'INSTALL' });
+        await this.delay(1500);
+        store.updateFileOperation(store.fileOperations[store.fileOperations.length - 1]?.id || '', 'COMPLETED');
+        
+        store.addTimelineEvent("Dependencies installed.", "SUCCESS");
+        
         store.updateAgent('leader', { status: 'DONE' });
-        store.setStreamingMessage("Execution complete. Syncing files to sandbox...");
-        await this.delay(2000);
+        store.setStreamingMessage("Build complete. Preview is ready.");
+        
+        store.addTimelineEvent("Application generated and synced successfully.", "SUCCESS");
+        await this.delay(500);
         
         store.setPhase('COMPLETED');
-        store.addTimelineEvent("Application successfully generated and synced.", "SUCCESS");
-        store.setStreamingMessage("All tasks finished successfully. The preview is now ready.");
     }
 
     private delay(ms: number) {

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type AgentPhase = 'IDLE' | 'ANALYZING' | 'PLANNING' | 'QUESTIONING' | 'WAITING_FOR_USER' | 'EXECUTING' | 'SYNCING' | 'COMPLETED';
 
-export type AgentRole = 'LEADER' | 'PLANNER' | 'FRONTEND' | 'BACKEND' | 'DATABASE';
+export type AgentRole = 'LEADER' | 'PLANNER' | 'FRONTEND' | 'BACKEND' | 'DATABASE' | 'TESTER';
 
 export type AgentStatus = 'IDLE' | 'THINKING' | 'WORKING' | 'DONE' | 'ERROR';
 
@@ -12,6 +12,7 @@ export interface ActiveAgent {
     name: string;
     status: AgentStatus;
     currentTask?: string;
+    progress?: number;
 }
 
 export interface TimelineEvent {
@@ -58,10 +59,12 @@ export const useExecutionStore = create<ExecutionState>((set) => ({
     currentPhase: 'IDLE',
     timeline: [],
     activeAgents: {
-        leader: { id: 'leader', role: 'LEADER', name: 'Leader Agent', status: 'IDLE' },
-        planner: { id: 'planner', role: 'PLANNER', name: 'Planner Agent', status: 'IDLE' },
-        frontend: { id: 'frontend', role: 'FRONTEND', name: 'Frontend Builder', status: 'IDLE' },
-        backend: { id: 'backend', role: 'BACKEND', name: 'Backend Builder', status: 'IDLE' }
+        leader: { id: 'leader', role: 'LEADER', name: 'Leader Agent', status: 'IDLE', progress: 0 },
+        planner: { id: 'planner', role: 'PLANNER', name: 'Architect Agent', status: 'IDLE', progress: 0 },
+        frontend: { id: 'frontend', role: 'FRONTEND', name: 'Frontend Builder', status: 'IDLE', progress: 0 },
+        backend: { id: 'backend', role: 'BACKEND', name: 'Backend Builder', status: 'IDLE', progress: 0 },
+        database: { id: 'database', role: 'DATABASE', name: 'Database Engineer', status: 'IDLE', progress: 0 },
+        tester: { id: 'tester', role: 'TESTER', name: 'QA Agent', status: 'IDLE', progress: 0 }
     },
     dynamicTodos: [],
     fileOperations: [],
@@ -105,10 +108,12 @@ export const useExecutionStore = create<ExecutionState>((set) => ({
         fileOperations: [],
         streamingMessage: null,
         activeAgents: {
-            leader: { id: 'leader', role: 'LEADER', name: 'Leader Agent', status: 'IDLE' },
-            planner: { id: 'planner', role: 'PLANNER', name: 'Planner Agent', status: 'IDLE' },
-            frontend: { id: 'frontend', role: 'FRONTEND', name: 'Frontend Builder', status: 'IDLE' },
-            backend: { id: 'backend', role: 'BACKEND', name: 'Backend Builder', status: 'IDLE' }
+            leader: { id: 'leader', role: 'LEADER', name: 'Leader Agent', status: 'IDLE', progress: 0 },
+            planner: { id: 'planner', role: 'PLANNER', name: 'Architect Agent', status: 'IDLE', progress: 0 },
+            frontend: { id: 'frontend', role: 'FRONTEND', name: 'Frontend Builder', status: 'IDLE', progress: 0 },
+            backend: { id: 'backend', role: 'BACKEND', name: 'Backend Builder', status: 'IDLE', progress: 0 },
+            database: { id: 'database', role: 'DATABASE', name: 'Database Engineer', status: 'IDLE', progress: 0 },
+            tester: { id: 'tester', role: 'TESTER', name: 'QA Agent', status: 'IDLE', progress: 0 }
         }
     })
 }));

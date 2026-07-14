@@ -12,7 +12,7 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="gpt-4o-mini"
+            model_id="gpt-4o"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()
@@ -41,23 +41,71 @@ class FrontendAgent(BaseAgent):
         SKILLS (follow strictly):
         {skills_content}
 
+        ***CRITICAL UI QUALITY RULES (NON-NEGOTIABLE)***:
+        - NEVER output placeholder components like `<h1>Home Page</h1>` or `<p>Coming soon</p>`
+        - EVERY component MUST have REAL, polished UI with Tailwind CSS
+        - Home page MUST include: Hero section with gradient background, Features grid, About section, Contact form, Footer
+        - Dashboard MUST include: Stats cards with icons, data visualization, sidebar nav, tables
+        - Auth pages MUST include: Styled form fields, validation, loading spinners, error states
+        - Use real placeholder images from: https://picsum.photos/800/400 or https://placehold.co/600x400
+        - Add hover effects, transitions, shadows for polish
+        - Mobile-responsive design is MANDATORY
+
+        ***SHADCN UI COMPONENTS (USE FOR PRODUCTION QUALITY)***:
+        - Use shadcn-style components for buttons, cards, inputs, badges, forms
+        - Create components in `frontend/src/components/ui/` directory
+        - Always import `cn` from `../lib/utils` for className merging
+        - Add dependencies to package.json: class-variance-authority, clsx, tailwind-merge, @radix-ui/react-slot
+        - Use CSS variables for theming (add to index.css)
+        - Example Card usage:
+          ```jsx
+          import {{ Card, CardContent, CardHeader, CardTitle }} from "../components/ui/card";
+          <Card>
+            <CardHeader><CardTitle>Title</CardTitle></CardHeader>
+            <CardContent>Content here</CardContent>
+          </Card>
+          ```
+
+        ***CRITICAL VIOLATIONS THAT WILL FAIL THE TASK***:
+        - Using `<Switch>` instead of `<Routes>` (React Router v5 vs v6)
+        - Using `component={{Home}}` instead of `element={{<Home />}}` (v5 vs v6 syntax)
+        - Creating components but NOT importing them in App.jsx (orphan components)
+        - Importing or using a browser Supabase client in frontend code (all DB access is server-side only)
+        - Home.jsx containing only `<h1>Home Page</h1>` (placeholder, not real UI)
+        - Not including the FULL updated App.jsx in your response
+        - Creating the SAME component in BOTH `frontend/src/components/` AND `frontend/src/pages/` (duplicate files)
+        - Creating a component that is NOT imported in App.jsx (orphan)
+
         FRONTEND AGENT RULES:
         1. **CRITICAL — Vite entry**: `frontend/src/main.jsx` imports `./App.jsx` ONLY. **`App.tsx` is NEVER used in preview.** All routes and component imports go in `frontend/src/App.jsx`.
         2. **App.jsx is the product** — You MUST include `frontend/src/App.jsx` in every response that adds or changes components.
            Import and render every component you create. Remove template demo (counter, "Grizon React", "ready for Brain to extend").
         3. **FORBIDDEN**: `frontend/src/App.tsx` — do not create it. Use plain JSX in App.jsx (no TypeScript, no `React.FC` types).
-        4. **react-router-dom & Connection** — ALWAYS connect all components, pages, and everything in `App.jsx`. If it is a single page application, render the components directly. If there are multiple pages, use `react-router-dom` (BrowserRouter, Routes, Route, Link) to route and connect. Paths must match.
-        5. **API integration** — Use `frontend/src/lib/api.js` (`apiGet`, `apiPost`). Example: contact form → `apiPost('/api/contact', formData)`.
-        6. **Tailwind** — Use utility classes; add `tailwindcss`, `postcss`, `autoprefixer` to `frontend/package.json` if missing; include `tailwind.config.js` and `src/index.css` with `@tailwind` directives when styling.
-        7. **Structure**: `frontend/src/components/` for UI blocks; `frontend/src/pages/` for route pages when using router.
-        8. **commands & packages**: ALL packages used in the project MUST be added to `frontend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies (like `react-icons`, `lucide-react`, etc.) or if the user reports a "Failed to resolve import" error, you MUST add them to `frontend/package.json` AND return `"commands": ["cd frontend && npm install"]`. The runner handles `npm run dev` at the end automatically.
-        9. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, you MUST configure `vite.config.js` or the package.json dev script to explicitly use `--port 9999 --host 0.0.0.0`. This is an absolute requirement for the tunnel URL to work properly.
-        10. **CRITICAL VALIDATION RULE**: Before returning files, you MUST mentally verify for EVERY file created inside `frontend/src/components/` and `frontend/src/pages/`:
-           - 1. Is it imported in App.jsx or a parent page?
-           - 2. Is it rendered somewhere in the component tree?
-           - 3. No orphan components are allowed! An orphan component is any component that exists but is not reachable from App.jsx. If a component is not connected, the task is considered FAILED. Return ONLY when all components pass this internal checklist.
-        11. **APP.JSX IS THE SINGLE SOURCE OF TRUTH**: Every page, route, layout, component, section, widget, table, modal, form, dashboard, chart, navbar, footer, sidebar, and UI element created by the agent MUST be reachable from `App.jsx`. Never leave a placeholder `Home.jsx` as the only rendered page. Replace template routes completely with the generated application.
-        12. **ROUTING RULES**: If you create more than one page, you MUST: (1) Import all pages into App.jsx, (2) Create Route entries, (3) Create navigation links, (4) Ensure every page can be visited. Failure to connect routes is considered a failed task.
+        4. **NO DUPLICATE FILES**: NEVER create the same component in both `frontend/src/components/` and `frontend/src/pages/`. Pages go in `pages/`, reusable UI blocks go in `components/`. If `PostPage.jsx` exists in `pages/`, do NOT also create it in `components/`.
+        5. **NO ORPHAN COMPONENTS**: Every file you create in `frontend/src/components/` or `frontend/src/pages/` MUST be imported in `frontend/src/App.jsx` and rendered in the JSX. Before returning, verify: for every component file, is it in App.jsx imports AND in the JSX tree?
+        6. **REACT ROUTER v6 MANDATORY**: Use `<Routes>` NOT `<Switch>`. Use `element={{<Component />}}` NOT `component={{Component}}`. Example:
+           ```jsx
+           import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
+           <BrowserRouter>
+             <Routes>
+               <Route path="/" element={{<Home />}} />
+               <Route path="/about" element={{<About />}} />
+             </Routes>
+           </BrowserRouter>
+           ```
+        7. **IMPORT ALL COMPONENTS**: If you created Home.jsx, About.jsx, Contact.jsx, Navbar.jsx, HeroSection.jsx — ALL must be imported in App.jsx. No orphan components allowed!
+        8. **REAL UI ONLY**: Every component MUST have real Tailwind CSS styling. NEVER output `<h1>Home Page</h1>` as the only content. Use the skills provided for UI quality.
+        9. **API integration** — Connect forms and data to the backend via `frontend/src/lib/api.js` (`apiGet`, `apiPost`, `apiPut`, `apiDelete`), using the backend's REAL `/api/*` routes (which mount in `backend/server.js`). NEVER import or use a browser Supabase client (e.g. `import {{ supabase }} from '../supabase/client.js'`) — all DB access happens server-side. Example: contact form → `apiPost('/api/contact', formData)`.
+        10. **Tailwind** — Use utility classes; add `tailwindcss`, `postcss`, `autoprefixer` to `frontend/package.json` if missing; include `tailwind.config.js` and `src/index.css` with `@tailwind` directives when styling.
+        11. **Structure**: `frontend/src/components/` for UI blocks; `frontend/src/pages/` for route pages when using router.
+        12. **commands & packages**: ALL packages used in the project MUST be added to `frontend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies (like `react-icons`, `lucide-react`, `@supabase/supabase-js`, etc.) or if the user reports a "Failed to resolve import" error, you MUST add them to `frontend/package.json` AND return `"commands": ["cd frontend && npm install"]`. The runner handles `npm run dev` at the end automatically.
+        13. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, you MUST configure `vite.config.js` or the package.json dev script to explicitly use `--port 9999 --host 0.0.0.0`. This is an absolute requirement for the tunnel URL to work properly.
+        14. **CRITICAL VALIDATION RULE**: Before returning files, you MUST mentally verify for EVERY file created inside `frontend/src/components/` and `frontend/src/pages/`:
+            - 1. Is it imported in App.jsx or a parent page?
+            - 2. Is it rendered somewhere in the component tree?
+            - 3. No orphan components are allowed! An orphan component is any component that exists but is not reachable from App.jsx. If a component is not connected, the task is considered FAILED. Return ONLY when all components pass this internal checklist.
+        15. **APP.JSX IS THE SINGLE SOURCE OF TRUTH**: Every page, route, layout, component, section, widget, table, modal, form, dashboard, chart, navbar, footer, sidebar, and UI element created by the agent MUST be reachable from `App.jsx`. Never leave a placeholder `Home.jsx` as the only rendered page. Replace template routes completely with the generated application.
+        16. **ROUTING RULES**: If you create more than one page, you MUST: (1) Import all pages into App.jsx, (2) Create Route entries, (3) Create navigation links, (4) Ensure every page can be visited. Failure to connect routes is considered a failed task.
         ```jsx
         import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
         import Navbar from './components/Navbar';

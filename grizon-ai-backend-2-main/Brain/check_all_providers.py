@@ -25,7 +25,7 @@ async def main():
 
     tasks = []
     if openai_key:
-        tasks.append(test_provider("OpenAI", ChatOpenAI(model="gpt-4o", api_key=openai_key)))
+        tasks.append(test_provider("OpenAI", ChatOpenAI(model="gpt-4o-mini", api_key=openai_key)))
     else:
         print("OpenAI key missing")
 

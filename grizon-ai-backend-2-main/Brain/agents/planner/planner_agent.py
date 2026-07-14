@@ -1,15 +1,17 @@
 from typing import Any, Dict, List
 import json
+import os
 from Brain.shared.agent import BaseAgent
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage
+
+LOG = "[PLANNER]"
 
 class PlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Planner",
             description="Creates the technical architecture and project plan.",
-            model_id="gpt-4o-mini"
+            model_id=os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o")
         )
 
     def _build_context_summary(self, history: List[dict], prompt: str) -> str:
@@ -32,6 +34,7 @@ class PlannerAgent(BaseAgent):
         Creates or updates a comprehensive project plan based on user prompt and Q&A answers.
         """
         prompt = state.get("content", "")
+        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | has_feedback={bool(state.get('plan_feedback'))}", flush=True)
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
         current_plan = state.get("project_plan", {})
@@ -39,6 +42,9 @@ class PlannerAgent(BaseAgent):
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
         active_decisions = memory_context.get("decisions", {})
+        architecture_patterns = memory_context.get("architecture_patterns", [])
+        best_skills = memory_context.get("best_skills", [])
+        similar_projects = memory_context.get("similar_projects", [])
         wf_state = session_state.get("workflow_state", "")
         cur_agent = session_state.get("current_agent", "")
         task_idx = session_state.get("task_index", "")
@@ -54,6 +60,24 @@ class PlannerAgent(BaseAgent):
             decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
             decisions_context = "[Approved Decisions - MUST FOLLOW]\n" + "\n".join(decisions_lines)
 
+        # ArchitectureMemory — proven tech patterns
+        arch_context = ""
+        if architecture_patterns:
+            arch_lines = [f"  {p['pattern']}: used {p['uses']}x, {p['success_rate']*100:.0f}% success" for p in architecture_patterns]
+            arch_context = "[Proven Architecture Patterns]\n" + "\n".join(arch_lines)
+
+        # SkillMemory — best performing agents
+        skills_context = ""
+        if best_skills:
+            skills_lines = [f"  {s['name']}: {s['uses']} uses, avg score {s['score']:.0f}" for s in best_skills]
+            skills_context = "[Best Performing Agents]\n" + "\n".join(skills_lines)
+
+        # LongTermMemory — similar past projects
+        similar_context = ""
+        if similar_projects:
+            similar_lines = [f"  {s.get('content', '')[:100]}... (similarity: {s.get('similarity', 0):.2f})" for s in similar_projects]
+            similar_context = "[Similar Past Projects]\n" + "\n".join(similar_lines)
+
         # Build a clean context summary from history
         context_summary = self._build_context_summary(history, prompt)
 
@@ -62,20 +86,18 @@ class PlannerAgent(BaseAgent):
         
         CRITICAL: You MUST base your plan STRICTLY on the user's actual request and their Q&A answers provided in the conversation context below.
         Do NOT create a generic plan. Read every user message and answer carefully.
-        
-        {FULL_STACK_BUILD_STANDARDS}
 
         OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences:
         {{
           "project_name": "Short descriptive name of the actual project",
-          "markdown_plan": "A comprehensive, highly detailed Markdown document (v0-style) with sections for Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Utilities & Helpers, Implementation Steps, Data Storage Strategy, and Future Enhancements. Include bullet points, bold text, and code formatting where appropriate.",
+          "markdown_plan": "A clear, well-structured Markdown plan (concise but complete) with sections for Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Utilities & Helpers, Implementation Steps, Data Storage Strategy, and Future Enhancements. Include bullet points, bold text, and code formatting where appropriate.",
           "tech_stack": ["React", "Express", "Supabase"],
           "status": "proposed"
         }}
 
         GUIDELINES:
         1. The project_name MUST reflect the user's actual project (not a generic name).
-        2. The markdown_plan MUST be extremely rich and detailed based on the user's answers. Break down the components, the data model, and exactly what pages will be built.
+        2. The markdown_plan MUST be clear and complete (concise, not bloated) based on the user's answers. Break down the components, the data model, and exactly what pages will be built.
         3. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
         4. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
         5. Plan for preview-visible UI — not isolated component files.
@@ -87,6 +109,12 @@ class PlannerAgent(BaseAgent):
             messages.append(SystemMessage(content=session_context))
         if decisions_context:
             messages.append(SystemMessage(content=decisions_context))
+        if arch_context:
+            messages.append(SystemMessage(content=arch_context))
+        if skills_context:
+            messages.append(SystemMessage(content=skills_context))
+        if similar_context:
+            messages.append(SystemMessage(content=similar_context))
 
         # Inject the clean context summary as the primary input
         messages.append(HumanMessage(content=f"Project Context (including Q&A answers):\n{context_summary}"))
@@ -96,7 +124,7 @@ class PlannerAgent(BaseAgent):
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
 
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, max_tokens=1800)
         plan = self._format_json_response(response_content)
 
         if not isinstance(plan, dict) or plan.get("error"):

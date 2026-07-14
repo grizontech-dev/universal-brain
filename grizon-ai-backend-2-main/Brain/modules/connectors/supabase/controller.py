@@ -111,6 +111,35 @@ async def apply_to_workspace(req: dict, current_user=Depends(get_current_user)):
     except Exception as e:
         return {"error": str(e)}
 
+
+@router.post("/inject-company-credentials")
+async def inject_company_credentials(req: dict, current_user=Depends(get_current_user)):
+    """
+    Inject company Supabase credentials to workspace's backend/.env.
+    This allows projects to use company Supabase automatically without user setup.
+    """
+    workspace_id = req.get("workspace_id", "")
+    if not workspace_id:
+        raise HTTPException(status_code=422, detail="workspace_id is required")
+
+    from Brain.services.template_service import inject_company_supabase_to_workspace
+    success = inject_company_supabase_to_workspace(workspace_id)
+
+    if success:
+        return {"success": True, "message": "Company Supabase credentials injected"}
+    else:
+        # Check if credentials already exist
+        ws_path = workspace_manager.resolve_workspace_path(workspace_id)
+        if ws_path:
+            env_path = os.path.join(ws_path, "backend", ".env")
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if "SUPABASE_URL" in content:
+                    return {"success": True, "message": "Supabase credentials already configured"}
+        return {"success": False, "message": "Failed to inject credentials"}
+
+
 @router.post("/auto-schema")
 async def auto_schema(req: dict, current_user=Depends(get_current_user)):
     """

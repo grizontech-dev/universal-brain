@@ -8,66 +8,53 @@ from typing import Optional
 # Ensure environment variables are loaded
 load_dotenv()
 
+LOG = "[PROVIDER]"
+
 class ProviderRouter:
     @staticmethod
-    def get_model(model_id: str, temperature: float = 0.7):
+    def get_model(model_id: str, temperature: float = 0.7, max_tokens: Optional[int] = None):
         """Returns the appropriate LangChain model based on the model_id."""
         
         # Safely get keys
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or None
         openai_key = os.getenv("OPENAI_API_KEY", "").strip() or None
         openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
         
         # Decide the universal fallback model/provider
-        if openai_key:
-            fallback_provider = "openai"
-            fallback_model = "gpt-4o"
-        else:
-            fallback_provider = "deepseek"
-            fallback_model = "gpt-4o-mini"
+        fallback_provider = "openai"
+        fallback_model = "gpt-4o"
             
         def get_fallback_model():
-            if fallback_provider == "openai":
-                print(f"DEBUG: Fallback redirect to OpenAI '{fallback_model}'")
-                return ChatOpenAI(
-                    model=fallback_model,
-                    api_key=openai_key,
-                    base_url=openai_base,
-                    temperature=temperature,
-                    max_retries=2
-                )
-            else:
-                print(f"DEBUG: Fallback redirect to DeepSeek '{fallback_model}'")
-                return ChatOpenAI(
-                    model=fallback_model,
-                    api_key=deepseek_key,
-                    base_url="https://api.deepseek.com/v1",
-                    openai_api_base="https://api.deepseek.com/v1",
-                    default_headers={"Authorization": f"Bearer {deepseek_key}"} if deepseek_key else None,
-                    temperature=temperature,
-                    max_retries=2
-                )
+            print(f"{LOG} Fallback → OpenAI '{fallback_model}' (base={openai_base or 'default'})", flush=True)
+            return ChatOpenAI(
+                model=fallback_model,
+                api_key=openai_key,
+                base_url=openai_base,
+                temperature=temperature,
+                max_retries=2,
+                **({"max_tokens": max_tokens} if max_tokens else {})
+            )
 
         # Handle UUIDs/Database IDs by defaulting to fallback
-        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "deepseek", "grok", "llama"])
+        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama"])
         
-        print(f"DEBUG: ProviderRouter requested model_id='{model_id}', is_known_id={is_known_id}")
+        print(f"{LOG} get_model(id='{model_id}', temp={temperature}) | known={is_known_id}", flush=True)
         
         # Claude Models or Unknown IDs - Fallback
         if "claude" in model_id.lower() or not is_known_id:
-            print(f"DEBUG: Redirecting '{model_id}' (Claude/Unknown fallback)")
+            print(f"{LOG} → Claude/Unknown '{model_id}' → fallback", flush=True)
             return get_fallback_model()
         
         # GPT Models - Prefer low-cost OpenAI if available, else fallback
         elif "gpt" in model_id.lower():
             if openai_key:
-                print(f"DEBUG: Using OpenAI model '{model_id}'")
+                print(f"{LOG} → OpenAI '{model_id}' (base={openai_base or 'default'})", flush=True)
                 return ChatOpenAI(
                     model=model_id,
                     api_key=openai_key,
                     base_url=openai_base,
                     temperature=temperature,
-                    max_retries=2
+                    max_retries=2,
+                    **({"max_tokens": max_tokens} if max_tokens else {})
                 )
             return get_fallback_model()
         
@@ -81,7 +68,7 @@ class ProviderRouter:
                     actual_model = "gemini-2.0-pro"
                 else:
                     actual_model = "gemini-3-flash-preview"
-                print(f"DEBUG: Using Google Gemini model: {actual_model}")
+                print(f"{LOG} → Gemini '{actual_model}'", flush=True)
                 return ChatGoogleGenerativeAI(
                     model=actual_model,
                     google_api_key=gemini_key,
@@ -90,27 +77,21 @@ class ProviderRouter:
                     max_retries=1,
                     timeout=30,
                     request_timeout=30,
+                    **({"max_output_tokens": max_tokens} if max_tokens else {})
                 )
             return get_fallback_model()
         
-        # DeepSeek Models (OpenAI Compatible)
+        # GPT Models - Redirected to OpenAI
         elif "deepseek" in model_id:
-            if deepseek_key:
-                print(f"DEBUG: Using DeepSeek model directly")
-                return ChatOpenAI(
-                    model="deepseek-chat",
-                    api_key=deepseek_key,
-                    base_url="https://api.deepseek.com/v1",
-                    openai_api_base="https://api.deepseek.com/v1",
-                    temperature=temperature,
-                    max_retries=2
-                )
+            print(f"{LOG} → DeepSeek '{model_id}' → fallback", flush=True)
             return get_fallback_model()
             
         # xAI Models - Redirected to fallback
         elif "grok" in model_id or "xai" in model_id:
+            print(f"{LOG} → Grok/xAI '{model_id}' → fallback", flush=True)
             return get_fallback_model()
             
         # Default fallback
         else:
+            print(f"{LOG} → Default fallback for '{model_id}'", flush=True)
             return get_fallback_model()

@@ -1,0 +1,6 @@
+{
+  "user_id": "test-user",
+  "content": "Build a stunning AI-powered SaaS landing page called NeuralFlow - an AI writing assistant platform. Dark futuristic theme with purple violet accents. Hero section with animated gradient background, bold headline Write Smarter with AI, CTA buttons. Features section with 6 glass-morphism cards Smart Editor Tone Analysis SEO Optimizer Multi-language Team Collaboration Real-time Suggestions. Testimonials carousel with 3 customer reviews. Pricing section with 3 tiers Starter 9 per month Pro 29 per month Enterprise 99 per month. Footer with links and social icons. Use Tailwind CSS dark theme bg-09090b lucide-react icons smooth animations. Make it look like a 100K funded startup landing page.",
+  "plan_approved": false,
+  "framework": "react"
+}
