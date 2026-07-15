@@ -7,7 +7,7 @@ import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox
+from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, mcp_call_tool, mcp_list_tools
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 
@@ -22,6 +22,7 @@ class BuilderAgent(BaseAgent):
             model_id="gpt-4o-mini"
         )
         self.llm = ProviderRouter.get_model("gpt-4o-mini", temperature=0.0)
+        self._current_user_id: str = ""
 
     def _make_activity(
         self,
@@ -84,7 +85,7 @@ class BuilderAgent(BaseAgent):
         max_tool_calls = 15
         tool_call_count = 0
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        bound_llm = self.llm.bind_tools([client_save_code])
+        bound_llm = self.llm.bind_tools([client_save_code, mcp_list_tools, mcp_call_tool])
         start_time = time.time()
         seen_files = set()
 
@@ -136,7 +137,7 @@ class BuilderAgent(BaseAgent):
                 tool_args = tc["args"]
                 file_path = tool_args.get("file_path", "")
 
-                if file_path in seen_files:
+                if tool_name == "client_save_code" and file_path in seen_files:
                     print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
                     messages.append(ToolMessage(content=f"Already saved {file_path}. Move on to next file.", tool_call_id=tc["id"]))
                     continue
@@ -150,13 +151,24 @@ class BuilderAgent(BaseAgent):
                             client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
+                    elif tool_name == "mcp_list_tools":
+                        result = await asyncio.wait_for(
+                            mcp_list_tools.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": self._current_user_id}}),
+                            timeout=tool_timeout
+                        )
+                    elif tool_name == "mcp_call_tool":
+                        result = await asyncio.wait_for(
+                            mcp_call_tool.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": self._current_user_id}}),
+                            timeout=tool_timeout
+                        )
                     else:
                         result = f"Unknown tool: {tool_name}"
                 except asyncio.TimeoutError:
                     print(f"[BUILDER] Tool call TIMED OUT ({tool_timeout}s) for {file_path}", flush=True)
                     result = f"Tool call timed out after {tool_timeout}s: {file_path}"
 
-                seen_files.add(file_path)
+                if tool_name == "client_save_code" and file_path:
+                    seen_files.add(file_path)
                 tool_call_count += 1
                 messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
@@ -166,6 +178,7 @@ class BuilderAgent(BaseAgent):
         executed_tasks = state.get("executed_tasks", [])
         workspace_id = state.get("current_job_id")
         session_id = workspace_id
+        self._current_user_id = state.get("user_id")
         print(f"[BUILDER] execute called | task={index+1}/{len(tasks)} | session={session_id}", flush=True)
 
         if index >= len(tasks):
@@ -205,7 +218,8 @@ class BuilderAgent(BaseAgent):
                 "   export default defineConfig({ plugins: [react()], base: './', server: { port: 9999, hmr: false } });\n"
                 "6. Every import in App.jsx MUST match an actual file you created.\n"
                 "7. MAX 12 tool calls per task. Create only essential files. Do NOT create more than 12 files.\n"
-                "8. After saving ALL files, respond with ONLY a short summary. NO MORE TOOL CALLS after summary."
+                "8. If GitHub/Supabase operations are required, use mcp_list_tools then mcp_call_tool.\n"
+                "9. After saving ALL files, respond with ONLY a short summary. NO MORE TOOL CALLS after summary."
             )
         else:
             system_prompt = (
@@ -215,7 +229,8 @@ class BuilderAgent(BaseAgent):
                 "2. Structure: `backend/routes/*.js`, `backend/controllers/*.js`.\n"
                 "3. Use client_save_code for EVERY file. Do NOT call client_execute_in_sandbox.\n"
                 "4. Every route MUST be imported and mounted in server.js.\n"
-                "5. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
+                "5. For GitHub/Supabase work, use mcp_list_tools and mcp_call_tool (never raw tokens/headers).\n"
+                "6. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
             )
 
         instruction = f"Task Title: {task_title}\nDescription: {current_task.get('description', '')}"

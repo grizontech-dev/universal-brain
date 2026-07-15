@@ -28,12 +28,18 @@ export const brainApi = {
         resume_build?: boolean;
         project_id?: string;
     }, onChunk: (chunk: any) => void, signal?: AbortSignal) => {
-        const response = await brainApiFetch('chat/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-            body: JSON.stringify(data),
-            signal,
-        });
+        let response: Response | null = null;
+        try {
+            response = await brainApiFetch('chat/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                body: JSON.stringify(data),
+                signal,
+            });
+        } catch (e: any) {
+            if (e.name === 'AbortError') return;
+            throw e;
+        }
 
         if (!response || !response.ok) {
             if (!response) {
