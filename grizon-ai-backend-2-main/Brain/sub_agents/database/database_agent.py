@@ -12,7 +12,7 @@ class DatabaseAgent(BaseAgent):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
-            model_id="gpt-4o"
+            model_id="deepseek-chat"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()

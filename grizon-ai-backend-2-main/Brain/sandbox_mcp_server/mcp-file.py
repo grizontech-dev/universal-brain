@@ -155,7 +155,7 @@ async def client_execute_in_sandbox(
 
 
 from Brain.services.provider_router import ProviderRouter
-llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o"), temperature=0.3)
+llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.3)
 memory = MemorySaver()
 
 from langgraph.prebuilt import create_react_agent

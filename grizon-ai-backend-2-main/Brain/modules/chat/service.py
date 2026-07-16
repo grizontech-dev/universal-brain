@@ -557,7 +557,7 @@ class BrainChatService:
                 try:
                     from Brain.agents.leader_agent import LeaderAgent
                     prompt = initial_state.get("content") or ""
-                    model_id = initial_state.get("model_id", "gpt-4o-mini")
+                    model_id = initial_state.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"))
                     title = await LeaderAgent.generate_title(prompt, model_id)
                     if title:
                         conversation_service.update_titles(conv_id, title)
@@ -594,7 +594,18 @@ class BrainChatService:
         try:
             # Phase 1: LangGraph workflow up to init_sandbox
             try:
-                async for event in self.workflow.astream(initial_state):
+                _iterator = self.workflow.astream(initial_state).__aiter__()
+                while True:
+                    try:
+                        import asyncio as _asyncio
+                        _task = _asyncio.create_task(_iterator.__anext__())
+                        while not _task.done():
+                            _done, _ = await _asyncio.wait([_task], timeout=15.0)
+                            if not _done:
+                                yield ": keep-alive\n\n"
+                        event = _task.result()
+                    except StopAsyncIteration:
+                        break
                     if initial_state["conversation_id"] in self.STOP_REGISTRY:
                         yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
                         break
@@ -735,12 +746,12 @@ class BrainChatService:
                         pass
                 agent = BuilderAgent()
                 
-<<<<<<< HEAD
                 last_completed_index = -1
                 retry_count = {}
                 MAX_RETRIES_PER_TASK = 1
                 MAX_TOTAL_ITERATIONS = len(plan) * 3  # Safety: max 3x the plan size
                 iteration_count = 0
+                stopped = False
 
                 while True:
                     iteration_count += 1
@@ -751,15 +762,10 @@ class BrainChatService:
                                 plan[i]["status"] = "failed"
                                 plan[i]["result"] = "Task skipped: global iteration limit reached"
                         state["current_task_index"] = len(plan)
-=======
-                last_index = -1
-                stuck_count = 0
-                stopped = False
-                while True:
+                        break
                     if conv_id in self.STOP_REGISTRY:
                         yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
                         stopped = True
->>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
                         break
 
                     index = state.get("current_task_index", 0)
@@ -797,29 +803,29 @@ class BrainChatService:
                     yield f"data: {json.dumps({'task_started': _sanitize_for_json({'current_task_index': index, 'total_tasks': len(plan), 'task_label': current_task.get('label', ''), 'plan': plan})})}\n\n"
                     
                     # Run builder for one task — stream each event
-<<<<<<< HEAD
                     try:
-                        async for ev in agent.execute(state):
+                        _agent_iterator = agent.execute(state).__aiter__()
+                        while True:
+                            try:
+                                import asyncio as _asyncio
+                                _task = _asyncio.create_task(_agent_iterator.__anext__())
+                                while not _task.done():
+                                    _done, _ = await _asyncio.wait([_task], timeout=15.0)
+                                    if not _done:
+                                        yield ": keep-alive\n\n"
+                                ev = _task.result()
+                            except StopAsyncIteration:
+                                break
+                            if conv_id in self.STOP_REGISTRY:
+                                yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
+                                stopped = True
+                                break
                             if isinstance(ev, dict):
                                 if ev.get("execute_sandbox"):
                                     exe = ev["execute_sandbox"]
                                     exe["plan"] = plan
                                     exe["current_task_index"] = state.get("current_task_index", index + 1)
                                     yield f"data: {json.dumps({'execute_sandbox': _sanitize_for_json(exe)})}\n\n"
-=======
-                    stopped = False
-                    async for ev in agent.execute(state):
-                        if conv_id in self.STOP_REGISTRY:
-                            yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
-                            stopped = True
-                            break
-                        if isinstance(ev, dict):
-                            if ev.get("execute_sandbox"):
-                                exe = ev["execute_sandbox"]
-                                exe["plan"] = plan
-                                exe["current_task_index"] = state.get("current_task_index", index + 1)
-                                yield f"data: {json.dumps({'execute_sandbox': _sanitize_for_json(exe)})}\n\n"
->>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
 
                                     # Register artifacts from workspace_ops
                                     if mg and exe.get("workspace_ops"):
@@ -931,7 +937,18 @@ class BrainChatService:
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
                 runner = RunnerAgent()
                 runner_state = state
-                async for ev in runner.execute(state):
+                _runner_iterator = runner.execute(state).__aiter__()
+                while True:
+                    try:
+                        import asyncio as _asyncio
+                        _task = _asyncio.create_task(_runner_iterator.__anext__())
+                        while not _task.done():
+                            _done, _ = await _asyncio.wait([_task], timeout=15.0)
+                            if not _done:
+                                yield ": keep-alive\n\n"
+                        ev = _task.result()
+                    except StopAsyncIteration:
+                        break
                     if isinstance(ev, dict):
                         runner_state = ev
                 tasks = runner_state.get("plan", plan)
@@ -1083,7 +1100,7 @@ class BrainChatService:
             "current_task_index": current_index,
             "executed_tasks": [],
             "current_job_id": conv_id if conv_id != "new" else request.get("current_job_id"),
-            "model_id": request.get("model_id", "gpt-4o-mini"),
+            "model_id": request.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat")),
             "temperature": request.get("temperature", 0.3),
             "question_rounds": request.get("question_rounds", 0),
             "framework": normalize_framework(request.get("framework")),

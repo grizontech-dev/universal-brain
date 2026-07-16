@@ -21,9 +21,9 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="gpt-4o"
+            model_id="deepseek-chat"
         )
-        self.llm = ProviderRouter.get_model("gpt-4o", temperature=0.0)
+        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CODE_MODEL", "deepseek-coder"), temperature=0.0)
 
     def _make_activity(
         self,
@@ -104,6 +104,8 @@ class BuilderAgent(BaseAgent):
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
 
         # Free-form loop — LLM generates files until it stops or timeout
+        consecutive_duplicates = 0
+        MAX_CONSECUTIVE_DUPLICATES = 3
         while True:
             elapsed = time.time() - start_time
             if elapsed > timeout_sec:
@@ -191,8 +193,12 @@ class BuilderAgent(BaseAgent):
 
                 # Skip duplicates
                 if file_path in files_saved:
-                    print(f"{LOG} ⚠ Skip duplicate: {file_path}", flush=True)
-                    messages.append(ToolMessage(content=f"Already saved {file_path}. Generate next file.", tool_call_id=tc["id"]))
+                    consecutive_duplicates += 1
+                    print(f"{LOG} ⚠ Skip duplicate: {file_path} ({consecutive_duplicates}/{MAX_CONSECUTIVE_DUPLICATES})", flush=True)
+                    messages.append(ToolMessage(content=f"Already saved {file_path}. Generate a DIFFERENT file that does not exist yet.", tool_call_id=tc["id"]))
+                    if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
+                        print(f"{LOG} ✖ BREAKING: {consecutive_duplicates} consecutive duplicates. LLM is stuck.", flush=True)
+                        break
                     continue
 
                 print(f"{LOG} → [{len(files_saved)+1}] Generating: {file_path} ({code_len} chars)", flush=True)
@@ -205,6 +211,7 @@ class BuilderAgent(BaseAgent):
                             timeout=tool_timeout
                         )
                         files_saved.append(file_path)
+                        consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
                         # Emit file saved

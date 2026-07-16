@@ -13,7 +13,7 @@ class BaseAgent(ABC):
     def __init__(self, name: str, description: str, model_id: Optional[str] = None):
         self.name = name
         self.description = description
-        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o")
+        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat")
         self._model: Optional[BaseChatModel] = None
 
     def get_model(self, model_id: Optional[str] = None, temperature: float = 0.3, max_tokens: Optional[int] = None) -> BaseChatModel:
@@ -27,7 +27,11 @@ class BaseAgent(ABC):
         target_model_id = model_id or self.model_id
         print(f"{LOG} [{self.name}] chat() | model={target_model_id} | timeout={timeout}s | msgs={len(messages)}", flush=True)
         try:
+            import time as _t
+            _t0 = _t.time()
+            print(f"{LOG} [{self.name}] → ainvoke starting...", flush=True)
             response = await asyncio.wait_for(model.ainvoke(messages), timeout=timeout)
+            print(f"{LOG} [{self.name}] ← ainvoke done in {_t.time()-_t0:.1f}s", flush=True)
         except asyncio.TimeoutError:
             print(f"{LOG} [{self.name}] ✖ LLM TIMEOUT after {timeout}s", flush=True)
             return '{"error": "LLM call timed out"}'

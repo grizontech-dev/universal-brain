@@ -13,6 +13,9 @@ Base = declarative_base()
 
 # Import models so they are registered with Base.metadata
 import Brain.memory.models  # noqa: E402, F401
+import Brain.modules.conversations.models  # noqa: E402, F401
+import Brain.modules.connectors.supabase.service  # noqa: E402, F401
+import Brain.modules.connectors.github.service  # noqa: E402, F401
 
 # Create all tables on startup
 Base.metadata.create_all(bind=engine)

@@ -32,6 +32,8 @@ class SandboxService:
         env_vars = {
             "OPENAI_API_KEY": openai_key,
             "OPENAI_BASE_URL": openai_base or "https://api.openai.com/v1",
+            "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY", ""),
+            "DEEPSEEK_BASE_URL": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
         }
 
         payload = {
@@ -40,10 +42,10 @@ class SandboxService:
             "job_id_external": job_id_external,
             "env": env_vars,
             "environment": env_vars,
-            "model": "gpt-4o-mini",
-            "provider": "openai",
-            "api_key": openai_key,
-            "base_url": openai_base or "https://api.openai.com/v1",
+            "model": os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"),
+            "provider": "deepseek",
+            "api_key": os.getenv("DEEPSEEK_API_KEY", openai_key),
+            "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
             "api_keys": env_vars
         }
 

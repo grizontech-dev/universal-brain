@@ -6,7 +6,7 @@ from Brain.services.provider_router import ProviderRouter
 
 class LeaderAgent:
     @staticmethod
-    async def analyze(prompt: str, model_id: str = "gpt-4o", history: List[Dict[str, Any]] = None, temperature: float = 0.4) -> Dict[str, Any]:
+    async def analyze(prompt: str, model_id: str = "deepseek-chat", history: List[Dict[str, Any]] = None, temperature: float = 0.4) -> Dict[str, Any]:
         """The PM Leader Agent analyzes the request and provides an initial technical perspective."""
         model = ProviderRouter.get_model(model_id, temperature=temperature)
         
@@ -52,7 +52,7 @@ Keep your response concise but authoritative. Use technical terminology appropri
         }
 
     @staticmethod
-    async def generate_title(prompt: str, model_id: str = "gpt-4o") -> str:
+    async def generate_title(prompt: str, model_id: str = "deepseek-chat") -> str:
         """Generates a concise title for the project."""
         model = ProviderRouter.get_model(model_id, temperature=0.3)
         system_prompt = "Generate a concise title (max 50 chars) for this project request. Return ONLY the title text."

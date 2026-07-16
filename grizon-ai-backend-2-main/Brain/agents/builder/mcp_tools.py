@@ -41,7 +41,16 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
         print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return f"ERROR: Could not resolve workspace path for session '{session_id}'."
 
-    abs_path = os.path.abspath(os.path.join(ws_root, file_path))
+    # Normalize file_path to be relative to the workspace root
+    normalized_path = file_path
+    if normalized_path.startswith('/workspace/'):
+        normalized_path = normalized_path[len('/workspace/'):]
+    elif normalized_path.startswith('workspace/'):
+        normalized_path = normalized_path[len('workspace/'):]
+    elif normalized_path.startswith('/'):
+        normalized_path = normalized_path[1:]
+
+    abs_path = os.path.abspath(os.path.join(ws_root, normalized_path))
     if not abs_path.startswith(os.path.abspath(ws_root)):
         print(f"{LOG} ✖ ERROR: Invalid file path (path traversal attempt): {file_path}", flush=True)
         return "ERROR: Invalid file path."
@@ -72,6 +81,13 @@ async def client_save_code(file_path: str, code_content: str, config: RunnableCo
 
 def _resolve_entrypoint(ws_root: str, entry_file: str) -> str:
     """Resolve entrypoint to full relative path. If LLM sends 'main.jsx', find 'frontend/src/main.jsx'."""
+    if entry_file.startswith('/workspace/'):
+        entry_file = entry_file[len('/workspace/'):]
+    elif entry_file.startswith('workspace/'):
+        entry_file = entry_file[len('workspace/'):]
+    elif entry_file.startswith('/'):
+        entry_file = entry_file[1:]
+
     if "/" in entry_file or "\\" in entry_file:
         return entry_file
     for root, dirs, files in os.walk(ws_root):

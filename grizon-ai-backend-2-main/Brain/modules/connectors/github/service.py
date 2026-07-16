@@ -15,6 +15,7 @@ from cryptography.fernet import Fernet
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, JSON, String
+from sqlalchemy.dialects.postgresql import UUID
 
 from Brain.config.database import Base, SessionLocal
 from Brain.modules.connectors.supabase.service import Connector
@@ -31,7 +32,7 @@ GITHUB_UPLOAD_BASE = os.getenv("GITHUB_UPLOAD_BASE", "https://uploads.github.com
 class GitHubRepository(Base):
     __tablename__ = "github_repositories"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="userId")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="userId")
     connectorId = Column(String, ForeignKey("connectors.id"), name="connectorId")
     installationId = Column(String, name="installationId")
     repoId = Column(String, name="repoId")

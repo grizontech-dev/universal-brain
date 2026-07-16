@@ -718,48 +718,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
-<<<<<<< HEAD
-            if (!shouldStreamResumeBuild(todos, payload)) {
-                setIsBuildSyncing(false);
-                return;
-            }
-
-            setIsLoading(true);
-            setAgentStep('executing');
-            try {
-                await brainApi.streamChat(
-                    {
-                        user_id: user?.id || 'anonymous',
-                        conversation_id: conversationId,
-                        content: '__RESUME_BUILD__',
-                        model_id: selectedModel?.id || 'gpt-5.4',
-                        plan_approved: true,
-                        resume_build: true,
-                        framework,
-                        temperature: 0.3,
-                        question_rounds: questionRounds,
-                    },
-                    (event) => {
-                        if (!event || typeof event !== 'object') return;
-                        ingestSandboxStreamEvent(event as Record<string, unknown>);
-                    },
-                    abortControllerRef.current?.signal
-                );
-            } catch (e) {
-                console.error('[Brain] resume stream failed:', e);
-                setMessages(prev => [...prev, {
-                    id: `resume-stream-error-${Date.now()}`,
-                    role: 'agent',
-                    content: 'Build resume stream failed. The backend may be unavailable. Please try starting a new build.',
-                    timestamp: new Date().toLocaleTimeString()
-                }]);
-            } finally {
-                setIsLoading(false);
-                setIsBuildSyncing(false);
-=======
             if (autoStartStream && shouldStreamResumeBuild(todos, payload)) {
                 void startResumeStream(conversationId, framework, normalized);
->>>>>>> 7a5545eaf9d29e27eca7ac8a6cbef42e02684ebb
             }
         },
         [
