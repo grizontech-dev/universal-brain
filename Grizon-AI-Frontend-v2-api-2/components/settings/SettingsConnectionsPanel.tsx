@@ -25,6 +25,13 @@ export default function SettingsConnectionsPanel() {
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
+  // Manual Supabase Connection States
+  const [showManualSupabase, setShowManualSupabase] = useState(false);
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
+  const [supabaseServiceRoleKey, setSupabaseServiceRoleKey] = useState('');
+  const [savingSupabase, setSavingSupabase] = useState(false);
+
   const token = getAccessToken?.() ?? null;
 
   async function checkConnector(name: string, statusUrl: string) {
@@ -36,7 +43,8 @@ export default function SettingsConnectionsPanel() {
       if (res.ok) {
         const data = await res.json();
         if (data.connected) {
-          setConnectors((prev) => ({ ...prev, [name]: { status: 'connected' } }));
+          const detail = name === 'supabase' && data.config?.url ? data.config.url : undefined;
+          setConnectors((prev) => ({ ...prev, [name]: { status: 'connected', detail } }));
           if (name === 'github') {
             const reposRes = await fetch(
               `${BRAIN_URL}/connect-github/repositories${token ? `?token=${encodeURIComponent(token)}` : ''}`,
@@ -57,6 +65,51 @@ export default function SettingsConnectionsPanel() {
       setConnectors((prev) => ({ ...prev, [name]: { status: 'disconnected' } }));
     }
   }
+
+  const saveManualSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabaseUrl || !supabaseAnonKey) {
+      setNotification({ type: 'error', message: 'URL and Anon Key are required.' });
+      return;
+    }
+    setSavingSupabase(true);
+    try {
+      const url = `${BRAIN_URL}/connect-supabase/save-credentials${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          url: supabaseUrl,
+          anon_key: supabaseAnonKey,
+          service_role_key: supabaseServiceRoleKey || undefined,
+        }),
+      });
+      if (res.ok) {
+        setConnectors((prev) => ({
+          ...prev,
+          supabase: { status: 'connected', detail: supabaseUrl },
+        }));
+        setNotification({ type: 'success', message: 'Supabase credentials saved successfully!' });
+        setShowManualSupabase(false);
+        setSupabaseUrl('');
+        setSupabaseAnonKey('');
+        setSupabaseServiceRoleKey('');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setNotification({
+          type: 'error',
+          message: errData.detail || 'Failed to save Supabase credentials.',
+        });
+      }
+    } catch {
+      setNotification({ type: 'error', message: 'Failed to connect to the backend.' });
+    } finally {
+      setSavingSupabase(false);
+    }
+  };
 
   const disconnectConnector = async (name: string) => {
     setDisconnecting(name);
@@ -265,42 +318,129 @@ export default function SettingsConnectionsPanel() {
             Connect your Supabase project. The AI can query your database, manage auth, and inspect your schema.
           </p>
           {connectors.supabase.status === 'connected' ? (
-            <div className='flex gap-2'>
-              <button
-                type='button'
-                onClick={connectSupabase}
-                className='flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
-              >
-                <ExternalLink size={14} /> Reconnect
-              </button>
-              <button
-                type='button'
-                onClick={() => disconnectConnector('supabase')}
-                disabled={disconnecting === 'supabase'}
-                className='flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-white/50 rounded-xl text-[13px] font-medium hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-all disabled:opacity-50'
-              >
-                {disconnecting === 'supabase' ? (
-                  <Loader2 size={14} className='animate-spin' />
-                ) : (
-                  <Unplug size={14} />
-                )}
-                Disconnect
-              </button>
+            <div className='space-y-4 animate-in fade-in duration-200'>
+              {connectors.supabase.detail && (
+                <div className='space-y-1.5'>
+                  <p className='text-[10px] font-bold text-text-faint uppercase tracking-wider'>
+                    Project URL
+                  </p>
+                  <div className='flex items-center gap-2 px-3 py-2 bg-surface-2 rounded-lg text-[12px] text-text-secondary font-mono truncate'>
+                    {connectors.supabase.detail}
+                  </div>
+                </div>
+              )}
+              <div className='flex gap-2'>
+                <button
+                  type='button'
+                  onClick={connectSupabase}
+                  className='flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 text-accent rounded-xl text-[13px] font-medium hover:bg-accent/20 transition-all'
+                >
+                  <ExternalLink size={14} /> Reconnect (OAuth)
+                </button>
+                <button
+                  type='button'
+                  onClick={() => disconnectConnector('supabase')}
+                  disabled={disconnecting === 'supabase'}
+                  className='flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 border border-white/10 text-white/50 rounded-xl text-[13px] font-medium hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-all disabled:opacity-50'
+                >
+                  {disconnecting === 'supabase' ? (
+                    <Loader2 size={14} className='animate-spin' />
+                  ) : (
+                    <Unplug size={14} />
+                  )}
+                  Disconnect
+                </button>
+              </div>
             </div>
           ) : (
-            <button
-              type='button'
-              onClick={connectSupabase}
-              disabled={connectors.supabase.status === 'loading'}
-              className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-gray-950 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-all disabled:opacity-50'
-            >
-              {connectors.supabase.status === 'loading' ? (
-                <Loader2 size={14} className='animate-spin' />
+            <div className='space-y-4'>
+              {!showManualSupabase ? (
+                <div className='space-y-2.5'>
+                  <button
+                    type='button'
+                    onClick={connectSupabase}
+                    disabled={connectors.supabase.status === 'loading'}
+                    className='w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-gray-950 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-all disabled:opacity-50'
+                  >
+                    {connectors.supabase.status === 'loading' ? (
+                      <Loader2 size={14} className='animate-spin' />
+                    ) : (
+                      <Database size={14} />
+                    )}
+                    Connect Supabase (OAuth)
+                  </button>
+                  <button
+                    type='button'
+                    onClick={() => setShowManualSupabase(true)}
+                    disabled={connectors.supabase.status === 'loading'}
+                    className='w-full text-center text-text-muted hover:text-text-primary transition-colors text-[12px] font-semibold underline'
+                  >
+                    Configure manually
+                  </button>
+                </div>
               ) : (
-                <Database size={14} />
+                <form onSubmit={saveManualSupabase} className='space-y-3 p-4 bg-surface-2 border border-border-default rounded-xl animate-in slide-in-from-bottom-2 duration-300'>
+                  <div className='flex items-center justify-between pb-1'>
+                    <span className='text-[12px] font-bold text-text-primary'>Manual Credentials</span>
+                    <button
+                      type='button'
+                      onClick={() => setShowManualSupabase(false)}
+                      className='text-[10px] text-text-faint hover:text-text-primary uppercase tracking-wider font-bold transition-colors'
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div className='space-y-1'>
+                    <label className='text-[11px] font-medium text-text-secondary'>Supabase Project URL</label>
+                    <input
+                      type='url'
+                      required
+                      placeholder='https://your-project.supabase.co'
+                      value={supabaseUrl}
+                      onChange={(e) => setSupabaseUrl(e.target.value)}
+                      disabled={savingSupabase}
+                      className='w-full bg-input border border-border-default rounded-lg px-3 py-2 text-[12px] text-text-primary focus:outline-none placeholder:text-text-faint'
+                    />
+                  </div>
+                  <div className='space-y-1'>
+                    <label className='text-[11px] font-medium text-text-secondary'>Anon / Public Key</label>
+                    <input
+                      type='password'
+                      required
+                      placeholder='Public Anon Key'
+                      value={supabaseAnonKey}
+                      onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                      disabled={savingSupabase}
+                      className='w-full bg-input border border-border-default rounded-lg px-3 py-2 text-[12px] text-text-primary focus:outline-none placeholder:text-text-faint'
+                    />
+                  </div>
+                  <div className='space-y-1'>
+                    <label className='text-[11px] font-medium text-text-secondary'>Service Role Key (Optional)</label>
+                    <input
+                      type='password'
+                      placeholder='Service Role Key (for admin tasks)'
+                      value={supabaseServiceRoleKey}
+                      onChange={(e) => setSupabaseServiceRoleKey(e.target.value)}
+                      disabled={savingSupabase}
+                      className='w-full bg-input border border-border-default rounded-lg px-3 py-2 text-[12px] text-text-primary focus:outline-none placeholder:text-text-faint'
+                    />
+                  </div>
+                  <button
+                    type='submit'
+                    disabled={savingSupabase}
+                    className='w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-white text-gray-950 rounded-lg text-[12px] font-bold hover:bg-gray-100 transition-all disabled:opacity-50 mt-2'
+                  >
+                    {savingSupabase ? (
+                      <>
+                        <Loader2 size={12} className='animate-spin' /> Saving...
+                      </>
+                    ) : (
+                      'Save Connection'
+                    )}
+                  </button>
+                </form>
               )}
-              Connect Supabase
-            </button>
+            </div>
           )}
         </div>
       </div>
