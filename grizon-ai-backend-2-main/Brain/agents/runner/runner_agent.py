@@ -93,13 +93,7 @@ class RunnerAgent(BaseAgent):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
 
-            # Kill any existing sandbox for this session to free port 9999
-            try:
-                print(f"[RUNNER] Cleaning up old sandbox for session={_sid}...")
-                await sandbox_mcp.delete_sandbox(str(_sid))
-                print(f"[RUNNER] Old sandbox cleaned for session={_sid}")
-            except Exception as cleanup_err:
-                print(f"[RUNNER] Cleanup failed (non-fatal): {cleanup_err}")
+            # Removed eager sandbox deletion here. Sandbox will be reused or auto-deleted if idle.
 
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(

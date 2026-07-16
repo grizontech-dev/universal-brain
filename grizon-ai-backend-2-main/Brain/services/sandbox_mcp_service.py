@@ -274,24 +274,29 @@ class SandboxMCPService:
                 with open(vite_cfg, "r") as f:
                     content = f.read()
                 patched = _re.sub(r'port:\s*5173', 'port: 9999', content)
-                # Add base: './' so Vite generates relative paths for iframe proxy compatibility
-                if "base:" not in patched and "base :" not in patched:
-                    patched = patched.replace(
-                        'server: {',
-                        'base: "./",\n  server: {'
-                    ) if 'server: {' in patched else patched.replace(
-                        'server:{',
-                        'base:"./",server:{'
-                    )
-                # Disable HMR — Vite HMR WebSocket fails inside iframes/tunnels
-                if 'hmr' not in patched:
-                    patched = patched.replace(
-                        'server: {',
-                        'server: { hmr: false,'
-                    ) if 'server: {' in patched else patched.replace(
-                        'server:{',
-                        'server:{ hmr: false,'
-                    )
+                
+                # If no server config exists, inject it right after defineConfig({
+                if 'server:' not in patched and 'server :' not in patched and 'defineConfig({' in patched:
+                    patched = _re.sub(r'defineConfig\(\{', 'defineConfig({\n  server: { port: 9999, host: "0.0.0.0", hmr: false, allowedHosts: true },\n  base: "./",', patched)
+                else:
+                    # Fallback logic if server config exists
+                    if "base:" not in patched and "base :" not in patched:
+                        patched = patched.replace(
+                            'server: {',
+                            'base: "./",\n  server: {'
+                        ) if 'server: {' in patched else patched.replace(
+                            'server:{',
+                            'base:"./",server:{'
+                        )
+                    if 'hmr' not in patched:
+                        patched = patched.replace(
+                            'server: {',
+                            'server: { hmr: false, host: "0.0.0.0", allowedHosts: true,'
+                        ) if 'server: {' in patched else patched.replace(
+                            'server:{',
+                            'server:{ hmr: false, host: "0.0.0.0", allowedHosts: true,'
+                        )
+                
                 if patched != content:
                     with open(vite_cfg, "w") as f:
                         f.write(patched)
@@ -305,6 +310,8 @@ class SandboxMCPService:
                 with open(pkg_json, "r") as f:
                     content = f.read()
                 patched = content.replace("--port 5173", "--port 9999")
+                # Also catch default vite dev script and force port
+                patched = _re.sub(r'"dev":\s*"vite"', '"dev": "vite --port 9999 --host 0.0.0.0"', patched)
                 if patched != content:
                     with open(pkg_json, "w") as f:
                         f.write(patched)
