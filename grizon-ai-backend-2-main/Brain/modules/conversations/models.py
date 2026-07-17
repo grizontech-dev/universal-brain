@@ -52,6 +52,7 @@ class Message(Base):
     todoList = Column(JSON, nullable=True, name="todo_list") # Persistent project roadmap
     sandboxJob = Column(JSON, nullable=True, name="sandbox_job") # Persistent execution credentials
     extra_metadata = Column(JSON, name="metadata", nullable=True) # Extra metadata (e.g. planContent)
+    creditsDeducted = Column(Integer, default=0, name="credits_deducted")
     createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
 
 class BrainProject(Base):

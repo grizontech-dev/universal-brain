@@ -56,20 +56,21 @@ class ProviderRouter:
         # Claude Models or Unknown IDs - Fallback
         if "claude" in model_id.lower() or not is_known_id:
             print(f"DEBUG: Redirecting '{model_id}' (Claude/Unknown fallback)")
-            return get_fallback_model()
+            model = get_fallback_model()
         
         # GPT Models - Prefer low-cost OpenAI if available, else fallback
         elif "gpt" in model_id.lower():
             if openai_key:
                 print(f"DEBUG: Using OpenAI model '{model_id}'")
-                return ChatOpenAI(
+                model = ChatOpenAI(
                     model=model_id,
                     api_key=openai_key,
                     base_url=openai_base,
                     temperature=temperature,
                     max_retries=2
                 )
-            return get_fallback_model()
+            else:
+                model = get_fallback_model()
         
         # Gemini Models
         elif "gemini" in model_id:
@@ -82,7 +83,7 @@ class ProviderRouter:
                 else:
                     actual_model = "gemini-3-flash-preview"
                 print(f"DEBUG: Using Google Gemini model: {actual_model}")
-                return ChatGoogleGenerativeAI(
+                model = ChatGoogleGenerativeAI(
                     model=actual_model,
                     google_api_key=gemini_key,
                     temperature=temperature,
@@ -91,13 +92,14 @@ class ProviderRouter:
                     timeout=30,
                     request_timeout=30,
                 )
-            return get_fallback_model()
+            else:
+                model = get_fallback_model()
         
         # DeepSeek Models (OpenAI Compatible)
         elif "deepseek" in model_id:
             if deepseek_key:
                 print(f"DEBUG: Using DeepSeek model directly")
-                return ChatOpenAI(
+                model = ChatOpenAI(
                     model="deepseek-chat",
                     api_key=deepseek_key,
                     base_url="https://api.deepseek.com/v1",
@@ -105,12 +107,17 @@ class ProviderRouter:
                     temperature=temperature,
                     max_retries=2
                 )
-            return get_fallback_model()
+            else:
+                model = get_fallback_model()
             
         # xAI Models - Redirected to fallback
         elif "grok" in model_id or "xai" in model_id:
-            return get_fallback_model()
+            model = get_fallback_model()
             
         # Default fallback
         else:
-            return get_fallback_model()
+            model = get_fallback_model()
+
+        from Brain.utils.token_counter import TokenCounterCallbackHandler
+        model.callbacks = (model.callbacks or []) + [TokenCounterCallbackHandler()]
+        return model

@@ -390,7 +390,7 @@ class BrainChatService:
         }
         return mapping.get(node_name, (state.get("status", "unknown"), node_name))
 
-    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str):
+    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str, credits_deducted: int = 0):
         """Save a phase message to the conversation DB."""
         report = state.get("report") or state.get("progress_msg") or ""
         leader_analysis = state.get("leader_analysis") or {}
@@ -409,7 +409,8 @@ class BrainChatService:
             conv_id, "ASSISTANT", report,
             todo_list=todo_list if isinstance(todo_list, list) else None,
             sandbox_job=sandbox_job,
-            metadata=metadata
+            metadata=metadata,
+            credits_deducted=credits_deducted
         )
 
         mg: MemoryGateway = state.get("memory_gateway")
@@ -487,6 +488,9 @@ class BrainChatService:
 
     async def process_chat_stream(self, request: Dict[str, Any]) -> AsyncGenerator[str, None]:
         import asyncio
+        from Brain.utils.token_counter import token_counter_context, calculate_credits
+        from Brain.modules.conversations.service import conversation_service
+
         initial_state = self._prepare_initial_state(request)
         
         conv_id, _ = conversation_service.ensure_brain_persistence(initial_state)
@@ -532,6 +536,10 @@ class BrainChatService:
             except RuntimeError:
                 pass
 
+        ctx = token_counter_context()
+        tokens_data = ctx.__enter__()
+        deducted_credits = 0
+
         state = initial_state
         try:
             # Phase 1: LangGraph workflow up to init_sandbox
@@ -545,8 +553,24 @@ class BrainChatService:
                 for node_name, node_data in event.items():
                     initial_state.update(node_data)
                     report = node_data.get("report") or node_data.get("progress_msg")
+
+                    # Progressive credit deduction check
+                    current_tokens = tokens_data["total_tokens"]
+                    target_credits = calculate_credits(current_tokens)
+                    if target_credits > deducted_credits:
+                        credits_to_deduct = target_credits - deducted_credits
+                        user_id = initial_state.get("user_id")
+                        success = conversation_service.deduct_credits(
+                            user_id=user_id,
+                            amount=credits_to_deduct,
+                            reason=f"Brain multi-step workflow phase: {node_name}",
+                            reference_id=conv_id
+                        )
+                        if success:
+                            deducted_credits = target_credits
+
                     if node_name == "init_sandbox":
-                        self._save_phase_message(conv_id, initial_state, node_name)
+                        self._save_phase_message(conv_id, initial_state, node_name, deducted_credits)
 
                     if report or node_name in ("recursive_clarify", "strategic_plan"):
                         if node_name == "strategic_plan":
@@ -577,7 +601,8 @@ class BrainChatService:
                             conv_id, "ASSISTANT", report or "",
                             todo_list=todo_list if isinstance(todo_list, list) else None,
                             sandbox_job=sandbox_job,
-                            metadata=metadata
+                            metadata=metadata,
+                            credits_deducted=deducted_credits
                         )
                         if mg:
                             import asyncio
@@ -716,11 +741,27 @@ class BrainChatService:
                         "thoughts": thoughts,
                         "current_task_index": state.get("current_task_index", index + 1),
                     }
+                    # Progressive credit deduction check
+                    current_tokens = tokens_data["total_tokens"]
+                    target_credits = calculate_credits(current_tokens)
+                    if target_credits > deducted_credits:
+                        credits_to_deduct = target_credits - deducted_credits
+                        user_id = state.get("user_id")
+                        success = conversation_service.deduct_credits(
+                            user_id=user_id,
+                            amount=credits_to_deduct,
+                            reason=f"Brain task execution: {plan[index].get('label', f'Task {index}')}",
+                            reference_id=conv_id
+                        )
+                        if success:
+                            deducted_credits = target_credits
+
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", report,
                         todo_list=list(plan),
                         sandbox_job=sandbox_job,
-                        metadata=metadata
+                        metadata=metadata,
+                        credits_deducted=deducted_credits
                     )
                     if mg:
                         import asyncio
@@ -731,6 +772,21 @@ class BrainChatService:
                         except RuntimeError:
                             pass
                 if stopped or conv_id in self.STOP_REGISTRY:
+                    # Final deduction check on stop
+                    current_tokens = tokens_data["total_tokens"]
+                    target_credits = calculate_credits(current_tokens)
+                    if target_credits > deducted_credits:
+                        credits_to_deduct = target_credits - deducted_credits
+                        user_id = state.get("user_id")
+                        success = conversation_service.deduct_credits(
+                            user_id=user_id,
+                            amount=credits_to_deduct,
+                            reason="Brain execution stopped",
+                            reference_id=conv_id
+                        )
+                        if success:
+                            deducted_credits = target_credits
+
                     print(f"[Brain] Execution stopped by user. Bypassing Phase 3 (Runner). Index: {state.get('current_task_index', 0)}")
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", state.get("report") or "Build execution stopped.",
@@ -741,7 +797,8 @@ class BrainChatService:
                             "agentStep": "execute_sandbox",
                             "planApproved": True,
                             "current_task_index": state.get("current_task_index", 0),
-                        }
+                        },
+                        credits_deducted=deducted_credits
                     )
                     return
 
@@ -787,6 +844,21 @@ class BrainChatService:
                 }
                 yield f"data: {json.dumps({'final_report': _sanitize_for_json(final_payload)})}\n\n"
                 
+                # Final deduction check on runner completion
+                current_tokens = tokens_data["total_tokens"]
+                target_credits = calculate_credits(current_tokens)
+                if target_credits > deducted_credits:
+                    credits_to_deduct = target_credits - deducted_credits
+                    user_id = state.get("user_id")
+                    success = conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain workflow completion",
+                        reference_id=conv_id
+                    )
+                    if success:
+                        deducted_credits = target_credits
+
                 report = runner_state.get("run_report") or ""
                 metadata = {
                     "planContent": state.get("project_plan"),
@@ -798,7 +870,8 @@ class BrainChatService:
                     conv_id, "ASSISTANT", report,
                     todo_list=list(tasks),
                     sandbox_job=sandbox_job,
-                    metadata=metadata
+                    metadata=metadata,
+                    credits_deducted=deducted_credits
                 )
                 if mg:
                     import asyncio
@@ -810,6 +883,22 @@ class BrainChatService:
                         pass
                     
         except Exception as e:
+            # Final deduction check on error
+            try:
+                current_tokens = tokens_data["total_tokens"]
+                target_credits = calculate_credits(current_tokens)
+                if target_credits > deducted_credits:
+                    credits_to_deduct = target_credits - deducted_credits
+                    user_id = state.get("user_id") if state else initial_state.get("user_id")
+                    conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain execution error final deduction",
+                        reference_id=conv_id
+                    )
+            except Exception as deduct_err:
+                print(f"ERROR: Failed to deduct credits on exception: {deduct_err}")
+
             print(f"ERROR in stream: {e}")
             if mg:
                 import asyncio as _asyncio5
@@ -826,6 +915,7 @@ class BrainChatService:
             traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
+            ctx.__exit__(None, None, None)
             if mg:
                 mg.close_all()
             yield "event: end\ndata: {}\n\n"
@@ -906,9 +996,27 @@ class BrainChatService:
         mg: MemoryGateway = initial_state.get("memory_gateway")
         if mg:
             initial_state["memory_context"] = await mg.build_agent_context("Leader")
+
+        from Brain.utils.token_counter import token_counter_context, calculate_credits
+        from Brain.modules.conversations.service import conversation_service
+
         try:
-            result = await self.workflow.ainvoke(initial_state)
-            return result
+            with token_counter_context() as tokens_data:
+                result = await self.workflow.ainvoke(initial_state)
+                
+                # Deduct credits spent during sync chat execution
+                current_tokens = tokens_data["total_tokens"]
+                credits_to_deduct = calculate_credits(current_tokens)
+                if credits_to_deduct > 0:
+                    user_id = initial_state.get("user_id")
+                    conv_id = result.get("conversation_id")
+                    conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain chat execution",
+                        reference_id=conv_id
+                    )
+                return result
         finally:
             if mg:
                 mg.close_all()
