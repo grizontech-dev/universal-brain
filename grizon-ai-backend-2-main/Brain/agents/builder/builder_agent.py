@@ -168,6 +168,7 @@ class BuilderAgent(BaseAgent):
                 break
 
             # Execute each tool call
+            stuck = False
             for tc in response.tool_calls:
                 if time.time() - start_time > timeout_sec:
                     break
@@ -191,13 +192,13 @@ class BuilderAgent(BaseAgent):
                     file_path = corrected
                     print(f"{LOG} ↻ Path corrected: {tool_args.get('file_path', '')} → {file_path}", flush=True)
 
-                # Skip duplicates
                 if file_path in files_saved:
                     consecutive_duplicates += 1
                     print(f"{LOG} ⚠ Skip duplicate: {file_path} ({consecutive_duplicates}/{MAX_CONSECUTIVE_DUPLICATES})", flush=True)
                     messages.append(ToolMessage(content=f"Already saved {file_path}. Generate a DIFFERENT file that does not exist yet.", tool_call_id=tc["id"]))
                     if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
                         print(f"{LOG} ✖ BREAKING: {consecutive_duplicates} consecutive duplicates. LLM is stuck.", flush=True)
+                        stuck = True
                         break
                     continue
 
@@ -258,6 +259,9 @@ class BuilderAgent(BaseAgent):
                 except Exception as e:
                     print(f"{LOG} ✖ Tool ERROR for {file_path}: {e}", flush=True)
                     messages.append(ToolMessage(content=f"Error saving {file_path}: {e}", tool_call_id=tc["id"]))
+
+            if stuck:
+                break
 
         # ═══════════════════════════════════════════════════════════════
         # VALIDATION LOOP: Scan ALL files for broken imports, auto-fix
@@ -690,72 +694,46 @@ export default App;
             system_prompt = (
                 "You are a Senior Frontend UI Engineer. Stack: React + Tailwind CSS + react-router-dom + lucide-react.\n\n"
                 "═══ CRITICAL RULES (violation = broken app) ═══\n\n"
-                "1. App.jsx MUST wrap ALL routes with Header and Footer:\n"
+                "1. App.jsx MUST wrap ALL routes and include global layout components (like Header, Navbar, or Footer if applicable):\n"
                 "```jsx\n"
-                "import Header from './components/Header';\n"
-                "import Footer from './components/Footer';\n"
-                "function App() {{\n"
+                "import React from 'react';\n"
+                "import { BrowserRouter, Routes, Route } from 'react-router-dom';\n"
+                "// import your pages and layout components here\n"
+                "function App() {\n"
                 "  return (\n"
                 "    <BrowserRouter>\n"
                 "      <div className=\"bg-[#09090b] text-white min-h-screen flex flex-col\">\n"
-                "        <Header />\n"
+                "        {/* Insert Header/Navbar here if needed */}\n"
                 "        <main className=\"flex-grow\">\n"
                 "          <Routes>\n"
-                "            <Route path=\"/\" element={{<Home />}} />\n"
+                "            <Route path=\"/\" element={<Home />} />\n"
+                "            {/* Add other routes here based on the plan */}\n"
                 "          </Routes>\n"
                 "        </main>\n"
-                "        <Footer />\n"
+                "        {/* Insert Footer here if needed */}\n"
                 "      </div>\n"
                 "    </BrowserRouter>\n"
                 "  );\n"
-                "}}\n"
+                "}\n"
+                "export default App;\n"
                 "```\n\n"
-                "2. Header.jsx MUST use `import {{ Link }} from 'react-router-dom'` and `<Link to=\"/page\">` for navigation.\n"
-                "   NEVER use `<a href=\"/page\">` — that causes full page reload and breaks SPA.\n"
-                "   Use `useLocation()` to highlight the active nav item.\n\n"
-                "3. Home.jsx MUST be a complete landing page with ALL of these sections (150-300 lines):\n"
-                "   - Hero section: gradient heading, subtitle, 2 CTA buttons (primary gradient + secondary outline)\n"
-                "   - Stats bar: 4 key metrics (e.g., users, revenue, rating, countries)\n"
-                "   - Features grid: 4+ cards with icons, titles, descriptions, and links to relevant pages\n"
-                "   - Why section: 3 benefit cards with icons\n"
-                "   - CTA section: final call-to-action with gradient background\n"
-                "   NEVER write a Home.jsx with just a heading and one line of text.\n\n"
-                "4. EVERY component page (Dashboard, Features, etc.) MUST have:\n"
-                "   - A page header with icon and title\n"
-                "   - Substantial content (tables, cards, charts, forms — NOT empty divs)\n"
-                "   - Minimum 40 lines per page component\n"
-                "   - Real contextual content about the app's domain\n\n"
-                "5. Footer.jsx MUST have:\n"
-                "   - Brand logo + description\n"
-                "   - 3 columns of links (Product, Company, Legal)\n"
-                "   - Copyright line + social icons\n"
-                "   - Minimum 50 lines\n\n"
-                "═══ EXECUTION ORDER ═══\n"
-                "1. frontend/src/App.jsx — with Header/Footer layout + ALL route imports\n"
-                "2. frontend/src/components/Header.jsx — nav with react-router-dom Link\n"
-                "3. frontend/src/components/Footer.jsx — professional footer\n"
-                "4. frontend/src/components/Home.jsx — complete landing page (150-300 lines)\n"
-                "5. Other page components — each with substantial content\n"
-                "6. package.json ONLY if new deps needed\n\n"
+                "2. Navigation MUST use `import { Link } from 'react-router-dom'` and `<Link to=\"/page\">`.\n"
+                "   NEVER use `<a href=\"/page\">` — that causes full page reload and breaks SPA.\n\n"
+                "3. BUILD EXACTLY WHAT IS IN THE PLAN. If the plan asks for a To-Do App, build To-Do components (TaskCard, TaskForm, etc.). DO NOT build generic SaaS landing pages unless specifically requested.\n\n"
+                "4. EVERY component page MUST have:\n"
+                "   - Substantial, real content (no empty divs or placeholders)\n"
+                "   - Beautiful Tailwind CSS styling\n"
+                "   - Proper error handling and loading states\n\n"
                 "═══ DESIGN RULES ═══\n"
-                "- Dark theme: bg-[#09090b] or bg-[#0a0a0a], white text\n"
+                "- Dark theme: bg-[#09090b] or bg-[#0a0a0a], white text (unless light theme is requested)\n"
                 "- Tailwind CSS on EVERY element — NO inline styles, NO bare HTML\n"
-                "- Gradients: bg-gradient-to-r from-violet-600 to-indigo-600\n"
-                "- Glass cards: bg-white/[0.02] border border-white/5 rounded-2xl\n"
-                "- Hover effects: hover:bg-white/[0.05] hover:border-white/10 transition-all\n"
-                "- Icons from lucide-react (TrendingUp, Bell, BarChart3, Shield, Zap, Globe, etc.)\n"
-                "- Responsive: grid-cols-1 md:grid-cols-2 lg:grid-cols-3\n"
-                "- Spacing: py-24 for sections, gap-6 for grids, p-6 for cards\n\n"
-                "═══ CONTENT RULES ═══\n"
-                "- NEVER write placeholder text like 'Welcome to Our Platform' or 'Feature 1: Description'\n"
-                "- Write REAL, specific content about the app's domain (trading, healthcare, e-commerce, etc.)\n"
-                "- Use actual product names, real feature descriptions, meaningful button text\n"
-                "- Every CTA button must link to a real route using `<Link to=\"/page\">`\n\n"
+                "- Use rich UI elements: Glass cards, gradients, hover effects\n"
+                "- Icons from lucide-react (e.g., Plus, Check, Trash, Edit)\n\n"
                 "═══ FILE RULES ═══\n"
-                "- frontend/src/App.jsx: Header/Footer layout, ALL component imports, ALL routes\n"
-                "- frontend/src/components/*.jsx: one file per component, 40-300 lines each\n"
-                "- Use client_save_code for EVERY file\n"
-                "- NO duplicates, NO orphaned components (every component must be imported in App.jsx)\n\n"
+                "- frontend/src/App.jsx: Layout and ALL route imports\n"
+                "- frontend/src/components/*.jsx or frontend/src/pages/*.jsx: one file per component\n"
+                "- Use client_save_code for EVERY file you generate\n"
+                "- NO orphaned components (every component must be imported somewhere)\n\n"
                 "AFTER ALL FILES: respond with ONLY a short summary."
             )
         elif category == "backend":
