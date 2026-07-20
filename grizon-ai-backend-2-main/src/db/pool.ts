@@ -40,7 +40,7 @@ export function getPool(): any {
     ...KEEPALIVE_OPTS,
   });
 
-  raw.on("error", (err: any) => {
+  (raw as any).on("error", (err: any) => {
     console.error("[DB-POOL] Idle client error (connection recycled):", err.message);
   });
 
