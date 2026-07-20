@@ -58,9 +58,9 @@ class Message(Base):
 
 class BrainProject(Base):
     __tablename__ = "brain_projects"
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
-    conversationId = Column(UUID(as_uuid=False), ForeignKey("conversations.id"), name="conversation_id", unique=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    userId = Column(String, ForeignKey("users.id"), name="user_id")
+    conversationId = Column(String, ForeignKey("conversations.id"), name="conversation_id", unique=True)
     title = Column(String)
     repoUrl = Column(String, name="repo_url")
     status = Column(String, default="IDLE")
@@ -90,7 +90,7 @@ class CreditTransaction(Base):
 class BrainTask(Base):
     __tablename__ = "brain_tasks"
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    projectId = Column(UUID(as_uuid=False), ForeignKey("brain_projects.id"), name="project_id")
+    projectId = Column(String, ForeignKey("brain_projects.id"), name="project_id")
     label = Column(String)
     strategy = Column(String)
     agent = Column(String)
