@@ -28,10 +28,12 @@ GITHUB_API_BASE = os.getenv("GITHUB_API_BASE", "https://api.github.com")
 GITHUB_UPLOAD_BASE = os.getenv("GITHUB_UPLOAD_BASE", "https://uploads.github.com")
 
 
+from sqlalchemy.dialects.postgresql import UUID
+
 class GitHubRepository(Base):
     __tablename__ = "github_repositories"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="userId")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="userId")
     connectorId = Column(String, ForeignKey("connectors.id"), name="connectorId")
     installationId = Column(String, name="installationId")
     repoId = Column(String, name="repoId")

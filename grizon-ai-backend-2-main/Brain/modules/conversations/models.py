@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, JSON, Float, ForeignKey, Boolean, Text
+from sqlalchemy.dialects.postgresql import UUID
 from Brain.config.database import Base
 from datetime import datetime
 import uuid
@@ -35,7 +36,7 @@ class User(Base):
 class Conversation(Base):
     __tablename__ = "conversations"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
     title = Column(String)
     status = Column(String, default="active")
     platform = Column(String, default="web")
@@ -45,8 +46,8 @@ class Conversation(Base):
 class Message(Base):
     __tablename__ = "messages"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    conversationId = Column(String, ForeignKey("conversations.id"), name="conversation_id")
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
+    conversationId = Column(UUID(as_uuid=False), ForeignKey("conversations.id"), name="conversation_id")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
     role = Column(String) # USER, ASSISTANT, SYSTEM
     content = Column(String)
     todoList = Column(JSON, nullable=True, name="todo_list") # Persistent project roadmap
@@ -57,8 +58,8 @@ class Message(Base):
 class BrainProject(Base):
     __tablename__ = "brain_projects"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
-    conversationId = Column(String, ForeignKey("conversations.id"), name="conversation_id", unique=True)
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
+    conversationId = Column(UUID(as_uuid=False), ForeignKey("conversations.id"), name="conversation_id", unique=True)
     title = Column(String)
     repoUrl = Column(String, name="repo_url")
     status = Column(String, default="IDLE")
@@ -68,7 +69,7 @@ class BrainProject(Base):
 class CreditWallet(Base):
     __tablename__ = "wallets"
     id = Column(String, primary_key=True)
-    userId = Column(String, ForeignKey("users.id"), unique=True, name="user_id")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), unique=True, name="user_id")
     balance = Column(Integer, default=0)
     totalEarned = Column(Integer, default=0, name="lifetime_earned")
     totalSpent = Column(Integer, default=0, name="lifetime_spent")

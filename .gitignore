@@ -2,3 +2,8 @@
 Grizon-AI-Backend/
 Grizon-AI-Frontend-v2/
 Grizon-AI-Superadmin-master/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

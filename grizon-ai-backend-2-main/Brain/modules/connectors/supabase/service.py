@@ -11,11 +11,13 @@ from sqlalchemy import Column, String, Boolean, DateTime, JSON, ForeignKey
 import uuid
 from Brain.config.database import Base, SessionLocal
 
+from sqlalchemy.dialects.postgresql import UUID
+
 # Database Model
 class Connector(Base):
     __tablename__ = "connectors"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="userId")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="userId")
     type = Column(String)
     config = Column(JSON)
     isActive = Column(Boolean, default=True, name="isActive")
