@@ -2,7 +2,7 @@ FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
@@ -17,7 +17,7 @@ FROM node:20-bookworm-slim AS prod-deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --legacy-peer-deps && npm cache clean --force
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
