@@ -58,6 +58,32 @@ export type BrainEvent =
   | {
       type: "build_success";
       timestamp: string;
+    }
+  | {
+      type: "file_writing";
+      file: string;
+      task_title?: string;
+      timestamp: string;
+    }
+  | {
+      type: "file_saved";
+      file: string;
+      task_title?: string;
+      chars?: number;
+      timestamp: string;
+    }
+  | {
+      type: "llm_thinking";
+      task_title?: string;
+      files_done?: number;
+      timestamp: string;
+    }
+  | {
+      type: "task_files_summary";
+      task_title?: string;
+      files_count?: number;
+      output_preview?: string;
+      timestamp: string;
     };
 
 export type BuildActivityType =
