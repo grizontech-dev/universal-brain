@@ -124,7 +124,7 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
     ports:
-      - "4000:3000"
+      - "4000:4000"
     command: ["sh", "-c", "node dist/db/migrations/run.js && node dist/index.js"]
     healthcheck:
       test:
@@ -132,7 +132,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://localhost:4000/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
