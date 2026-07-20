@@ -81,21 +81,32 @@ class ProviderRouter:
         elif "gemini" in model_id:
             gemini_key = os.getenv("GOOGLE_AI_API_KEY", "").strip() or None
             if gemini_key:
-                if "3-flash" in model_id or "flash" in model_id:
-                    actual_model = "gemini-3-flash-preview"
+                # Map model names to actual API model IDs
+                if "2.5-flash-lite" in model_id:
+                    actual_model = "gemini-2.5-flash-lite"
+                elif "2.5-flash" in model_id:
+                    actual_model = "gemini-2.5-flash"
+                elif "2.5-pro" in model_id:
+                    actual_model = "gemini-2.5-pro"
+                elif "2.0-flash-lite" in model_id:
+                    actual_model = "gemini-2.0-flash-lite"
+                elif "2.0-flash" in model_id:
+                    actual_model = "gemini-2.0-flash"
+                elif "flash" in model_id:
+                    actual_model = "gemini-2.5-flash-lite"
                 elif "pro" in model_id:
-                    actual_model = "gemini-2.0-pro"
+                    actual_model = "gemini-2.5-pro"
                 else:
-                    actual_model = "gemini-3-flash-preview"
+                    actual_model = "gemini-2.5-flash-lite"
                 print(f"{LOG} → Gemini '{actual_model}'", flush=True)
                 return ChatGoogleGenerativeAI(
                     model=actual_model,
                     google_api_key=gemini_key,
                     temperature=temperature,
                     convert_system_message_to_human=True,
-                    max_retries=1,
-                    timeout=30,
-                    request_timeout=30,
+                    max_retries=2,
+                    timeout=60,
+                    request_timeout=60,
                     **({"max_output_tokens": max_tokens} if max_tokens else {})
                 )
             return get_fallback_model()

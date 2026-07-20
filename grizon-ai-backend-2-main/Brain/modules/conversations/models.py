@@ -1,7 +1,8 @@
+from sqlalchemy.sql import func
 from sqlalchemy import Column, String, Integer, DateTime, JSON, Float, ForeignKey, Boolean, Text
 from sqlalchemy.dialects.postgresql import UUID
 from Brain.config.database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 class User(Base):
@@ -26,8 +27,8 @@ class User(Base):
     mfa_enabled = Column(Boolean, name="mfa_enabled", nullable=False, default=False)
     last_login_at = Column(DateTime, name="last_login_at")
     last_login_ip = Column(String, name="last_login_ip")
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, name="updated_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")
+    updatedAt = Column(DateTime, server_default=func.now(), onupdate=func.now(), name="updated_at")
     banned_at = Column(DateTime, name="banned_at")
     banned_by = Column(String, name="banned_by")
     ban_reason = Column(String, name="ban_reason")
@@ -40,8 +41,8 @@ class Conversation(Base):
     title = Column(String)
     status = Column(String, default="active")
     platform = Column(String, default="web")
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, name="updated_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")
+    updatedAt = Column(DateTime, server_default=func.now(), onupdate=func.now(), name="updated_at")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -53,7 +54,7 @@ class Message(Base):
     todoList = Column(JSON, nullable=True, name="todo_list") # Persistent project roadmap
     sandboxJob = Column(JSON, nullable=True, name="sandbox_job") # Persistent execution credentials
     extra_metadata = Column(JSON, name="metadata", nullable=True) # Extra metadata (e.g. planContent)
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")
 
 class BrainProject(Base):
     __tablename__ = "brain_projects"
@@ -63,8 +64,8 @@ class BrainProject(Base):
     title = Column(String)
     repoUrl = Column(String, name="repo_url")
     status = Column(String, default="IDLE")
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, name="updated_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")
+    updatedAt = Column(DateTime, server_default=func.now(), onupdate=func.now(), name="updated_at")
 
 class CreditWallet(Base):
     __tablename__ = "wallets"
@@ -73,7 +74,7 @@ class CreditWallet(Base):
     balance = Column(Integer, default=0)
     totalEarned = Column(Integer, default=0, name="lifetime_earned")
     totalSpent = Column(Integer, default=0, name="lifetime_spent")
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, name="updated_at")
+    updatedAt = Column(DateTime, server_default=func.now(), onupdate=func.now(), name="updated_at")
 
 class CreditTransaction(Base):
     __tablename__ = "wallet_transactions"
@@ -84,7 +85,7 @@ class CreditTransaction(Base):
     type = Column(String) # E.g., 'grant', 'deduct'
     reason = Column(String, name="description")
     referenceId = Column(String, nullable=True, name="job_id") # Could link to message or job
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")
 
 class BrainTask(Base):
     __tablename__ = "brain_tasks"
@@ -95,4 +96,4 @@ class BrainTask(Base):
     agent = Column(String)
     status = Column(String, default="PENDING")
     order = Column(Integer)
-    createdAt = Column(DateTime, default=datetime.utcnow, name="created_at")
+    createdAt = Column(DateTime, server_default=func.now(), name="created_at")

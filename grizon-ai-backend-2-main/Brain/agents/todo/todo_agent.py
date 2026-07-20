@@ -151,38 +151,26 @@ class TodoAgent(BaseAgent):
         - Backend: max 3-4 routes/controllers per task.
         - Each file generates one LLM call (~30-60s), so 5 files = ~5 minutes per task.
 
-        REQUIRED TASK ORDER (typical full-stack landing):
-        1. **database** — Shared Supabase schema in `backend/supabase/` using the Shared Table + JSONB Data Matrix Pattern (if project needs persistence).
-        2. **backend** — Express routes, controllers, and the Python Backend Proxy integration; mount all routes in `server.js`.
-        3. **frontend** — Components, pages, Tailwind styling (Navbar, Hero, Features, Contact, etc.).
-        4. **frontend** — "Wire App, Router, Backend & Supabase" — rewrite `App.jsx`, react-router-dom, api.js forms, enumerate ALL files under `frontend/src/components/` and `frontend/src/pages/`, import and render ALL of them, verify server.js mounts (acceptance: preview shows full site, not template demo).
+        CRITICAL: FOLLOW THE PLAN EXACTLY. Do NOT add generic components (Hero, Features, Contact) unless the plan specifically mentions them.
+        Read the plan's "Key Pages & Components" section and create tasks for EACH component listed there.
+        Read the plan's "Data Models" section and create database tasks for EACH model listed there.
+
+        REQUIRED TASK ORDER:
+        1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.
+        2. **backend** — Express routes + controllers for the plan's API endpoints. Mount in `server.js`.
+        3. **frontend** — Components and pages from the plan's "Key Pages & Components" section.
+        4. **frontend** — Wire App.jsx with React Router, import ALL components, connect to backend API.
         5. **runner** — last task only; title like "Runner: Install Dependencies & Start Servers".
 
         RULES:
         - Do NOT plan supabase CLI or npm install/dev in build tasks.
         - Frontend tasks must mention wiring components into App.jsx in acceptance_criteria.
         - Backend tasks must mention mounting routes in server.js in acceptance_criteria.
-        - EVERY frontend task must specify REAL UI content with Tailwind CSS styling (NOT placeholders like "Home Page text")
-        - Frontend tasks must mention: Hero section, Features grid, Contact form, Footer with proper dark theme
-        - Frontend tasks must connect to the backend's real `/api/*` routes (extracted from backend tasks) via `frontend/src/lib/api.js`.
+        - EVERY frontend task must specify REAL UI content with Tailwind CSS styling (NOT placeholders)
+        - Frontend tasks must connect to the backend's real `/api/*` routes via `frontend/src/lib/api.js`.
         - CRITICAL: Integration task MUST validate React Router v6 syntax (Routes not Switch, element=Component not component=Component)
-
-        FRONTEND TASK DESCRIPTION FORMAT (CRITICAL — copy this style):
-        Each frontend task description MUST include ALL of these details:
-        - What components to create (exact file names in frontend/src/components/)
-        - What each component contains (sections, content, layout)
-        - Dark theme colors: bg-[#09090b], bg-[#0a0a0a], white text, gradient accents
-        - Tailwind patterns: rounded-2xl, border border-white/10, hover:scale-105, transition-all
-        - Icons from lucide-react
-        - Real content (actual company name, features, testimonials — NOT lorem ipsum)
-        - Grid/responsive layout patterns
-
-        Example of a GOOD frontend task description:
-        "Create Hero.jsx and Features.jsx in frontend/src/components/. Hero: dark bg-[#0a0a0a], large gradient heading 'Build Something Amazing', subtitle text, two CTA buttons (Get Started with gradient, Watch Demo with border), background grid pattern, animated floating elements. Features: 3-column grid with glass cards (bg-white/5, backdrop-blur, border border-white/10), each card has lucide-react icon, title, description. Hover effect: scale-105 transition. Real content about AI-powered development platform. lucide-react icons: Sparkles, Zap, Shield. Install lucide-react in package.json."
-
-        - CRITICAL: Integration task MUST import ALL created components in App.jsx (no orphans)
-        - CRITICAL: Integration task MUST enumerate every file under `frontend/src/components/` and `frontend/src/pages/` and import ALL of them.
-        - CRITICAL: Acceptance criteria must include "Preview shows complete working website with navigation"
+        - CRITICAL: Do NOT create README files, documentation, or placeholder content.
+        - CRITICAL: Do NOT create generic landing pages unless the plan specifically asks for them.
 
         TASK CATEGORIES: frontend | backend | database | runner
 

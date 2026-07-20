@@ -7,7 +7,7 @@ import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox
+from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 
@@ -23,7 +23,7 @@ class BuilderAgent(BaseAgent):
             description="Coordinates sub-agents to execute tasks and build the application.",
             model_id="deepseek-chat"
         )
-        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CODE_MODEL", "deepseek-coder"), temperature=0.0)
+        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.0)
 
     def _make_activity(
         self,
@@ -81,13 +81,13 @@ class BuilderAgent(BaseAgent):
             payload["activities"] = activities
         await ws_manager.broadcast_to_sandbox(workspace_id, payload)
 
-    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90) -> str:
+    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend") -> str:
         """
         One-file-at-a-time agent loop.
         Each LLM call generates exactly ONE file. After saving, we tell the LLM
         what was saved and ask for the next file. This prevents timeout on large tasks.
         """
-        max_files = 8
+        max_files = 5  # Reduced from 8 to save LLM credits
         files_saved = []
         start_time = time.time()
 
@@ -99,8 +99,13 @@ class BuilderAgent(BaseAgent):
         # The validation loop will catch any missing imports after
         import re as _re
 
+        # Bind tools based on category
+        tools = [client_save_code]
+        if category == "database":
+            tools.extend([supabase_exec_sql, supabase_create_exec_sql_function])
+
         # Ask LLM to start generating files directly
-        bound_llm = self.llm.bind_tools([client_save_code])
+        bound_llm = self.llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
 
         # Free-form loop — LLM generates files until it stops or timeout
@@ -248,6 +253,19 @@ class BuilderAgent(BaseAgent):
                             content=f"Saved {file_path} ({code_len} chars). Generate the next file.",
                             tool_call_id=tc["id"]
                         ))
+                    elif tool_name in ("supabase_exec_sql", "supabase_create_exec_sql_function"):
+                        # Handle Supabase SQL tools
+                        sql_tool = supabase_exec_sql if tool_name == "supabase_exec_sql" else supabase_create_exec_sql_function
+                        try:
+                            result = await asyncio.wait_for(
+                                sql_tool.ainvoke(tool_args, config={"configurable": {"thread_id": session_id}}),
+                                timeout=60
+                            )
+                            print(f"{LOG} ✓ SQL tool result: {result[:200]}", flush=True)
+                            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+                        except Exception as e:
+                            print(f"{LOG} ✖ SQL tool error: {e}", flush=True)
+                            messages.append(ToolMessage(content=f"SQL execution error: {e}", tool_call_id=tc["id"]))
                     else:
                         messages.append(ToolMessage(
                             content=f"Unknown tool: {tool_name}. Use client_save_code.",
@@ -283,7 +301,365 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG}   Files: {files_saved}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
 
+        # ═══════════════════════════════════════════════════════════════
+        # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
+        # ═══════════════════════════════════════════════════════════════
+        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
+
+    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
+        """Comprehensive self-healing: validate imports → fix missing files → esbuild syntax check → auto-fix errors."""
+        import os as _os
+        import re as _re
+        import asyncio
+        import shutil
+        import subprocess as _sp
+        import time as _time
+
+        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
+        frontend_dir = _os.path.join(workspace_dir, "frontend")
+        frontend_src = _os.path.join(frontend_dir, "src")
+
+        if not _os.path.isdir(frontend_src):
+            return files_saved
+
+        start_time = _time.time()
+        bound_llm = self.llm.bind_tools([client_save_code])
+
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1: Import validation — find missing imported files
+        # ═══════════════════════════════════════════════════════════════
+        print(f"{LOG} ═══ SELF-HEALING: Phase 1 — Import validation ═══", flush=True)
+
+        all_jsx_files = []
+        for root, dirs, files in _os.walk(frontend_src):
+            for f in files:
+                if f.endswith(('.jsx', '.js', '.tsx', '.ts')) and not f.startswith('main.'):
+                    full = _os.path.join(root, f)
+                    rel = _os.path.relpath(full, frontend_src).replace('\\', '/')
+                    all_jsx_files.append((full, rel))
+
+        # Check for missing imports
+        import_pattern = _re.compile(
+            r"import\s+(?:\w+|\{[^}]+\})\s+from\s+['\"]\.\/(components|pages|lib|hooks)\/(\w+)['\"]"
+        )
+        missing_imports = []
+        already_checked = set()
+
+        for full_path, rel_path in all_jsx_files:
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            imports = import_pattern.findall(content)
+            for folder, name in imports:
+                check_key = f"{folder}/{name}"
+                if check_key in already_checked:
+                    continue
+                already_checked.add(check_key)
+
+                found = False
+                for ext in ['.jsx', '.js', '.tsx', '.ts']:
+                    if _os.path.exists(_os.path.join(frontend_src, folder, f"{name}{ext}")):
+                        found = True
+                        break
+
+                if not found:
+                    missing_imports.append({
+                        "path": f"frontend/src/{folder}/{name}.jsx",
+                        "name": name,
+                        "folder": folder,
+                        "imported_by": rel_path,
+                    })
+                    print(f"{LOG}   ✖ {rel_path} imports {folder}/{name} → MISSING", flush=True)
+
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1b: Check App.jsx is not placeholder
+        # ═══════════════════════════════════════════════════════════════
+        app_jsx_path = _os.path.join(frontend_src, "App.jsx")
+        app_is_placeholder = False
+        if _os.path.isfile(app_jsx_path):
+            try:
+                with open(app_jsx_path, 'r', encoding='utf-8') as f:
+                    app_content = f.read()
+                if any(marker in app_content for marker in ["Brain MUST replace", "Brain UI Builder", "Remove this placeholder"]):
+                    app_is_placeholder = True
+                    print(f"{LOG}   ✖ App.jsx is still a placeholder — needs real implementation", flush=True)
+            except Exception:
+                pass
+
+        # Generate missing imports + fix placeholder App.jsx via LLM
+        if missing_imports or app_is_placeholder:
+            print(f"{LOG} → Generating {len(missing_imports)} missing files + fixing App.jsx...", flush=True)
+
+            sys_msg = (
+                "You are a React frontend engineer. Generate missing component files and fix broken App.jsx.\n"
+                "Rules:\n"
+                "- Dark theme: bg-[#09090b], text-white, Tailwind CSS\n"
+                "- Use lucide-react for icons\n"
+                "- Real functional content, NOT placeholders\n"
+                "- Each component: export default, 50-150 lines\n"
+                "- For App.jsx: use BrowserRouter, Route, Routes from react-router-dom\n"
+                "- Import ALL components that exist in the project\n"
+                "- CRITICAL: Do NOT output placeholder/stub code. Every component must be fully functional.\n"
+            )
+
+            gen_messages = [SystemMessage(content=sys_msg)]
+
+            # Build context about existing components
+            existing_components = []
+            for root, dirs, files in _os.walk(frontend_src):
+                for f in files:
+                    if f.endswith(('.jsx', '.js')) and not f.startswith('main.'):
+                        name = f.split('.')[0]
+                        rel = _os.path.relpath(_os.path.join(root, f), frontend_src).replace('\\', '/')
+                        existing_components.append(f"  - {rel}")
+
+            if existing_components:
+                gen_messages.append(HumanMessage(content=(
+                    "Existing project files:\n" + "\n".join(existing_components) +
+                    "\n\nUse this context to generate proper imports in App.jsx."
+                )))
+
+            # Generate each missing file
+            for item in missing_imports:
+                if _time.time() - start_time > timeout_sec - 60:
+                    print(f"{LOG} ✖ Timeout — skipping remaining missing files", flush=True)
+                    break
+
+                gen_messages.append(HumanMessage(content=(
+                    f"Generate the missing file: {item['path']}\n"
+                    f"This is a {item['folder']} component called '{item['name']}'.\n"
+                    f"It's imported in {item['imported_by']}.\n"
+                    f"Make it a complete, working React component with Tailwind CSS dark theme.\n"
+                    f"Use client_save_code to save it to: {item['path']}"
+                )))
+
+                try:
+                    response = await asyncio.wait_for(bound_llm.ainvoke(list(gen_messages)), timeout=120)
+                    gen_messages.append(response)
+
+                    if response.tool_calls:
+                        for tc in response.tool_calls:
+                            if tc["name"] == "client_save_code":
+                                tool_args = tc["args"]
+                                fp = tool_args.get("file_path", "")
+                                try:
+                                    await asyncio.wait_for(
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)"}}),
+                                        timeout=30
+                                    )
+                                    if fp and fp not in files_saved:
+                                        files_saved.append(fp)
+                                    print(f"{LOG} ✓ Generated missing: {fp}", flush=True)
+                                except Exception as e:
+                                    print(f"{LOG} ✖ Failed to generate {fp}: {e}", flush=True)
+                except Exception as e:
+                    print(f"{LOG} ✖ LLM error generating missing file: {e}", flush=True)
+
+            # Fix placeholder App.jsx if needed
+            if app_is_placeholder and _time.time() - start_time < timeout_sec - 60:
+                # Collect all component names for the prompt
+                all_components = []
+                for root, dirs, files in _os.walk(frontend_src):
+                    for f in files:
+                        if f.endswith(('.jsx', '.js')) and f not in ('App.jsx', 'main.jsx', 'index.js'):
+                            name = f.split('.')[0]
+                            rel = _os.path.relpath(_os.path.join(root, f), frontend_src).replace('\\', '/')
+                            import_path = f"./{rel.replace('.jsx', '').replace('.js', '')}"
+                            all_components.append({"name": name, "import_path": import_path, "rel": rel})
+
+                component_list = "\n".join([f"  - {c['name']} from '{c['import_path']}'" for c in all_components])
+
+                fix_messages = [
+                    SystemMessage(content=(
+                        "You are a React frontend engineer. Replace the placeholder App.jsx with a real implementation.\n"
+                        "Rules:\n"
+                        "- Use BrowserRouter, Route, Routes from react-router-dom\n"
+                        "- Import and render ALL existing components listed below\n"
+                        "- Dark theme: bg-[#09090b], text-white\n"
+                        "- Tailwind CSS layout\n"
+                        "- CRITICAL: This must be a COMPLETE, WORKING App.jsx — no placeholders.\n"
+                        "- Use client_save_code to save to: frontend/src/App.jsx\n"
+                    )),
+                    HumanMessage(content=(
+                        f"Existing components to import:\n{component_list}\n\n"
+                        "Generate a complete App.jsx that imports and renders all these components with proper routing."
+                    ))
+                ]
+
+                try:
+                    response = await asyncio.wait_for(bound_llm.ainvoke(fix_messages), timeout=120)
+                    if response.tool_calls:
+                        for tc in response.tool_calls:
+                            if tc["name"] == "client_save_code":
+                                tool_args = tc["args"]
+                                fp = tool_args.get("file_path", "")
+                                try:
+                                    await asyncio.wait_for(
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)"}}),
+                                        timeout=30
+                                    )
+                                    if fp and fp not in files_saved:
+                                        files_saved.append(fp)
+                                    print(f"{LOG} ✓ Fixed placeholder App.jsx", flush=True)
+                                except Exception as e:
+                                    print(f"{LOG} ✖ Failed to fix App.jsx: {e}", flush=True)
+                except Exception as e:
+                    print(f"{LOG} ✖ LLM error fixing App.jsx: {e}", flush=True)
+        else:
+            print(f"{LOG} ✓ All imports validated — no missing files", flush=True)
+
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 2: esbuild syntax check (max 2 iterations to save credits)
+        # ═══════════════════════════════════════════════════════════════
+        print(f"{LOG} ═══ SELF-HEALING: Phase 2 — esbuild syntax check ═══", flush=True)
+
+        for iteration in range(2):
+            if _time.time() - start_time > timeout_sec - 30:
+                print(f"{LOG} ✖ Timeout — skipping remaining esbuild iterations", flush=True)
+                break
+
+            # Re-collect files (may have been added in Phase 1)
+            all_files = []
+            for root, _, files in _os.walk(frontend_src):
+                for f in files:
+                    if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
+                        all_files.append(_os.path.join(root, f))
+
+            if not all_files:
+                break
+
+            escaped_files = [f'"{f}"' for f in all_files]
+
+            # Find npx with full path
+            npx_full = shutil.which("npx.cmd" if _os.name == 'nt' else "npx")
+            if npx_full:
+                cmd_str = f'"{npx_full}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
+            else:
+                npx_cli_js = None
+                node_full = shutil.which("node")
+                if node_full:
+                    try:
+                        npm_prefix = _sp.check_output(
+                            [node_full, _os.path.join(_os.path.dirname(node_full), "node_modules", "npm", "bin", "npm-prefix.js")],
+                            text=True, timeout=5
+                        ).strip()
+                        candidate = _os.path.join(npm_prefix, "node_modules", "npm", "bin", "npx-cli.js")
+                        if _os.path.isfile(candidate):
+                            npx_cli_js = candidate
+                    except Exception:
+                        pass
+
+                if node_full and npx_cli_js:
+                    cmd_str = f'"{node_full}" "{npx_cli_js}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
+                else:
+                    print(f"{LOG} ⚠ npx not found — skipping esbuild check", flush=True)
+                    break
+
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    cwd=frontend_dir,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+
+                temp_dir = _os.path.join(frontend_dir, "temp_esbuild_out")
+                if _os.path.isdir(temp_dir):
+                    try:
+                        import shutil as _shutil
+                        _shutil.rmtree(temp_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+
+                if process.returncode == 0:
+                    print(f"{LOG} ✓ esbuild passed (iteration {iteration+1}) — no syntax/import errors", flush=True)
+                    break
+
+                error_output = stderr.decode('utf-8', errors='ignore')
+
+                if ("npx: not found" in error_output
+                    or "npx is not recognized" in error_output
+                    or "command not found" in error_output.lower()
+                    or "executable file not found" in error_output.lower()
+                    or "no such file or directory" in error_output.lower()):
+                    print(f"{LOG} ⚠ npx not found on host. Skipping esbuild check.", flush=True)
+                    break
+
+                print(f"{LOG} ⚠ esbuild failed (iter {iteration+1}):\n{error_output[:500]}...", flush=True)
+
+                # Read ALL existing source files for context
+                file_context = ""
+                for fp in all_files[:8]:  # Reduced from 15 to save tokens
+                    try:
+                        with open(fp, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        rel = _os.path.relpath(fp, frontend_src).replace('\\', '/')
+                        file_context += f"\n--- {rel} ---\n```jsx\n{content[:800]}\n```\n"  # Reduced from 1500
+                    except Exception:
+                        pass
+
+                prompt = (
+                    "The React build failed with the following errors. Fix the broken files using `client_save_code`.\n"
+                    f"```\n{error_output[:1500]}\n```\n"  # Reduced from 3000 to save tokens
+                    "Rules:\n"
+                    "- ONLY fix files mentioned in the error messages\n"
+                    "- Fix the specific import/syntax issue — do NOT rewrite entire files\n"
+                    "- If an import is wrong, fix the import path or fix the export name\n"
+                    "- If a component is missing, generate a minimal working version\n"
+                    f"{file_context}\n"
+                    "--- CURRENT App.jsx (preserve its structure, only fix errors) ---\n"
+                )
+
+                if _os.path.isfile(app_jsx_path):
+                    try:
+                        with open(app_jsx_path, 'r', encoding='utf-8') as f:
+                            prompt += f"```jsx\n{f.read()}\n```\n"
+                    except Exception:
+                        pass
+
+                messages = [
+                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch."),
+                    HumanMessage(content=prompt)
+                ]
+
+                print(f"{LOG} → Asking LLM to fix build errors (iter {iteration+1})...", flush=True)
+                response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=120)
+
+                if response.tool_calls:
+                    fixed_any = False
+                    for tc in response.tool_calls:
+                        if tc["name"] == "client_save_code":
+                            tool_args = tc["args"]
+                            file_path = tool_args.get("file_path", "")
+                            try:
+                                await asyncio.wait_for(
+                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
+                                    timeout=30
+                                )
+                                if file_path and file_path not in files_saved:
+                                    files_saved.append(file_path)
+                                print(f"{LOG} ✓ Fixed: {file_path}", flush=True)
+                                fixed_any = True
+                            except Exception as e:
+                                print(f"{LOG} ✖ Failed to fix {file_path}: {e}", flush=True)
+                    if not fixed_any:
+                        print(f"{LOG} ⚠ LLM did not provide fixes — stopping", flush=True)
+                        break
+                else:
+                    print(f"{LOG} ⚠ LLM did not provide any fixes — stopping", flush=True)
+                    break
+
+            except Exception as e:
+                print(f"{LOG} ✖ esbuild error: {e}", flush=True)
+                break
+
+        return files_saved
 
     async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec):
         """Scan ALL .jsx/.js files for imports, check if imported files exist, generate missing ones."""
@@ -377,40 +753,7 @@ class BuilderAgent(BaseAgent):
             # Find orphans
             orphans = [c for c in component_files if c not in all_imports]
             if orphans:
-                print(f"{LOG} ⚠ {len(orphans)} orphaned components: {orphans}", flush=True)
-                # Rewrite App.jsx to import ALL components
-                app_jsx = _os.path.join(frontend_src, "App.jsx")
-                if _os.path.exists(app_jsx):
-                    # Build new App.jsx with all imports
-                    imports = "\n".join([f"import {c} from './components/{c}';" for c in component_files])
-                    routes = "\n".join([f'          <Route path="/{c.lower()}" element={{<{c} />}} />' for c in component_files if c not in ('Home', 'Header', 'Footer')])
-
-                    new_app = f"""import React from 'react';
-import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
-{imports}
-
-function App() {{
-  return (
-    <BrowserRouter>
-      <div className="bg-[#09090b] text-white min-h-screen">
-        <Routes>
-          <Route path="/" element={{<Home />}} />
-{routes}
-        </Routes>
-      </div>
-    </BrowserRouter>
-  );
-}}
-
-export default App;
-"""
-                    try:
-                        with open(app_jsx, 'w', encoding='utf-8') as fh:
-                            fh.write(new_app)
-                        print(f"{LOG} ✓ Rewrote App.jsx with {len(component_files)} component imports", flush=True)
-                        fixed.append("frontend/src/App.jsx")
-                    except Exception as e:
-                        print(f"{LOG} ✖ Failed to rewrite App.jsx: {e}", flush=True)
+                print(f"{LOG} ⚠ {len(orphans)} orphaned components: {orphans}. (Ignoring instead of destructive rewrite)", flush=True)
 
         # ═══════════════════════════════════════════════════════════════
         # CLEANUP: Remove stray files outside src/
@@ -657,6 +1000,14 @@ export default App;
         task_title = current_task.get("title") or current_task.get("task") or f"Task {index + 1}"
         category = current_task.get("category", "backend") or "backend"
         framework = state.get("framework", "react")
+
+        # SKIP runner tasks — they should be handled by RunnerAgent, not Builder
+        if category == "runner" or "runner" in task_title.lower():
+            print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
+            current_task["status"] = "completed"
+            state["current_task_index"] = index + 1
+            yield state
+            return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)
 
         if workspace_id and not workspace_id.startswith("error:"):
@@ -669,6 +1020,35 @@ export default App;
         skill_content = ""
         system_prompt = ""
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
+        
+        # Gather existing codebase memory for follow-ups
+        existing_code_context = ""
+        try:
+            ws_dir = os.path.join(os.getcwd(), "workspaces", session_id)
+            if os.path.exists(ws_dir):
+                files_to_read = []
+                for root, _, files in os.walk(ws_dir):
+                    if "node_modules" in root or ".git" in root or "dist" in root:
+                        continue
+                    for f in files:
+                        if f.endswith(('.js', '.jsx', '.ts', '.tsx', '.css', '.json', '.html')):
+                            full_path = os.path.join(root, f)
+                            rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
+                            if "package-lock.json" not in rel_path:
+                                files_to_read.append((rel_path, full_path))
+                
+                if files_to_read:
+                    existing_code_context = "\n\n═══ EXISTING CODEBASE MEMORY ═══\n"
+                    existing_code_context += "The user is requesting a modification to an existing project. Here is the current codebase:\n\n"
+                    for rel_path, full_path in files_to_read:
+                        try:
+                            with open(full_path, 'r', encoding='utf-8') as fh:
+                                content = fh.read()
+                            existing_code_context += f"--- {rel_path} ---\n```\n{content}\n```\n\n"
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"{LOG} Failed to load existing codebase: {e}")
 
         def _load_skill(name, max_chars=3000):
             try:
@@ -698,7 +1078,10 @@ export default App;
                 "```jsx\n"
                 "import React from 'react';\n"
                 "import { BrowserRouter, Routes, Route } from 'react-router-dom';\n"
-                "// import your pages and layout components here\n"
+                "// EXTREMELY IMPORTANT: ALWAYS IMPORT EVERY COMPONENT YOU USE!\n"
+                "import MainLayout from './components/MainLayout';\n"
+                "import LandingPage from './pages/LandingPage';\n"
+                "// ... other imports\n"
                 "function App() {\n"
                 "  return (\n"
                 "    <BrowserRouter>\n"
@@ -706,7 +1089,7 @@ export default App;
                 "        {/* Insert Header/Navbar here if needed */}\n"
                 "        <main className=\"flex-grow\">\n"
                 "          <Routes>\n"
-                "            <Route path=\"/\" element={<Home />} />\n"
+                "            <Route path=\"/\" element={<LandingPage />} />\n"
                 "            {/* Add other routes here based on the plan */}\n"
                 "          </Routes>\n"
                 "        </main>\n"
@@ -717,10 +1100,13 @@ export default App;
                 "}\n"
                 "export default App;\n"
                 "```\n\n"
-                "2. Navigation MUST use `import { Link } from 'react-router-dom'` and `<Link to=\"/page\">`.\n"
+                "2. ALWAYS IMPORT the components you use. Whatever component name you write in JSX (e.g. `<MyPage />`), you MUST import it at the top.\n"
+                "3. NEVER import CSS files in components (e.g. `import './App.css'`). Tailwind is already injected globally. Only use Tailwind classes in `className`.\n"
+                "4. Navigation MUST use `import { Link } from 'react-router-dom'` and `<Link to=\"/page\">`.\n"
                 "   NEVER use `<a href=\"/page\">` — that causes full page reload and breaks SPA.\n\n"
-                "3. BUILD EXACTLY WHAT IS IN THE PLAN. If the plan asks for a To-Do App, build To-Do components (TaskCard, TaskForm, etc.). DO NOT build generic SaaS landing pages unless specifically requested.\n\n"
-                "4. EVERY component page MUST have:\n"
+                "5. BUILD EXACTLY WHAT IS IN THE PLAN. If the plan asks for a To-Do App, build To-Do components (TaskCard, TaskForm, etc.). DO NOT build generic SaaS landing pages unless specifically requested.\n\n"
+                "6. DO NOT invent imports or assume functions exist (like `isAuthenticated` or `api` from `lib/api.js`). If you need auth state or data fetching, mock it with `useState` and `useEffect` or create a React Context. Never import from non-existent files.\n\n"
+                "7. EVERY component page MUST have:\n"
                 "   - Substantial, real content (no empty divs or placeholders)\n"
                 "   - Beautiful Tailwind CSS styling\n"
                 "   - Proper error handling and loading states\n\n"
@@ -728,7 +1114,7 @@ export default App;
                 "- Dark theme: bg-[#09090b] or bg-[#0a0a0a], white text (unless light theme is requested)\n"
                 "- Tailwind CSS on EVERY element — NO inline styles, NO bare HTML\n"
                 "- Use rich UI elements: Glass cards, gradients, hover effects\n"
-                "- Icons from lucide-react (e.g., Plus, Check, Trash, Edit)\n\n"
+                "- Icons from lucide-react. IMPORTANT: ONLY use basic icons (e.g., Plus, Check, Trash, Edit, User, Settings). DO NOT use brand icons (like Github, Google, Twitter) as they often cause export errors.\n\n"
                 "═══ FILE RULES ═══\n"
                 "- frontend/src/App.jsx: Layout and ALL route imports\n"
                 "- frontend/src/components/*.jsx or frontend/src/pages/*.jsx: one file per component\n"
@@ -770,7 +1156,11 @@ export default App;
                 "3. Always enable RLS on new tables.\n"
                 "4. Use proper constraints, indexes, and foreign keys.\n"
                 "5. Use client_save_code for EVERY file.\n"
-                "6. After saving ALL files, respond with ONLY a short summary."
+                "6. CRITICAL: After writing the SQL file, you MUST ALSO execute it against Supabase using supabase_exec_sql.\n"
+                "   - First try: supabase_create_exec_sql_function (one-time setup, only if exec_sql function doesn't exist)\n"
+                "   Then: supabase_exec_sql with your CREATE TABLE / ALTER TABLE queries.\n"
+                "   This ensures tables are created in the actual database, not just as files.\n"
+                "7. After saving ALL files and executing SQL, respond with ONLY a short summary."
             )
         else:
             system_prompt = (
@@ -792,6 +1182,9 @@ export default App;
                 "3. Use client_save_code for EVERY file.\n"
                 "4. After saving ALL files, respond with ONLY a short summary."
             )
+            
+        if existing_code_context:
+            system_prompt += existing_code_context
 
         instruction = (
             f"Task Title: {task_title}\n"
@@ -809,7 +1202,7 @@ export default App;
 
         try:
             output_content = await asyncio.wait_for(
-                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600),
+                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category),
                 timeout=overall_timeout
             )
         except asyncio.TimeoutError:

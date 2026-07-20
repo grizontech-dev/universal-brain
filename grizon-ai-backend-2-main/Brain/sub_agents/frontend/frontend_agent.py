@@ -158,7 +158,9 @@ class FrontendAgent(BaseAgent):
         
         app_jsx_context = ""
         if current_app_jsx:
-            app_jsx_context = f"\n\n--- CURRENT frontend/src/App.jsx CONTENT ---\n```jsx\n{current_app_jsx}\n```\nIMPORTANT: Build upon this file! If it contains a placeholder comment ('Brain MUST replace this file' or 'Remove this placeholder'), you MUST remove the placeholder setup entirely and implement the real Router with the components you created. Otherwise, preserve all existing real routes and imports. Return the FULL updated App.jsx file in your response."
+            # Truncate to save tokens — only send first 1500 chars
+            truncated = current_app_jsx[:1500] + ("..." if len(current_app_jsx) > 1500 else "")
+            app_jsx_context = f"\n\n--- CURRENT frontend/src/App.jsx (truncated) ---\n```jsx\n{truncated}\n```\nIMPORTANT: Build upon this file! If it contains a placeholder comment ('Brain MUST replace this file' or 'Remove this placeholder'), you MUST remove the placeholder setup entirely and implement the real Router with the components you created. Otherwise, preserve all existing real routes and imports. Return the FULL updated App.jsx file in your response."
 
         session_state = state.get("memory_context", {}).get("session_state", {})
         wf_state = session_state.get("workflow_state", "")

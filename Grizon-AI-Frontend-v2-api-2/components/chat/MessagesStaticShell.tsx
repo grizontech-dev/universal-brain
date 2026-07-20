@@ -684,11 +684,14 @@ export default function MessagesStaticShell({
   );
 
   const scrollMessagesToBottom = useCallback(() => {
+    // Double requestAnimationFrame + setTimeout ensures DOM has fully painted and layout is stable
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const el = messagesScrollRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
+        setTimeout(() => {
+          const el = messagesScrollRef.current;
+          if (!el) return;
+          el.scrollTop = el.scrollHeight;
+        }, 50);
       });
     });
   }, []);
@@ -710,9 +713,8 @@ export default function MessagesStaticShell({
     };
   }, []);
 
-  /** After send, keep the thread pinned to the latest user message and streaming reply. */
+  /** Keep the thread pinned to the bottom when new messages arrive or when streaming. */
   useEffect(() => {
-    if (!isSending) return;
     scrollMessagesToBottom();
   }, [
     isSending,

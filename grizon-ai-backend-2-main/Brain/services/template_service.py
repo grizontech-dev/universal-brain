@@ -122,8 +122,10 @@ def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -
                     if op["path"] == "backend/.env":
                         existing_env = op.get("content", "")
                         company_env = get_company_supabase_env()
-                        if company_env and "SUPABASE_URL" not in existing_env:
-                            op["content"] = existing_env + "\n" + company_env
+                        if company_env:
+                            lines = [line for line in existing_env.split("\n") if not line.strip().startswith("SUPABASE_")]
+                            cleaned_env = "\n".join(lines)
+                            op["content"] = cleaned_env + "\n" + company_env
                     continue
                 seen_paths.add(op["path"])
             ops.append(op)
@@ -148,13 +150,35 @@ def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -
 
 def apply_templates_to_workspace(workspace_id: str, framework: Optional[str]) -> List[Dict[str, Any]]:
     from Brain.services.workspace_manager import workspace_manager
+    from Brain.shared.frontend_entry import is_boilerplate_app, is_app_jsx_path
 
     ops = get_bootstrap_ops(framework)
+    skipped = []
+    ws_root = workspace_manager.resolve_workspace_path(workspace_id)
     for op in ops:
         if op["op"] == "write_file":
-            workspace_manager.write_file(workspace_id, op["path"], op["content"])
+            path = op.get("path", "")
+            # Don't overwrite files that have been customized by the builder/LLM.
+            full_path = os.path.join(ws_root, path.lstrip("/")) if ws_root else None
+            if full_path and os.path.isfile(full_path):
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        existing = f.read()
+                except Exception:
+                    existing = None
+                if existing is not None:
+                    if is_app_jsx_path(path) and not is_boilerplate_app(existing):
+                        skipped.append(path)
+                        continue
+                    # For other files, skip only if content differs from template (already customized)
+                    if not is_app_jsx_path(path) and existing.strip() != op["content"].strip():
+                        skipped.append(path)
+                        continue
+            workspace_manager.write_file(workspace_id, path, op["content"])
         elif op["op"] == "mkdir":
             workspace_manager.mkdir(workspace_id, op["path"])
+    if skipped:
+        print(f"[TEMPLATE] Skipped overwriting {len(skipped)} customized files: {skipped}")
     return ops
 
 
@@ -181,12 +205,15 @@ def inject_company_supabase_to_workspace(workspace_id: str) -> bool:
         except Exception:
             pass
 
-    # Only add if SUPABASE_URL not already present
-    if "SUPABASE_URL" not in existing_content:
-        new_content = existing_content + "\n" + company_env if existing_content else company_env
-        os.makedirs(os.path.dirname(env_path), exist_ok=True)
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        return True
+    # Remove existing SUPABASE_ lines so we can inject the fresh ones
+    if existing_content:
+        lines = [line for line in existing_content.split("\n") if not line.strip().startswith("SUPABASE_")]
+        existing_content = "\n".join(lines)
+
+    new_content = existing_content + "\n" + company_env if existing_content else company_env
+    os.makedirs(os.path.dirname(env_path), exist_ok=True)
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return True
 
     return False

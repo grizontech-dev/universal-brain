@@ -75,6 +75,8 @@ class BrainState(TypedDict):
     resume_build: Optional[bool]
     memory_gateway: Optional[MemoryGateway]
     memory_context: Optional[Dict[str, Any]]
+    next_agent: Optional[str]
+
 
 class BrainChatService:
     def __init__(self):
@@ -132,6 +134,8 @@ class BrainChatService:
         status = state.get("status")
         if status == "needs_clarification":
             return "clarify"
+        if state.get("next_agent") == "builder":
+            return "resume"
         if state.get("plan_approved"):
             return "taskify"
         return "plan"
@@ -165,7 +169,16 @@ class BrainChatService:
                 state["project_plan"] = pp
             except Exception:
                 pp = {}
-        if isinstance(pp, dict) and pp and state.get("plan_approved") is False:
+        # Check if plan was ever approved in the past
+        was_ever_approved = False
+        for m in state.get("messages", []):
+            if isinstance(m, dict):
+                metadata = m.get("metadata") or m.get("extra_metadata") or {}
+                if metadata.get("planApproved") or metadata.get("plan_approved") or m.get("sandboxJob") or m.get("sandbox_job"):
+                    was_ever_approved = True
+                    break
+                    
+        if isinstance(pp, dict) and pp and state.get("plan_approved") is False and not was_ever_approved:
             thoughts = f"The user provided feedback on the plan: '{state.get('content', '')}'. Updating the requirements and calling the **Planner Agent** to revise the technical roadmap."
             return {
                 "status": "ready_to_plan", 
@@ -173,6 +186,10 @@ class BrainChatService:
                 "leader_analysis": {"analysis": thoughts},
                 "thoughts": thoughts
             }
+        
+        # If this is a follow-up (i.e. plan was previously approved), auto-approve new tasks
+        if was_ever_approved:
+            state["plan_approved"] = True
 
         agent = ManagerAgent()
         result = await agent.execute(state)
@@ -933,8 +950,15 @@ class BrainChatService:
 
                 # Phase 3: Runner — deploy runs as detached background task
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
-                print(f"[CHAT-SERVICE] Phase 3: Runner — deploying to sandbox", flush=True)
-                print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+                print(f"[CHAT-SERVICE] Phase 3: Runner - deploying to sandbox", flush=True)
+                
+                try:
+                    from Brain.services.template_service import inject_company_supabase_to_workspace
+                    inject_company_supabase_to_workspace(conv_id)
+                except Exception as e:
+                    print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
+
+                print(f"[CHAT-SERVICE] \n-------------------------------------------------------------", flush=True)
                 runner = RunnerAgent()
                 runner_state = state
                 _runner_iterator = runner.execute(state).__aiter__()
