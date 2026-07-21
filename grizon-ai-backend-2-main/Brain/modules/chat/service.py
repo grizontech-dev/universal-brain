@@ -1078,8 +1078,11 @@ class BrainChatService:
                         db.add(bp)
                         db.commit()
                     db.close()
-                except (ValueError, AttributeError):
-                    pass
+                except (ValueError, AttributeError) as e:
+                    print(f"[CHAT-SERVICE] _get_or_create_project_id error: {e}", flush=True)
+                except Exception as e:
+                    print(f"[CHAT-SERVICE] _get_or_create_project_id FK error: {e}", flush=True)
+                    db.rollback()
             return request_project_id
         if conv_id and conv_id != "new":
             try:
