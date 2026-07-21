@@ -8,7 +8,10 @@ from Brain.services.sandbox_mcp_service import (
 from Brain.services.websocket_manager import ws_manager
 
 import json
+import os
 import time
+
+WS_BASE = os.getenv("WS_BASE_URL", "ws://localhost:8001")
 
 LOG = "[RUNNER]"
 
@@ -122,7 +125,7 @@ class RunnerAgent(BaseAgent):
             sandbox_job["deploy_result"] = deploy_result
             sandbox_job["await_preview"] = True
             if "sync_url" not in sandbox_job:
-                sandbox_job["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{_sid}"
+                sandbox_job["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{_sid}"
 
             if tunnel_url:
                 sandbox_mcp.store_tunnel_url(str(_sid), tunnel_url)
@@ -197,7 +200,7 @@ class RunnerAgent(BaseAgent):
         existing_sj["runtime"] = RUNTIME_SANDBOX_MCP
         existing_sj["await_preview"] = True
         if "sync_url" not in existing_sj:
-            existing_sj["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{session_id}"
+            existing_sj["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{session_id}"
         state["sandbox_job"] = existing_sj
         state["run_report"] = "Deploy started in background — tunnel URL will arrive via WebSocket."
         state["execute_sandbox"] = {
