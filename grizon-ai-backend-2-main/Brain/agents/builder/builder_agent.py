@@ -1159,6 +1159,8 @@ class BuilderAgent(BaseAgent):
                 "6. CRITICAL: After writing the SQL file, you MUST ALSO execute it against Supabase using supabase_exec_sql.\n"
                 "   - First try: supabase_create_exec_sql_function (one-time setup, only if exec_sql function doesn't exist)\n"
                 "   Then: supabase_exec_sql with your CREATE TABLE / ALTER TABLE queries.\n"
+                "   IMPORTANT: After every CREATE TABLE or ALTER TABLE, always include: NOTIFY pgrst, 'reload schema';\n"
+                "   This refreshes Supabase's API cache so the frontend can see new columns immediately.\n"
                 "   This ensures tables are created in the actual database, not just as files.\n"
                 "7. After saving ALL files and executing SQL, respond with ONLY a short summary."
             )

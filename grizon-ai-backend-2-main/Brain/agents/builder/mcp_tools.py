@@ -209,6 +209,13 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
     session_id = config.get("configurable", {}).get("thread_id")
     print(f"{LOG} supabase_exec_sql | session={session_id} | query_len={len(sql_query)}", flush=True)
 
+    # Auto-append schema reload if the query contains DDL (CREATE/ALTER TABLE)
+    upper_q = sql_query.upper()
+    if any(kw in upper_q for kw in ("CREATE TABLE", "ALTER TABLE", "DROP TABLE", "ADD COLUMN")):
+        if "NOTIFY pgrst" not in sql_query:
+            sql_query = sql_query.rstrip().rstrip(";") + ";\nNOTIFY pgrst, 'reload schema';"
+            print(f"{LOG} Appended NOTIFY pgrst, 'reload schema' for DDL query", flush=True)
+
     supabase_url = (
         os.getenv("COMPANY_SUPABASE_URL")
         or os.getenv("SUPABASE_URL")
