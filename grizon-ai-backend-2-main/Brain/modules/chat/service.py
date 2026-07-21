@@ -1070,19 +1070,20 @@ class BrainChatService:
                     db = SessionLocal()
                     bp = db.query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
                     if not bp:
-                        bp = BrainProject(
-                            id=request_project_id,
-                            conversationId=conv_id,
-                            status="ACTIVE",
-                        )
-                        db.add(bp)
-                        db.commit()
+                        try:
+                            bp = BrainProject(
+                                id=request_project_id,
+                                conversationId=conv_id,
+                                status="ACTIVE",
+                            )
+                            db.add(bp)
+                            db.commit()
+                        except Exception as e:
+                            print(f"[CHAT-SERVICE] _get_or_create_project_id FK error (skipping): {e}", flush=True)
+                            db.rollback()
                     db.close()
                 except (ValueError, AttributeError) as e:
                     print(f"[CHAT-SERVICE] _get_or_create_project_id error: {e}", flush=True)
-                except Exception as e:
-                    print(f"[CHAT-SERVICE] _get_or_create_project_id FK error: {e}", flush=True)
-                    db.rollback()
             return request_project_id
         if conv_id and conv_id != "new":
             try:
