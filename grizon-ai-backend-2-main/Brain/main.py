@@ -14,8 +14,6 @@ if parent_dir not in sys.path:
 
 import uvicorn
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
-
 
 from fastapi.middleware.cors import CORSMiddleware
 from Brain.modules.chat.controller import router as brain_chat_router
@@ -118,6 +116,23 @@ async def brain_write_file(request: FastAPIRequest, workspace_id: str = ""):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "project-brain"}
+
+from fastapi.responses import PlainTextResponse
+
+@app.get("/debug/tasks", response_class=PlainTextResponse)
+async def debug_tasks():
+    import asyncio, traceback
+    output = []
+    for task in asyncio.all_tasks():
+        output.append(f"Task: {task.get_name()}")
+        coro = task.get_coro()
+        output.append(f"Coro: {coro}")
+        stack = []
+        for frame in task.get_stack():
+            stack.append("".join(traceback.format_stack(frame)))
+        output.append("".join(stack))
+        output.append("-" * 40)
+    return "\n".join(output)
 
 if __name__ == "__main__":
     uvicorn.run("Brain.main:app", host="127.0.0.1", port=8001, reload=True)

@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.sandbox_mcp_service import (
     get_sandbox_mcp_service,
@@ -7,23 +8,28 @@ from Brain.services.sandbox_mcp_service import (
 from Brain.services.websocket_manager import ws_manager
 
 import json
+import os
 import time
 
+WS_BASE = os.getenv("WS_BASE_URL", "ws://localhost:8001")
+
+LOG = "[RUNNER]"
 
 class RunnerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Runner",
             description="Deploys the built project to the remote sandbox MCP server.",
-            model_id="gpt-4o-mini"
+            model_id="deepseek-chat"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("current_job_id")
-        print(f"[RUNNER] execute called | session={session_id}")
+        print(f"{LOG} ═══ EXECUTE ═══ session={session_id} | tasks={len(state.get('plan', []))}", flush=True)
         if not session_id:
             state["run_report"] = "Error: No workspace found."
-            return state
+            yield state
+            return
 
         # Determine entrypoint — prefer frontend (Vite) over backend
         tasks = state.get("plan", [])
@@ -31,8 +37,32 @@ class RunnerAgent(BaseAgent):
         entrypoint = "frontend/src/main.jsx" if has_frontend else (state.get("sandbox_entrypoint") or "backend/server.js")
 
         sandbox_mcp = get_sandbox_mcp_service()
+        sandbox_available = False
         if not sandbox_mcp._initialized:
-            await sandbox_mcp.initialize()
+            try:
+                await asyncio.wait_for(sandbox_mcp.initialize(), timeout=15)
+                sandbox_available = True
+            except asyncio.TimeoutError:
+                print("[RUNNER] WARNING: Sandbox MCP init timed out after 15s. Skipping remote deploy.")
+            except Exception as e:
+                print(f"[RUNNER] WARNING: Sandbox MCP init failed: {e}. Skipping remote deploy.")
+        else:
+            sandbox_available = True
+
+        if not sandbox_available:
+            print("[RUNNER] Sandbox MCP unavailable — skipping remote deploy. Code is in workspace.")
+            state["status"] = "complete"
+            state["run_report"] = "Build complete. Code saved to workspace. Remote sandbox unavailable — preview not generated."
+            state["sandbox_job"] = state.get("sandbox_job") or {}
+            state["sandbox_job"]["runtime"] = "local"
+            state["sandbox_job"]["await_preview"] = False
+            state["execute_sandbox"] = {
+                "workspace_ops": [],
+                "status": "complete_local",
+                "progress_msg": "Build complete (local mode — no remote preview)",
+            }
+            yield state
+            return
 
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",
@@ -65,6 +95,9 @@ class RunnerAgent(BaseAgent):
         async def _background_deploy(_sid, _entrypoint, _state):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
+
+            # Removed eager sandbox deletion here. Sandbox will be reused or auto-deleted if idle.
+
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(
                     str(_sid), _entrypoint
@@ -91,8 +124,7 @@ class RunnerAgent(BaseAgent):
             sandbox_job["stream_url"] = tunnel_url
             sandbox_job["deploy_result"] = deploy_result
             sandbox_job["await_preview"] = True
-            if "sync_url" not in sandbox_job:
-                sandbox_job["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{_sid}"
+            sandbox_job["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{_sid}"
 
             if tunnel_url:
                 sandbox_mcp.store_tunnel_url(str(_sid), tunnel_url)
@@ -166,8 +198,7 @@ class RunnerAgent(BaseAgent):
         existing_sj = state.get("sandbox_job") or {}
         existing_sj["runtime"] = RUNTIME_SANDBOX_MCP
         existing_sj["await_preview"] = True
-        if "sync_url" not in existing_sj:
-            existing_sj["sync_url"] = f"ws://localhost:8001/brain/sandbox/sync/{session_id}"
+        existing_sj["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{session_id}"
         state["sandbox_job"] = existing_sj
         state["run_report"] = "Deploy started in background — tunnel URL will arrive via WebSocket."
         state["execute_sandbox"] = {
@@ -187,5 +218,5 @@ class RunnerAgent(BaseAgent):
             }),
         }
 
-        return state
-
+        yield state
+        return

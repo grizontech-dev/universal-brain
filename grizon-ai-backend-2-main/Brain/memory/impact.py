@@ -1,4 +1,5 @@
 import os
+import uuid
 import openai
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
@@ -30,7 +31,7 @@ class QdrantImpactAnalysis:
         self.client.upsert(
             collection_name=self.collection_name,
             points=[PointStruct(
-                id=artifact_id,
+                id=str(uuid.uuid4()),
                 vector=embedding,
                 payload={
                     "project_id": project_id,
@@ -48,23 +49,23 @@ class QdrantImpactAnalysis:
         conditions = [FieldCondition(key="dependencies", match=MatchValue(value=component_name))]
         if project_id:
             conditions.append(FieldCondition(key="project_id", match=MatchValue(value=project_id)))
-        results = self.client.scroll(
+        results, _ = self.client.scroll(
             collection_name=self.collection_name,
             limit=50,
-            query_filter=Filter(must=conditions)
+            scroll_filter=Filter(must=conditions)
         )
-        return [r.payload for r in results[0]]
+        return [r.payload for r in results]
 
     def find_dependencies(self, component_name: str, project_id: str = None) -> list:
         conditions = [FieldCondition(key="name", match=MatchValue(value=component_name))]
         if project_id:
             conditions.append(FieldCondition(key="project_id", match=MatchValue(value=project_id)))
-        results = self.client.scroll(
+        results, _ = self.client.scroll(
             collection_name=self.collection_name,
             limit=10,
-            query_filter=Filter(must=conditions)
+            scroll_filter=Filter(must=conditions)
         )
-        for r in results[0]:
+        for r in results:
             return r.payload.get("dependencies", [])
         return []
 
@@ -73,9 +74,9 @@ class QdrantImpactAnalysis:
             model=EMBEDDING_MODEL, input=change_request
         ).data[0].embedding
 
-        search_results = self.client.search(
+        search_results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=10,
             query_filter=Filter(must=[
                 FieldCondition(key="project_id", match=MatchValue(value=project_id))
@@ -89,6 +90,6 @@ class QdrantImpactAnalysis:
                     "type": r.payload.get("artifact_type"),
                     "similarity": r.score
                 }
-                for r in search_results
+                for r in search_results.points
             ]
         }

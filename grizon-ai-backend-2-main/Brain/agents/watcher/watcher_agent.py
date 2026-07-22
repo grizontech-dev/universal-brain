@@ -3,13 +3,14 @@ from Brain.shared.agent import BaseAgent
 import time
 from Brain.services.sandbox_manager import sandbox_manager
 
+LOG = "[WATCHER]"
 
 class WatcherAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Watcher",
             description="Monitors the sandbox and reports when the task is complete.",
-            model_id="gpt-4o-mini"
+            model_id="deepseek-chat"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -17,6 +18,7 @@ class WatcherAgent(BaseAgent):
         Polls the sandbox status and updates the state.
         """
         sandbox_id = state.get("sandbox_id")
+        print(f"{LOG} ═══ EXECUTE ═══ sandbox_id={sandbox_id}", flush=True)
         if not sandbox_id:
             state["status"] = "error"
             return state

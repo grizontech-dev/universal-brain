@@ -1,6 +1,6 @@
 from Brain.config.database import SessionLocal
 from Brain.modules.conversations.models import Conversation, Message, BrainProject, CreditWallet, CreditTransaction, User
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import re
 from typing import Dict, Any
@@ -47,7 +47,7 @@ class ConversationService:
             # Update wallet
             wallet.balance -= amount
             wallet.totalSpent += amount
-            wallet.updatedAt = datetime.utcnow()
+            wallet.updatedAt = datetime.now(timezone.utc)
             
             # Log transaction
             transaction = CreditTransaction(
@@ -57,7 +57,6 @@ class ConversationService:
                 balanceAfter=wallet.balance,
                 type="deduct",
                 reason=reason,
-                createdAt=datetime.utcnow()
             )
             db.add(transaction)
             db.commit()
@@ -102,8 +101,6 @@ class ConversationService:
                     title=state["content"][:60],
                     status="active",
                     platform="web",
-                    createdAt=datetime.utcnow(),
-                    updatedAt=datetime.utcnow()
                 )
                 db.add(new_conv)
                 db.flush() # Ensure it's in the session so FKs can reference it
@@ -116,8 +113,6 @@ class ConversationService:
                     title=state["content"][:50],
                     repoUrl=state.get("repo_url"),
                     status="ANALYZING",
-                    createdAt=datetime.utcnow(),
-                    updatedAt=datetime.utcnow()
                 )
                 db.add(project)
                 
@@ -128,7 +123,6 @@ class ConversationService:
                     userId=user_id,
                     role="user",
                     content=state["content"],
-                    createdAt=datetime.utcnow()
                 )
                 db.add(user_msg)
                 db.commit()
@@ -145,8 +139,6 @@ class ConversationService:
                         title=state["content"][:50],
                         repoUrl=state.get("repo_url"),
                         status="ANALYZING",
-                        createdAt=datetime.utcnow(),
-                        updatedAt=datetime.utcnow()
                     )
                     db.add(project)
                 elif project.repoUrl:
@@ -168,7 +160,6 @@ class ConversationService:
                         userId=user_id,
                         role="user",
                         content=state["content"],
-                        createdAt=datetime.utcnow()
                     )
                     db.add(user_msg)
                 db.commit()
@@ -206,8 +197,7 @@ class ConversationService:
                 todoList=todo_list,
                 sandboxJob=sandbox_job,
                 extra_metadata=metadata,
-                creditsDeducted=credits_deducted,
-                createdAt=datetime.utcnow()
+                creditsDeducted=credits_deducted
             )
             try:
                 print(f"DEBUG: Saving message to DB - Conv: {conversation_id}, Role: {role}, Content Snippet: {content[:30]}")

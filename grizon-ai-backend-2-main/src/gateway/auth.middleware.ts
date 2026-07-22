@@ -1,7 +1,7 @@
 import type { RequestHandler } from 'express';
 
 import { env } from '../config/env.js';
-import { getPool } from '../db/pool.js';
+import { getPool, retryQuery } from '../db/pool.js';
 import { Errors } from '../utils/errors.js';
 import { tokenService } from '../services/token.service.js';
 import { sessionService } from '../services/session.service.js';
@@ -106,7 +106,7 @@ export const authMiddleware: RequestHandler = async (req, res, next) => {
 
   // Load user and enforce status.
   const pool = getPool();
-  const userRes = await pool.query(
+  const userRes = await retryQuery(
     `
     SELECT id,email,name,bio,avatar_url,role,status,email_verified_at,mfa_enabled,password_hash IS NOT NULL AS has_password
     FROM users

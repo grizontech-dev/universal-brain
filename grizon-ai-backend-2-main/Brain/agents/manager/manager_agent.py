@@ -1,14 +1,17 @@
 from typing import Any, Dict, List
 import json
+import os
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage
+
+LOG = "[MANAGER]"
 
 class ManagerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Leader/Manager",
             description="Analyzes user intent, ensures context is complete, and coordinates the workflow.",
-            model_id="gpt-4o-mini"
+            model_id="deepseek-chat"
         )
 
     def _build_rich_thought(self, prompt: str, analysis: dict, is_post_answers: bool = False) -> str:
@@ -75,6 +78,7 @@ class ManagerAgent(BaseAgent):
         - If clear → go to planner_agent
         """
         prompt = state.get("content", "")
+        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | rounds={state.get('question_rounds', 0)}", flush=True)
         history = state.get("messages", [])
         current_rounds = state.get("question_rounds", 0)
         is_post_answers = self._is_answering_questions(history)
@@ -155,7 +159,7 @@ class ManagerAgent(BaseAgent):
             re_eval_messages.append(HumanMessage(content=f"User answers: {user_answers}"))
 
             print(f"DEBUG: ManagerAgent re-evaluating post-answers with {self.model_id}")
-            response_content = await self.chat(re_eval_messages)
+            response_content = await self.chat(re_eval_messages, model_id="deepseek-chat", max_tokens=600)
             analysis = self._format_json_response(response_content)
             print(f"DEBUG: ManagerAgent re-eval result: {json.dumps(analysis)[:200]}...")
 
@@ -177,6 +181,100 @@ class ManagerAgent(BaseAgent):
             state["intent_confidence"] = analysis.get("confidence", 0.8)
             state["next_agent"] = analysis.get("next_agent", "planner")
             state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
+            return state
+
+        # === FOLLOW-UP PATH: User asks for a new feature or posts an error on existing project ===
+        is_follow_up = len(history) >= 2
+        
+        if is_follow_up and not is_post_answers:
+            print(f"DEBUG: ManagerAgent detected follow-up mode (len history = {len(history)}). Bypassing Planner.")
+            
+            # For follow-ups, Manager acts as the direct planner and task divider
+            follow_up_prompt = """
+            You are the Grizon Lead Project Architect. The user is asking for a change, a new feature, or posting an error for an ALREADY EXISTING project.
+            
+            Your job is to analyze the prompt and immediately divide it into a few concrete execution tasks for the Builder agent.
+            Keep tasks small and scoped (e.g. 1-2 tasks for a small change, up to 3-4 for a big feature).
+            ALWAYS include a final 'runner' task so the user can preview the changes.
+            
+            Respond ONLY with a JSON array of tasks:
+            [
+              {
+                "id": "t1",
+                "title": "Task Title",
+                "description": "What exact files to modify and how to fix the issue or add the feature.",
+                "category": "frontend",
+                "skill_required": "implement",
+                "acceptance_criteria": "How to verify"
+              },
+              {
+                "id": "t2",
+                "title": "Runner: Install Dependencies & Start Servers",
+                "description": "Runner starts backend and frontend dev servers.",
+                "category": "runner",
+                "skill_required": "runner",
+                "acceptance_criteria": "Preview loads on port 5173"
+              }
+            ]
+            """
+            
+            messages = [SystemMessage(content=follow_up_prompt)]
+            if session_context:
+                messages.append(SystemMessage(content=session_context))
+            
+            # Add recent history for context
+            for msg in history[-4:]:
+                role = msg.get("role", "USER")
+                content = str(msg.get("content", ""))
+                if role == "USER":
+                    messages.append(HumanMessage(content=content))
+                else:
+                    messages.append(SystemMessage(content=f"Assistant: {content}"))
+                    
+            messages.append(HumanMessage(content=f"Current Update Request: {prompt}"))
+            
+            print(f"DEBUG: ManagerAgent requesting iterative tasks with {self.model_id}")
+            response_content = await self.chat(messages, model_id="deepseek-chat", max_tokens=1000)
+            tasks = self._format_json_response(response_content)
+            
+            if not isinstance(tasks, list) or not tasks:
+                # Fallback task
+                tasks = [
+                    {
+                        "id": "t1",
+                        "title": "Implement changes",
+                        "description": f"Implement user request: {prompt}",
+                        "category": "frontend",
+                        "skill_required": "implement",
+                        "acceptance_criteria": "Changes applied"
+                    },
+                    {
+                        "id": "t2",
+                        "title": "Runner: Install Dependencies & Start Servers",
+                        "description": "Runner starts backend and frontend dev servers.",
+                        "category": "runner",
+                        "skill_required": "runner",
+                        "acceptance_criteria": "Preview loads on port 5173"
+                    }
+                ]
+                
+            print(f"DEBUG: ManagerAgent generated {len(tasks)} iterative tasks.")
+            
+            analysis = {
+                "analysis": f"I've analyzed your request and divided it into {len(tasks)} tasks. Sending directly to the Builder to implement the changes.",
+                "is_context_missing": False,
+                "missing_details": [],
+                "next_agent": "builder",
+                "confidence": 0.9
+            }
+            
+            state["leader_analysis"] = analysis
+            state["intent_confidence"] = 0.9
+            state["tasks"] = tasks
+            state["plan"] = tasks
+            state["current_task_index"] = 0
+            state["next_agent"] = "builder"
+            state["status"] = "tasks_ready"
             return state
 
         # === NORMAL FIRST-TIME PATH: Analyze the prompt ===
@@ -219,7 +317,7 @@ class ManagerAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current User Input: {prompt}"))
 
         print(f"DEBUG: ManagerAgent requesting chat with model {self.model_id}")
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, model_id="deepseek-chat", max_tokens=600)
         print(f"DEBUG: ManagerAgent raw response: {response_content[:200]}...")
         analysis = self._format_json_response(response_content)
         print(f"DEBUG: ManagerAgent parsed analysis: {json.dumps(analysis)[:200]}...")
@@ -248,4 +346,5 @@ class ManagerAgent(BaseAgent):
             state["next_agent"] = analysis.get("next_agent", "questions")
             state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
 
+        print(f"{LOG} → next_agent='{state['next_agent']}' | status='{state['status']}' | confidence={state.get('intent_confidence', 'N/A')}", flush=True)
         return state

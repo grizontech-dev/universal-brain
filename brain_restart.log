@@ -1,0 +1,11 @@
+﻿python : C:\Users\DELL\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packa
+ges\Python313\site-packages\langgraph\cache\base\__init__.py:8: LangChainPendingDeprecationWarning: The default value 
+of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or 
+allowed_objects='core') to suppress this warning.
+At line:1 char:87
++ ... new($false);python -m uvicorn Brain.main:app --host 127.0.0.1 --port  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\DELL\A...s this warning.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer

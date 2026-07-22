@@ -37,7 +37,7 @@ class ClarifierAgent:
         6. If this is a follow-up, your primary goal is to validate the new info and move to research/planning.
         """
         
-        # Use structured output for the LLM - Explicitly use function_calling for DeepSeek compatibility
+        # Use structured output for the LLM
         structured_model = model.with_structured_output(ClarificationResponse, method="function_calling")
         
         messages = [SystemMessage(content=system_prompt)]

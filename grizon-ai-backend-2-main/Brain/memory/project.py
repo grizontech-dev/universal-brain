@@ -48,5 +48,8 @@ class ProjectMemory:
     def list_by_owner(self, owner_id: str) -> list:
         return self.db.query(Project).filter(Project.owner_id == owner_id).all()
 
+    def list_all(self) -> list:
+        return self.db.query(Project).all()
+
     def close(self):
         self.db.close()

@@ -46,14 +46,18 @@ class BrainOrchestrator:
             
         # 5. Handle Building phase (Builder coordinates sub-agents)
         if state.get("next_agent") == "builder" or state.get("status") == "building":
-            state = await self.builder.execute(state)
+            async for ev in self.builder.execute(state):
+                if isinstance(ev, dict):
+                    state = ev
             # Builder will loop itself until tasks are done
             if state.get("status") == "building":
                 return state # Continue building in next iteration or await
 
         # 6. Handle Execution phase
         if state.get("status") == "building_complete" or state.get("next_agent") == "runner":
-            state = await self.runner.execute(state)
+            async for ev in self.runner.execute(state):
+                if isinstance(ev, dict):
+                    state = ev
             
         # 7. Handle Monitoring phase
         if state.get("status") == "running" or state.get("next_agent") == "watcher":

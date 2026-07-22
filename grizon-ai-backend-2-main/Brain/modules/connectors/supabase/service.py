@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Tuple, Dict, Any, Optional
 from cryptography.fernet import Fernet
 from sqlalchemy import Column, String, Boolean, DateTime, JSON, ForeignKey
+
 import uuid
 from Brain.config.database import Base, SessionLocal
 

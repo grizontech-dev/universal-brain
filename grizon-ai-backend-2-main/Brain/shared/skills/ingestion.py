@@ -5,7 +5,6 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_postgres import PGVector
-from langchain_postgres.vectorstores import PGVector
 from sqlalchemy import create_engine
 import psycopg2
 
@@ -54,6 +53,9 @@ text_splitter = RecursiveCharacterTextSplitter(
 )
 
 skills_dir = os.path.join(os.path.dirname(__file__), '../../skillss')
+if not os.path.isdir(skills_dir):
+    print(f"Warning: skills_dir does not exist: {os.path.abspath(skills_dir)}. Nothing to ingest.")
+    raise SystemExit(1)
 skill_files = glob.glob(f"{skills_dir}/*/SKILL.md")
 
 all_chunks = []

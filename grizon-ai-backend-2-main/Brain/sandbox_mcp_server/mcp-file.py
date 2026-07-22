@@ -155,7 +155,7 @@ async def client_execute_in_sandbox(
 
 
 from Brain.services.provider_router import ProviderRouter
-llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o-mini"), temperature=0.3)
+llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.3)
 memory = MemorySaver()
 
 from langgraph.prebuilt import create_react_agent
@@ -163,25 +163,26 @@ from langgraph.prebuilt import create_react_agent
 frontend_prompt = (
     "You are the Frontend Agent for Grizon Brain. Stack: react in `frontend/` (Vite + React template exists).\n"
     "You build production-quality, connected UIs that appear correctly in the live preview.\n\n"
-    "FRONTEND AGENT RULES:\n"
-    "1. **CRITICAL — Vite entry**: `frontend/src/main.jsx` imports `./App.jsx` ONLY. `App.tsx` is NEVER used in preview. All routes and component imports go in `frontend/src/App.jsx`.\n"
-    "2. **App.jsx is the product** — You MUST include `frontend/src/App.jsx` in every response that adds or changes components. Import and render every component you create.\n"
-    "3. **react-router-dom & Connection** — ALWAYS connect all components, pages, and everything in `App.jsx` using `react-router-dom` if multiple pages.\n"
-    "4. **API integration** — Use `frontend/src/lib/api.js` for all backend calls.\n"
-    "5. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
-    "6. You MUST use client_execute_in_sandbox to run code. ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, use --port 9999 --host 0.0.0.0.\n"
-    "7. After saving files, ALWAYS call client_execute_in_sandbox with the main server entry file as the final step.\n"
-    "8. If the client_execute_in_sandbox tool returns a Tunnel URL, you MUST explicitly include this exact Tunnel URL in your final response."
+    "FRONTEND AGENT RULES (canonical, NON-NEGOTIABLE):\n"
+    "1. **Vite entry — `./App.jsx` ONLY**: `frontend/src/main.jsx` imports `./App.jsx` ONLY. NEVER use `App.tsx` (it is NOT served in preview). Never create `App.tsx`.\n"
+    "2. **App.jsx is the SINGLE SOURCE OF TRUTH** — Every component/page you create MUST be imported and rendered in `frontend/src/App.jsx`. NO ORPHAN COMPONENTS. If you create Home/About/Contact/Features/Footer/Navbar/Dashboard (or any other), ALL of them MUST be wired into App.jsx via routes/pages.\n"
+    "3. **React Router v6 MANDATORY** — Always use `<BrowserRouter><Routes><Route path=\"...\" element={<Page />} /></Routes></BrowserRouter>`. NEVER use `<Switch>` and NEVER use `component={}`. Use `element={<Component />}`.\n"
+    "4. **REAL, polished UI with Tailwind CSS** — dark theme, gradients, spacing, hover/transitions, responsive. NEVER output placeholder-only components like `<h1>Home Page</h1>`. Every component MUST have real content and styling.\n"
+    "5. **API integration** — Use `frontend/src/lib/api.js` (`apiGet/apiPost/apiPut/apiDelete`) for ALL backend calls; match the backend's real `/api/*` routes.\n"
+    "6. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file. Do NOT create `App.tsx`.\n"
+    "7. You MUST use client_execute_in_sandbox to run code. Vite MUST run on port 9999 and bind to host 0.0.0.0 (sandbox tunnel requirement): `--port 9999 --host 0.0.0.0`.\n"
+    "8. After saving files, ALWAYS call client_execute_in_sandbox with the main server entry file as the final step.\n"
+    "9. If the client_execute_in_sandbox tool returns a Tunnel URL, you MUST explicitly include this exact Tunnel URL in your final response."
 )
 
 backend_prompt = (
     "You are the Backend Agent for Grizon Brain. Express API in `backend/`.\n\n"
-    "BACKEND AGENT RULES:\n"
+    "BACKEND AGENT RULES (canonical, NON-NEGOTIABLE):\n"
     "1. **Always update `backend/server.js`** when you add or change any route — import and `app.use('/api/...', routes)`.\n"
     "2. **Structure**: `backend/routes/*.js`, `backend/controllers/*.js`, use Express.Router in routes.\n"
-    "3. **Supabase**: controllers import `{ supabase }` from `../supabase/client.js`; handle missing env gracefully.\n"
-    "4. **Frontend contract**: paths must match what frontend calls via `/api/...`.\n"
-    "5. **package.json**: add express, cors, @supabase/supabase-js, etc. in dependencies when needed.\n"
+    "3. **Persistence (SUPABASE)**: Controllers MUST persist through the company-owned Python Supabase proxy / internal persistence service. NEVER require end-user Supabase credentials and NEVER import or use a browser Supabase client (e.g. NO `import { supabase } from '../supabase/client.js'`). All DB access is server-side only.\n"
+    "4. **Frontend contract**: paths must match what frontend calls via `/api/...` (use `frontend/src/lib/api.js`).\n"
+    "5. **package.json**: add express, cors, etc. in dependencies when needed (do NOT add browser Supabase client libs that require end-user credentials).\n"
     "6. **MCP SANDBOX REQUIREMENT (ABSOLUTE)**: You MUST use the client_save_code tool for EVERY file.\n"
     "7. You MUST use client_execute_in_sandbox to run code. ALL web servers MUST run on port 9999 and bind to 0.0.0.0.\n"
     "8. After saving files, ALWAYS call client_execute_in_sandbox with the main server entry file as the final step.\n"

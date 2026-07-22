@@ -1,10 +1,12 @@
 from typing import Any, Dict, List
 import json
+import re
 from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS, INTEGRATION_TASK_TEMPLATE
 from Brain.services.template_service import normalize_framework
 from langchain_core.messages import SystemMessage, HumanMessage
 
+LOG = "[TODO]"
 MIN_TODOS = 3
 MAX_TODOS = 15
 
@@ -94,12 +96,26 @@ class TodoAgent(BaseAgent):
         super().__init__(
             name="Todo",
             description="Converts the approved plan into executable tasks (3–15).",
-            model_id="gpt-4o-mini",
+            model_id="deepseek-chat",
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        plan = state.get("project_plan", {})
+        plan_raw = state.get("project_plan", {})
         framework = normalize_framework(state.get("framework"))
+        
+        # Handle both dict and string plan formats
+        if isinstance(plan_raw, str):
+            try:
+                import json as _json
+                plan = _json.loads(plan_raw)
+            except Exception:
+                plan = {"markdown_plan": plan_raw, "project_name": "Project"}
+        elif isinstance(plan_raw, dict):
+            plan = plan_raw
+        else:
+            plan = {"project_name": "Project"}
+        
+        print(f"{LOG} ═══ EXECUTE ═══ plan_name='{plan.get('project_name', 'N/A')}' | framework={framework} | plan_type={type(state.get('project_plan')).__name__}", flush=True)
 
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
@@ -129,19 +145,32 @@ class TodoAgent(BaseAgent):
 
         HARD LIMITS:
         - Between {MIN_TODOS} and {MAX_TODOS} tasks (including runner).
-        - Break down large frontend features into smaller, granular tasks (max 2-3 components per task). Do NOT group all frontend components into a single task.
+        - MAX 5 FILES PER TASK (any category — frontend, backend, database).
+        - If a task needs more than 5 files, SPLIT it into multiple tasks.
+        - Frontend: max 2-3 components per task.
+        - Backend: max 3-4 routes/controllers per task.
+        - Each file generates one LLM call (~30-60s), so 5 files = ~5 minutes per task.
 
-        REQUIRED TASK ORDER (typical full-stack landing):
-        1. **database** — Shared Supabase schema in `backend/supabase/` using the Shared Table + JSONB Data Matrix Pattern (if project needs persistence).
-        2. **backend** — Express routes, controllers, and the Python Backend Proxy integration; mount all routes in `server.js`.
-        3. **frontend** — Components, pages, Tailwind styling (Navbar, Hero, Features, Contact, etc.).
-        4. **frontend** — "Wire App, Router, Backend Proxy & Company Supabase" — rewrite `App.jsx`, react-router-dom, api.js forms, verify server.js mounts (acceptance: preview shows full site, not template demo).
+        CRITICAL: FOLLOW THE PLAN EXACTLY. Do NOT add generic components (Hero, Features, Contact) unless the plan specifically mentions them.
+        Read the plan's "Key Pages & Components" section and create tasks for EACH component listed there.
+        Read the plan's "Data Models" section and create database tasks for EACH model listed there.
+
+        REQUIRED TASK ORDER:
+        1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.
+        2. **backend** — Express routes + controllers for the plan's API endpoints. Mount in `server.js`.
+        3. **frontend** — Components and pages from the plan's "Key Pages & Components" section.
+        4. **frontend** — Wire App.jsx with React Router, import ALL components, connect to backend API.
         5. **runner** — last task only; title like "Runner: Install Dependencies & Start Servers".
 
         RULES:
         - Do NOT plan supabase CLI or npm install/dev in build tasks.
         - Frontend tasks must mention wiring components into App.jsx in acceptance_criteria.
         - Backend tasks must mention mounting routes in server.js in acceptance_criteria.
+        - EVERY frontend task must specify REAL UI content with Tailwind CSS styling (NOT placeholders)
+        - Frontend tasks must connect to the backend's real `/api/*` routes via `frontend/src/lib/api.js`.
+        - CRITICAL: Integration task MUST validate React Router v6 syntax (Routes not Switch, element=Component not component=Component)
+        - CRITICAL: Do NOT create README files, documentation, or placeholder content.
+        - CRITICAL: Do NOT create generic landing pages unless the plan specifically asks for them.
 
         TASK CATEGORIES: frontend | backend | database | runner
 
@@ -150,7 +179,7 @@ class TodoAgent(BaseAgent):
           {{
             "id": "t1",
             "title": "Task Title",
-            "description": "What to build",
+            "description": "DETAILED: What to build, exact files, exact UI elements, exact dependencies",
             "category": "frontend",
             "skill_required": "skill",
             "acceptance_criteria": "How to verify"
@@ -167,8 +196,42 @@ class TodoAgent(BaseAgent):
             messages.append(SystemMessage(content=decisions_context))
         messages.append(HumanMessage(content=f"Approved Plan: {json.dumps(plan)}"))
 
-        response_content = await self.chat(messages, model_id="gpt-4o-mini")
+        print(f"{LOG} Calling LLM now with {len(messages)} messages, total chars={sum(len(m.content) for m in messages)}", flush=True)
+        response_content = await self.chat(messages, model_id="deepseek-chat", timeout=180)
+        print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
         tasks = self._format_json_response(response_content)
+
+        import re
+        plan_text = ""
+        if isinstance(plan, dict):
+            for key in ("tasks", "steps", "description", "summary", "content"):
+                val = plan.get(key)
+                if isinstance(val, str):
+                    plan_text += val + " "
+                elif isinstance(val, list):
+                    plan_text += json.dumps(val) + " "
+        elif isinstance(plan, str):
+            plan_text = plan
+        else:
+            plan_text = json.dumps(plan)
+        route_pattern = re.compile(r"/api/[A-Za-z][A-Za-z0-9_/]*", re.IGNORECASE)
+        backend_routes = sorted(set(route_pattern.findall(plan_text)))
+        route_hint = ""
+        if backend_routes:
+            route_hint = "Available backend routes: " + ", ".join(backend_routes) + "."
+        else:
+            route_hint = "Use frontend/src/lib/api.js (apiGet/apiPost/apiPut/apiDelete) for any data calls; see backend tasks for exact /api/* routes."
+
+        if isinstance(tasks, list):
+            for task in tasks:
+                if task.get("category") == "frontend":
+                    desc = task.get("description", "") or ""
+                    desc = desc.rstrip()
+                    if desc and not desc.endswith((".", "!", "?")):
+                        desc += "."
+                    desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
+                    desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
+                    task["description"] = desc
 
         if not isinstance(tasks, list):
             tasks = [
@@ -213,6 +276,15 @@ class TodoAgent(BaseAgent):
                     "acceptance_criteria": "Preview loads on port 5173",
                 },
             ]
+            for task in tasks:
+                if task.get("category") == "frontend":
+                    desc = task.get("description", "") or ""
+                    desc = desc.rstrip()
+                    if desc and not desc.endswith((".", "!", "?")):
+                        desc += "."
+                    desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
+                    desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
+                    task["description"] = desc
 
         tasks = clamp_todo_list(tasks)
         print(f"DEBUG: TodoAgent produced {len(tasks)} tasks (clamp {MIN_TODOS}-{MAX_TODOS})")

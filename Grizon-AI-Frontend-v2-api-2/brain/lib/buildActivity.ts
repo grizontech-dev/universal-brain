@@ -58,6 +58,32 @@ export type BrainEvent =
   | {
       type: "build_success";
       timestamp: string;
+    }
+  | {
+      type: "file_writing";
+      file: string;
+      task_title?: string;
+      timestamp: string;
+    }
+  | {
+      type: "file_saved";
+      file: string;
+      task_title?: string;
+      chars?: number;
+      timestamp: string;
+    }
+  | {
+      type: "llm_thinking";
+      task_title?: string;
+      files_done?: number;
+      timestamp: string;
+    }
+  | {
+      type: "task_files_summary";
+      task_title?: string;
+      files_count?: number;
+      output_preview?: string;
+      timestamp: string;
     };
 
 export type BuildActivityType =
@@ -193,6 +219,14 @@ export function parseProgressToActivity(progressMsg: string): BuildActivity | nu
                     return { id: `prog-val-${safeMsg}`, type: 'run_command', label: `Running validation...`, timestamp: parseInt(event.timestamp) || Date.now(), status: event.status === 'success' ? 'done' : event.status === 'failed' ? 'failed' : 'running' };
                 case 'build_success':
                     return { id: `prog-build-${safeMsg}`, type: 'milestone', label: `✔ Build Successful`, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
+                case 'file_writing':
+                    return { id: `prog-writing-${safeMsg}`, type: 'write_file', label: `Writing \`${(event as any).file?.split('/')?.pop() || event.file}\``, path: (event as any).file, taskTitle: (event as any).task_title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'running' };
+                case 'file_saved':
+                    return { id: `prog-saved-${safeMsg}`, type: 'write_file', label: `Saved \`${(event as any).file?.split('/')?.pop() || event.file}\` (${(event as any).chars || 0} chars)`, path: (event as any).file, taskTitle: (event as any).task_title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
+                case 'llm_thinking':
+                    return { id: `prog-thinking-${safeMsg}`, type: 'thinking', label: `AI generating code... (${(event as any).files_done || 0} files done)`, taskTitle: (event as any).task_title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'running' };
+                case 'task_files_summary':
+                    return { id: `prog-summary-${safeMsg}`, type: 'task_done', label: `${(event as any).task_title} — ${(event as any).files_count || 0} files written`, taskTitle: (event as any).task_title, detail: (event as any).output_preview, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
             }
         } catch (e) {
             console.warn('[Brain] Failed to parse structured BrainEvent', e);

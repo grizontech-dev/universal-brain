@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Github, Database, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
+import { Github, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
@@ -15,7 +15,6 @@ interface ConnectorState {
 
 const initialConnectors = {
   github: { status: 'loading' as ConnectorStatus },
-  supabase: { status: 'loading' as ConnectorStatus },
 };
 
 export default function SettingsConnectionsPanel() {
@@ -122,7 +121,7 @@ export default function SettingsConnectionsPanel() {
       if (res.ok) {
         setConnectors((prev) => ({ ...prev, [name]: { status: 'disconnected' } }));
         if (name === 'github') setGithubRepos([]);
-        const displayName = name === 'github' ? 'GitHub' : 'Supabase';
+        const displayName = name;
         setNotification({ type: 'success', message: `Disconnected from ${displayName}.` });
       } else {
         setNotification({ type: 'error', message: `Failed to disconnect.` });
@@ -142,7 +141,7 @@ export default function SettingsConnectionsPanel() {
       const errorMsg = params.get('error');
 
       if (status === 'success') {
-        const name = provider === 'github' ? 'GitHub' : provider === 'supabase' ? 'Supabase' : provider;
+        const name = provider === 'github' ? 'GitHub' : provider;
         setNotification({
           type: 'success',
           message: `Successfully connected to ${name}!`,
@@ -162,10 +161,8 @@ export default function SettingsConnectionsPanel() {
     if (!token) return;
     setConnectors({
       github: { status: 'loading' },
-      supabase: { status: 'loading' },
     });
     void checkConnector('github', '/connect-github/status');
-    void checkConnector('supabase', '/connect-supabase/status');
   }, [token]);
 
   const connectGitHub = () => {
@@ -173,13 +170,7 @@ export default function SettingsConnectionsPanel() {
     window.location.href = url;
   };
 
-  const connectSupabase = () => {
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    params.set('return_url', `${window.location.origin}/settings/connections`);
-    const url = `${BRAIN_URL}/connect-supabase/login?${params.toString()}`;
-    window.location.href = url;
-  };
+
 
   return (
     <div className='animate-in fade-in slide-in-from-bottom-2 duration-300'>

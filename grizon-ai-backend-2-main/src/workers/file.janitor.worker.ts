@@ -1,4 +1,4 @@
-import { getPool } from "../db/pool.js";
+import { getPool, retryQuery } from "../db/pool.js";
 import { getQdrantClient } from "../infra/qdrant.js";
 import { storageService } from "../services/storage.service.js";
 import { logger } from "../utils/logger.js";
@@ -63,7 +63,7 @@ async function purgeFile(file: OrphanRow): Promise<void> {
 export async function runFileJanitorOnce(): Promise<void> {
   const pool = getPool();
 
-  const res = await pool.query(
+  const res = await retryQuery(
     `
     SELECT id, user_id, storage_path
     FROM files

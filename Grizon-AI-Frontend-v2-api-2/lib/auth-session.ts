@@ -45,9 +45,31 @@ export async function refreshAccessToken(): Promise<string | null> {
     try {
       const rt = getRefreshToken();
       if (!rt) return null;
-      const bundle = await authRefresh(rt);
-      setTokenPair(bundle.access_token, bundle.refresh_token);
-      return bundle.access_token;
+
+      // Retry once on network errors (ECONNRESET, fetch TypeError, etc.)
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const bundle = await authRefresh(rt);
+          setTokenPair(bundle.access_token, bundle.refresh_token);
+          return bundle.access_token;
+        } catch (e) {
+          lastError = e;
+          // Only retry on network errors, not auth errors
+          if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
+            clearAll();
+            return null;
+          }
+          // Network error — wait briefly then retry once
+          if (attempt === 0) {
+            await new Promise((r) => setTimeout(r, 500));
+            continue;
+          }
+        }
+      }
+      // All retries exhausted
+      console.warn('[Auth] Refresh failed after retries:', lastError);
+      return null;
     } catch (e) {
       if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
         clearAll();

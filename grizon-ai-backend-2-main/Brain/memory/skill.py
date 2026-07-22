@@ -9,10 +9,10 @@ class SkillMemory:
     def record_usage(self, skill_name: str, project_id: str, outcome: dict):
         self.db.execute(
             text("""
-                INSERT INTO memory_skill_performance (skill_name, total_uses, successful_uses, failed_uses,
+                INSERT INTO memory_skill_performance (id, skill_name, total_uses, successful_uses, failed_uses,
                     avg_score, avg_token_cost, avg_duration_ms, projects_used, last_used)
                 VALUES (
-                    :name, 1,
+                    gen_random_uuid()::text, :name, 1,
                     :success, :failure,
                     :score, :token_cost, :duration,
                     ARRAY[:project]::text[], now()

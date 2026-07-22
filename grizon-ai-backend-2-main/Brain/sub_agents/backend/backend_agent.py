@@ -12,7 +12,7 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="gpt-4o-mini"
+            model_id="deepseek-chat"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()

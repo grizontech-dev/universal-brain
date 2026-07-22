@@ -15,6 +15,7 @@ from cryptography.fernet import Fernet
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, JSON, String
+from sqlalchemy.dialects.postgresql import UUID
 
 from Brain.config.database import Base, SessionLocal
 from Brain.modules.connectors.supabase.service import Connector

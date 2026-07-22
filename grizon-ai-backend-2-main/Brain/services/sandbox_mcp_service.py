@@ -22,7 +22,6 @@ RUNTIME_SANDBOX_MCP = "sandbox_mcp"
 
 class SandboxMCPService:
     def __init__(self):
-        self._session: Optional[ClientSession] = None
         self._session_activity: Dict[str, float] = {}
         self.TTL_MINUTES = 30
         self._workspace_root: Optional[str] = None
@@ -30,9 +29,6 @@ class SandboxMCPService:
         self._initialized = False
         self._url: Optional[str] = None
         self._token: Optional[str] = None
-        self._read_stream = None
-        self._write_stream = None
-        self._transport_ctx = None
         self._tunnel_urls: Dict[str, str] = {}
 
     async def initialize(self):
@@ -54,33 +50,38 @@ class SandboxMCPService:
             self._initialized = False
 
     async def _connect(self):
-        """Establish MCP session with server."""
+        """Verify MCP server is reachable. Each _call_tool creates its own fresh session."""
         print(f"[SANDBOX_MCP] Connecting to MCP server...")
-        self._transport_ctx = streamablehttp_client(
+        # Create a temporary session just to verify connectivity
+        transport_ctx = streamablehttp_client(
             url=self._url,
             headers={"Authorization": f"Bearer {self._token}"},
-            timeout=600,
+            timeout=30,
         )
-        transport = await self._transport_ctx.__aenter__()
-        self._read_stream, self._write_stream = transport[0], transport[1]
-
-        self._session_ctx = ClientSession(self._read_stream, self._write_stream)
-        self._session = await self._session_ctx.__aenter__()
-        await self._session.initialize()
-
-        tools_result = await self._session.list_tools()
-        tool_names = [t.name for t in tools_result.tools]
-        self._initialized = True
-        print(f"[SANDBOX_MCP] Connected OK | tools={tool_names}")
-        logger.info("Loaded %d tools from sandbox MCP server: %s", len(tool_names), tool_names)
+        try:
+            transport = await transport_ctx.__aenter__()
+            read_stream, write_stream = transport[0], transport[1]
+            session_ctx = ClientSession(read_stream, write_stream)
+            session = await session_ctx.__aenter__()
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tool_names = [t.name for t in tools_result.tools]
+            # Clean up immediately — don't store shared session
+            await session_ctx.__aexit__(None, None, None)
+            await transport_ctx.__aexit__(None, None, None)
+            self._initialized = True
+            print(f"[SANDBOX_MCP] Connected OK | tools={tool_names}")
+            logger.info("Loaded %d tools from sandbox MCP server: %s", len(tool_names), tool_names)
+        except Exception as e:
+            print(f"[SANDBOX_MCP] Connection failed: {e}")
+            try:
+                await transport_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise
 
     async def _disconnect(self):
-        """Reset MCP session state. Do NOT call __aexit__ from a different task — anyio forbids it."""
-        self._session = None
-        self._session_ctx = None
-        self._transport_ctx = None
-        self._read_stream = None
-        self._write_stream = None
+        """Reset MCP state. Each _call_tool creates its own fresh session."""
         self._initialized = False
 
     async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
@@ -136,13 +137,14 @@ class SandboxMCPService:
                 print(f"[SANDBOX_MCP] _call_tool '{name}' returned in {elapsed:.1f}s | type={type(result).__name__}")
                 return result
             finally:
-                # Clean up session (best effort)
+                # Clean up session — MUST be in same task context as __aenter__
+                # Do NOT use asyncio.wait_for here (breaks anyio cancel scope)
                 try:
-                    await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=5)
+                    await session_ctx.__aexit__(None, None, None)
                 except Exception:
                     pass
                 try:
-                    await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=5)
+                    await transport_ctx.__aexit__(None, None, None)
                 except Exception:
                     pass
         except RuntimeError:
@@ -151,7 +153,7 @@ class SandboxMCPService:
             elapsed = time.time() - call_start_time
             print(f"[SANDBOX_MCP] _call_tool '{name}' ERROR after {elapsed:.1f}s: {e}")
             try:
-                await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=5)
+                await transport_ctx.__aexit__(None, None, None)
             except Exception:
                 pass
             raise
@@ -272,24 +274,29 @@ class SandboxMCPService:
                 with open(vite_cfg, "r") as f:
                     content = f.read()
                 patched = _re.sub(r'port:\s*5173', 'port: 9999', content)
-                # Add base: './' so Vite generates relative paths for iframe proxy compatibility
-                if "base:" not in patched and "base :" not in patched:
-                    patched = patched.replace(
-                        'server: {',
-                        'base: "./",\n  server: {'
-                    ) if 'server: {' in patched else patched.replace(
-                        'server:{',
-                        'base:"./",server:{'
-                    )
-                # Disable HMR — Vite HMR WebSocket fails inside iframes/tunnels
-                if 'hmr' not in patched:
-                    patched = patched.replace(
-                        'server: {',
-                        'server: { hmr: false,'
-                    ) if 'server: {' in patched else patched.replace(
-                        'server:{',
-                        'server:{ hmr: false,'
-                    )
+                
+                # If no server config exists, inject it right after defineConfig({
+                if 'server:' not in patched and 'server :' not in patched and 'defineConfig({' in patched:
+                    patched = _re.sub(r'defineConfig\(\{', 'defineConfig({\n  server: { port: 9999, host: "0.0.0.0", hmr: false, allowedHosts: true },\n  base: "./",', patched)
+                else:
+                    # Fallback logic if server config exists
+                    if "base:" not in patched and "base :" not in patched:
+                        patched = patched.replace(
+                            'server: {',
+                            'base: "./",\n  server: {'
+                        ) if 'server: {' in patched else patched.replace(
+                            'server:{',
+                            'base:"./",server:{'
+                        )
+                    if 'hmr' not in patched:
+                        patched = patched.replace(
+                            'server: {',
+                            'server: { hmr: false, host: "0.0.0.0", allowedHosts: true,'
+                        ) if 'server: {' in patched else patched.replace(
+                            'server:{',
+                            'server:{ hmr: false, host: "0.0.0.0", allowedHosts: true,'
+                        )
+                
                 if patched != content:
                     with open(vite_cfg, "w") as f:
                         f.write(patched)
@@ -303,6 +310,8 @@ class SandboxMCPService:
                 with open(pkg_json, "r") as f:
                     content = f.read()
                 patched = content.replace("--port 5173", "--port 9999")
+                # Also catch default vite dev script and force port
+                patched = _re.sub(r'"dev":\s*"vite"', '"dev": "vite --port 9999 --host 0.0.0.0"', patched)
                 if patched != content:
                     with open(pkg_json, "w") as f:
                         f.write(patched)
@@ -411,12 +420,7 @@ class SandboxMCPService:
             })
             self._session_activity.pop(session_id, None)
             self._tunnel_urls.pop(session_id, None)
-            # Also clean up local workspace files
-            workspace_dir = self.get_workspace_dir(session_id)
-            if os.path.isdir(workspace_dir):
-                import shutil
-                shutil.rmtree(workspace_dir, ignore_errors=True)
-                print(f"[SANDBOX_MCP] Cleaned local workspace: {workspace_dir}")
+            # Do NOT delete local workspace — files are needed for re-deploy
             logger.info("[sandbox_mcp] Deleted sandbox '%s'", session_id)
             return self._parse_response(result)
         except Exception as e:

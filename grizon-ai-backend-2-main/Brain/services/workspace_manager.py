@@ -60,7 +60,14 @@ class WorkspaceManager:
         local_path = os.path.join(self.container_workspaces_path, workspace_id)
         if os.path.exists(local_path):
             return local_path
-        return None
+        # Auto-create if it doesn't exist yet (prevents list-files 404 after restart)
+        try:
+            os.makedirs(local_path, exist_ok=True)
+            print(f"DEBUG: Auto-created workspace directory: {local_path}")
+            return local_path
+        except OSError as e:
+            print(f"WARNING: Could not create workspace directory {local_path}: {e}")
+            return None
 
     def build_op_write_file(self, path: str, content: str) -> Dict[str, Any]:
         p = path.lstrip("/")

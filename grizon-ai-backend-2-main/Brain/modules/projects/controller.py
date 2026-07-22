@@ -121,10 +121,13 @@ async def append_requirement(project_id: str, req: dict):
 
 
 @router.get("", response_model=List[ProjectResponse])
-async def list_projects(owner_id: str = Query(...)):
+async def list_projects(owner_id: Optional[str] = Query(None)):
     pm = ProjectMemory()
     try:
-        projects = pm.list_by_owner(owner_id)
+        if owner_id:
+            projects = pm.list_by_owner(owner_id)
+        else:
+            projects = pm.list_all()
         return [_to_response(p) for p in projects]
     finally:
         pm.close()

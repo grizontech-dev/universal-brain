@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { createHash as createNodeHash } from "crypto";
 
-import { getPool } from "../db/pool.js";
+import { getPool, retryQuery } from "../db/pool.js";
 import { getRedisClient } from "../infra/redis.js";
 import { authConfig } from "../config/auth.js";
 import { randomToken } from "../utils/secureRandom.js";
@@ -189,7 +189,7 @@ export const tokenService = {
     const pool = getPool();
     const tokenHash = this.hashToken(args.refreshTokenRaw);
 
-    const res = await pool.query(
+    const res = await retryQuery(
       `
       SELECT rt.*, u.role, u.id AS user_id
       FROM refresh_tokens rt

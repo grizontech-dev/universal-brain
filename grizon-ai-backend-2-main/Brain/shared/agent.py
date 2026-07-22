@@ -1,4 +1,5 @@
 import os
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
@@ -6,22 +7,37 @@ from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
+LOG = "[BASE_AGENT]"
+
 class BaseAgent(ABC):
     def __init__(self, name: str, description: str, model_id: Optional[str] = None):
         self.name = name
         self.description = description
-        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "gpt-4o-mini")
+        self.model_id = model_id or os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat")
         self._model: Optional[BaseChatModel] = None
 
-    def get_model(self, model_id: Optional[str] = None, temperature: float = 0.3) -> BaseChatModel:
+    def get_model(self, model_id: Optional[str] = None, temperature: float = 0.3, max_tokens: Optional[int] = None) -> BaseChatModel:
         """Returns the model instance, cached if possible."""
         target_model = model_id or self.model_id
-        return ProviderRouter.get_model(target_model, temperature=temperature)
+        return ProviderRouter.get_model(target_model, temperature=temperature, max_tokens=max_tokens)
 
-    async def chat(self, messages: List[BaseMessage], model_id: Optional[str] = None, temperature: float = 0.3) -> str:
+    async def chat(self, messages: List[BaseMessage], model_id: Optional[str] = None, temperature: float = 0.3, timeout: float = 90, max_tokens: Optional[int] = None) -> str:
         """Generic chat method for interacting with the LLM."""
-        model = self.get_model(model_id, temperature)
-        response = await model.ainvoke(messages)
+        model = self.get_model(model_id, temperature, max_tokens=max_tokens)
+        target_model_id = model_id or self.model_id
+        print(f"{LOG} [{self.name}] chat() | model={target_model_id} | timeout={timeout}s | msgs={len(messages)}", flush=True)
+        try:
+            import time as _t
+            _t0 = _t.time()
+            print(f"{LOG} [{self.name}] → ainvoke starting...", flush=True)
+            response = await asyncio.wait_for(model.ainvoke(messages), timeout=timeout)
+            print(f"{LOG} [{self.name}] ← ainvoke done in {_t.time()-_t0:.1f}s", flush=True)
+        except asyncio.TimeoutError:
+            print(f"{LOG} [{self.name}] ✖ LLM TIMEOUT after {timeout}s", flush=True)
+            return '{"error": "LLM call timed out"}'
+        except Exception as e:
+            print(f"{LOG} [{self.name}] ✖ LLM ERROR: {type(e).__name__}: {e}", flush=True)
+            return '{"error": "LLM call failed"}'
         content = response.content
         if isinstance(content, list):
             # Handle multi-part messages by joining string parts
@@ -29,7 +45,7 @@ class BaseAgent(ABC):
         
         # Log a snippet of the raw response
         snippet = str(content)[:200].replace('\n', ' ')
-        print(f"DEBUG: Agent '{self.name}' raw response snippet: {snippet}...")
+        print(f"{LOG} [{self.name}] ← response: {len(str(content))} chars | preview='{snippet}'", flush=True)
         
         return str(content)
 
@@ -78,6 +94,7 @@ class BaseAgent(ABC):
         """Highly resilient JSON parser that handles markdown, extra text, and truncation."""
         import re
         if not content or not isinstance(content, str):
+            print(f"{LOG} [{self.name}] ✖ JSON parse: empty or non-string response", flush=True)
             return {"error": "Empty or non-string response from agent"}
 
         # Strategy 1: Look for JSON within markdown code blocks
@@ -137,7 +154,7 @@ class BaseAgent(ABC):
             except Exception as final_e2:
                 print(f"DEBUG: Last-ditch repair also failed: {final_e2}")
             
-            return {"status": "error", "summary": f"Failed to parse JSON: {e}", "raw": content}
+            return {"status": "error", "summary": f"Failed to parse JSON: {e}", "raw": content[:500]}
 
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:

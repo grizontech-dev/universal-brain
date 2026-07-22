@@ -14,12 +14,29 @@ export const brainApi = {
         }
         return await response.json();
     },
-    streamChat: async (data: { 
-        user_id: string; 
-        conversation_id?: string; 
-        content: string; 
-        repo_url?: string; 
-        model_id?: string; 
+    getConversation: async (id: string): Promise<any> => {
+        const response = await brainApiFetch(`conversations/${id}`);
+        if (!response || !response.ok) {
+            if (!response) throw new Error('Brain conversation fetch failed: no response');
+            throw new Error(`Brain conversation fetch failed: ${response.status}`);
+        }
+        return await response.json();
+    },
+    listConversations: async (userId?: string): Promise<any> => {
+        const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+        const response = await brainApiFetch(`conversations${params}`);
+        if (!response || !response.ok) {
+            if (!response) throw new Error('Brain conversations list failed: no response');
+            throw new Error(`Brain conversations list failed: ${response.status}`);
+        }
+        return await response.json();
+    },
+    streamChat: async (data: {
+        user_id: string;
+        conversation_id?: string;
+        content: string;
+        repo_url?: string;
+        model_id?: string;
         plan_approved?: boolean;
         approved_plan?: string;
         temperature?: number;
@@ -27,71 +44,87 @@ export const brainApi = {
         question_rounds?: number;
         resume_build?: boolean;
         project_id?: string;
-    }, onChunk: (chunk: any) => void, signal?: AbortSignal) => {
-        let response: Response | null = null;
-        try {
-            response = await brainApiFetch('chat/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                body: JSON.stringify(data),
-                signal,
-            });
-        } catch (e: any) {
-            if (e.name === 'AbortError') return;
-            throw e;
-        }
-
-        if (!response || !response.ok) {
-            if (!response) {
-                throw new Error('Brain stream initiation failed: no response (network error or backend unreachable)');
-            }
-            let errorMessage = `Brain stream initiation failed: ${response.status}`;
+    }, onChunk: (chunk: any) => void, signal?: AbortSignal, retries = 2) => {
+        const attemptStream = async (attempt: number): Promise<void> => {
+            let response: Response | null = null;
             try {
-                const error = await response.json();
-                if (error?.error) errorMessage = `Brain stream initiation failed: ${error.error} (${response.status})`;
-            } catch {
-                try {
-                    const text = await response.text();
-                    if (text) errorMessage = `Brain stream initiation failed: ${text.slice(0, 200)} (${response.status})`;
-                } catch {}
+                response = await brainApiFetch('chat/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                    body: JSON.stringify(data),
+                    signal,
+                });
+            } catch (e: any) {
+                if (e.name === 'AbortError') return;
+                throw e;
             }
-            throw new Error(errorMessage);
-        }
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('Browser does not support stream reading');
+            if (!response || !response.ok) {
+                if (!response) {
+                    throw new Error('Brain stream initiation failed: no response (network error or backend unreachable)');
+                }
+                let errorMessage = `Brain stream initiation failed: ${response.status}`;
+                try {
+                    const error = await response.json();
+                    if (error?.error) errorMessage = `Brain stream initiation failed: ${error.error} (${response.status})`;
+                } catch {
+                    try {
+                        const text = await response.text();
+                        if (text) errorMessage = `Brain stream initiation failed: ${text.slice(0, 200)} (${response.status})`;
+                    } catch { }
+                }
+                throw new Error(errorMessage);
+            }
 
-        const decoder = new TextDecoder();
-        let buffer = '';
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('Browser does not support stream reading');
 
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-                for (const line of lines) {
-                    const trimmedLine = line.trim();
-                    if (!trimmedLine) continue;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
 
-                    if (trimmedLine.startsWith('data: ')) {
-                        try {
-                            const json = JSON.parse(trimmedLine.slice(6));
-                            onChunk(json);
-                        } catch (e) {
-                            console.warn('Error parsing brain stream data:', trimmedLine, e);
+                    for (const line of lines) {
+                        const trimmedLine = line.trim();
+                        if (!trimmedLine) continue;
+
+                        if (trimmedLine.startsWith('data: ')) {
+                            try {
+                                const json = JSON.parse(trimmedLine.slice(6));
+                                onChunk(json);
+                            } catch (e) {
+                                console.warn('Error parsing brain stream data:', trimmedLine, e);
+                            }
                         }
                     }
                 }
+            } catch (e: any) {
+                const isAbort = e?.name === 'AbortError';
+                const isNetwork = e?.message?.includes('socket hang up') ||
+                    e?.message?.includes('ECONNRESET') ||
+                    e?.message?.includes('NetworkError') ||
+                    e?.message?.includes('fetch');
+                if (isAbort) return;
+                if (isNetwork && attempt < retries) {
+                    const backoff = Math.min(1000 * Math.pow(2, attempt), 5000);
+                    console.warn(`[brainApi] Stream interrupted (${e.message}), retrying in ${backoff}ms (attempt ${attempt + 1}/${retries + 1})`);
+                    await new Promise(r => setTimeout(r, backoff));
+                    return attemptStream(attempt + 1);
+                }
+                throw e;
+            } finally {
+                reader.releaseLock();
             }
-        } catch (e: any) {
-            if (e.name !== 'AbortError') throw e;
-        } finally {
-            reader.releaseLock();
-        }
+        };
+
+        await attemptStream(0);
     },
     stopChat: async (conversationId: string): Promise<any> => {
         const response = await brainApiFetch(`chat/stop?conversation_id=${conversationId}`, {
@@ -108,19 +141,48 @@ export const brainApi = {
 
 export const conversationsApi = {
     get: async (id: string): Promise<any> => {
+        // Try Brain backend first (Brain conversations live in Brain's DB)
+        try {
+            const brainRes = await brainApi.getConversation(id);
+            if (brainRes && brainRes.conversation) {
+                return {
+                    success: true,
+                    data: {
+                        conversation: {
+                            ...brainRes.conversation,
+                            messages: brainRes.messages
+                        },
+                        messages: brainRes.messages
+                    }
+                };
+            }
+        } catch {
+            // Fall through to main backend for non-Brain conversations
+        }
+        // Fallback: main backend (standard chat conversations)
         const res = await getConversation(id);
-        return { 
-            success: true, 
-            data: { 
+        return {
+            success: true,
+            data: {
                 conversation: {
                     ...res.conversation,
                     messages: res.messages
                 },
                 messages: res.messages
-            } 
+            }
         };
     },
     list: async (): Promise<any> => {
+        // Try Brain backend first for Brain conversations
+        try {
+            const brainRes = await brainApi.listConversations();
+            if (Array.isArray(brainRes) && brainRes.length > 0) {
+                return { success: true, data: { items: brainRes } };
+            }
+        } catch {
+            // Fall through to main backend
+        }
+        // Fallback: main backend
         const res = await listConversations();
         return { success: true, data: { items: res } };
     },
