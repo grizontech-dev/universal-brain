@@ -45,7 +45,7 @@ class BuilderAgent(BaseAgent):
                     imported_names.add(name)
 
         # Also check: import DefaultName from '...'
-        for match in re.finditer(r'import\s+(\w+)\s+from\s+['""][^'"]+['""]', code):
+        for match in re.finditer(r'import\s+(\w+)\s+from\s+["\'][^"\']+["\']', code):
             imported_names.add(match.group(1))
 
         # Find duplicate: `export default function X()` where X is already imported
