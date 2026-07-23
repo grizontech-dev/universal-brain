@@ -34,6 +34,11 @@ class ProviderRouter:
             )
 
         def _make_deepseek(model: str):
+            # Enable thinking mode for deepseek-v4-pro (reasoning model)
+            extra = {}
+            if "v4-pro" in model.lower():
+                extra["extra_body"] = {"thinking": {"type": "enabled"}}
+                print(f"{LOG} → Thinking mode ENABLED for {model}", flush=True)
             return ChatOpenAI(
                 model=model,
                 api_key=deepseek_key,
@@ -42,7 +47,8 @@ class ProviderRouter:
                 max_retries=2,
                 timeout=120,
                 request_timeout=120,
-                **({"max_tokens": max_tokens} if max_tokens else {})
+                **({"max_tokens": max_tokens} if max_tokens else {}),
+                **extra
             )
 
         # Decide the universal fallback — DeepSeek first, then OpenAI

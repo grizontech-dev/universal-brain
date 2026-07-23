@@ -23,7 +23,7 @@ class BuilderAgent(BaseAgent):
             description="Coordinates sub-agents to execute tasks and build the application.",
             model_id="deepseek-v4-pro"
         )
-        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"), temperature=0.0)
+        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"), temperature=0.2)
 
     @staticmethod
     def _sanitize_code(code: str, file_path: str) -> str:
