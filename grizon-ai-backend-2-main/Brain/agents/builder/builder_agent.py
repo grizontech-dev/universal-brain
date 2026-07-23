@@ -494,15 +494,11 @@ class BuilderAgent(BaseAgent):
             print(f"{LOG} → Generating {len(missing_imports)} missing files + fixing App.jsx...", flush=True)
 
             sys_msg = (
-                "You are a React frontend engineer. Generate missing component files and fix broken App.jsx.\n"
-                "Rules:\n"
-                "- Dark theme: bg-[#09090b], text-white, Tailwind CSS\n"
-                "- Use lucide-react for icons\n"
+                "Generate missing React component files.\n"
+                "- Dark theme: bg-[#09090b], Tailwind CSS\n"
                 "- Real functional content, NOT placeholders\n"
-                "- Each component: export default, 50-150 lines\n"
-                "- For App.jsx: use BrowserRouter, Route, Routes from react-router-dom\n"
-                "- Import ALL components that exist in the project\n"
-                "- CRITICAL: Do NOT output placeholder/stub code. Every component must be fully functional.\n"
+                "- Export default each component\n"
+                "- Do NOT call supabase_exec_sql — only use client_save_code\n"
             )
 
             gen_messages = [SystemMessage(content=sys_msg)]
@@ -574,15 +570,11 @@ class BuilderAgent(BaseAgent):
 
                 fix_messages = [
                     SystemMessage(content=(
-                        "You are a React frontend engineer. Replace the placeholder App.jsx with a real implementation.\n"
-                        "Rules:\n"
+                        "Replace placeholder App.jsx with a real implementation.\n"
                         "- Use BrowserRouter, Route, Routes from react-router-dom\n"
-                        "- Import and render ALL existing components listed below\n"
-                        "- Dark theme: bg-[#09090b], text-white\n"
-                        "- Tailwind CSS layout\n"
-                        "- CRITICAL: This must be a COMPLETE, WORKING App.jsx — no placeholders.\n"
-                        "- Use client_save_code to save to: frontend/src/App.jsx\n"
-                        "- NEVER call supabase_exec_sql. Only use client_save_code.\n"
+                        "- Import ALL existing components listed below\n"
+                        "- Dark theme, Tailwind CSS\n"
+                        "- Do NOT call supabase_exec_sql\n"
                     )),
                     HumanMessage(content=(
                         f"Existing components to import:\n{component_list}\n\n"
@@ -723,7 +715,7 @@ class BuilderAgent(BaseAgent):
                         pass
 
                 messages = [
-                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch.\nCRITICAL: Do NOT call supabase_exec_sql. Do NOT create duplicate symbol declarations (e.g. do not both import and re-declare the same function name). Only use client_save_code."),
+                    SystemMessage(content="Fix ONLY the specific build errors listed below. Do NOT regenerate files. Use client_save_code to save fixes."),
                     HumanMessage(content=prompt)
                 ]
 
@@ -893,16 +885,11 @@ class BuilderAgent(BaseAgent):
         bound_llm = self.llm.bind_tools([client_save_code])
         messages = [
             SystemMessage(content=(
-                "You are a React frontend engineer. Generate missing component files.\n"
-                "Rules:\n"
-                "- Dark theme: bg-[#09090b], white text\n"
-                "- Tailwind CSS on every element\n"
-                "- Use lucide-react for icons\n"
+                "Generate missing React component files.\n"
+                "- Dark theme: bg-[#09090b], Tailwind CSS\n"
                 "- Real content, not placeholders\n"
-                "- Each component 50-150 lines\n"
-                "- Export default the component\n"
-                "- NEVER call supabase_exec_sql. Only use client_save_code.\n"
-                "- NEVER create duplicate symbol declarations. Do not import and re-declare the same name.\n"
+                "- Export default each component\n"
+                "- Do NOT call supabase_exec_sql — only use client_save_code\n"
             ))
         ]
 
@@ -1148,36 +1135,53 @@ class BuilderAgent(BaseAgent):
         system_prompt = ""
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
         
-        # Gather existing codebase memory for follow-ups
+        # Gather EXISTING codebase context — ONLY relevant files per category
         existing_code_context = ""
         try:
             ws_dir = os.path.join(os.getcwd(), "workspaces", session_id)
             if os.path.exists(ws_dir):
                 files_to_read = []
-                for root, _, files in os.walk(ws_dir):
-                    if "node_modules" in root or ".git" in root or "dist" in root:
+                # Only include files relevant to the current task category
+                category_dirs = {
+                    "frontend": ["frontend/src"],
+                    "backend": ["backend"],
+                    "database": ["backend/supabase"],
+                }
+                search_dirs = category_dirs.get(category, ["frontend/src", "backend"])
+
+                for search_dir in search_dirs:
+                    full_dir = os.path.join(ws_dir, search_dir)
+                    if not os.path.exists(full_dir):
                         continue
-                    for f in files:
-                        if f.endswith(('.js', '.jsx', '.ts', '.tsx', '.css', '.json', '.html')):
-                            full_path = os.path.join(root, f)
-                            rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
-                            if "package-lock.json" not in rel_path:
-                                files_to_read.append((rel_path, full_path))
-                
+                    for root, _, files in os.walk(full_dir):
+                        if "node_modules" in root or ".git" in root or "dist" in root:
+                            continue
+                        for f in files:
+                            if f.endswith(('.js', '.jsx', '.ts', '.tsx')):
+                                full_path = os.path.join(root, f)
+                                rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
+                                if "package-lock.json" not in rel_path:
+                                    files_to_read.append((rel_path, full_path))
+
+                # Limit to 15 most recent files to avoid token explosion
+                files_to_read = files_to_read[-15:]
+
                 if files_to_read:
-                    existing_code_context = "\n\n═══ EXISTING CODEBASE MEMORY ═══\n"
-                    existing_code_context += "The user is requesting a modification to an existing project. Here is the current codebase:\n\n"
+                    existing_code_context = "\n\n═══ EXISTING FILES (read-only reference) ═══\n"
                     for rel_path, full_path in files_to_read:
                         try:
                             with open(full_path, 'r', encoding='utf-8') as fh:
                                 content = fh.read()
+                            # Truncate large files to save tokens
+                            if len(content) > 2000:
+                                content = content[:2000] + "\n... (truncated)"
                             existing_code_context += f"--- {rel_path} ---\n```\n{content}\n```\n\n"
                         except Exception:
                             pass
         except Exception as e:
             print(f"{LOG} Failed to load existing codebase: {e}")
 
-        def _load_skill(name, max_chars=3000):
+        def _load_skill(name, max_chars=1500):
             try:
                 path = os.path.join(skill_dir, name, "SKILL.md")
                 with open(path, "r", encoding="utf-8") as f:
@@ -1186,113 +1190,66 @@ class BuilderAgent(BaseAgent):
             except Exception:
                 return ""
 
-        if category == "frontend":
-            skill_content = _load_skill("frontend-design")
-            if "## Frontend Aesthetics Guidelines" in skill_content:
-                skill_content = skill_content[skill_content.index("## Frontend Aesthetics Guidelines"):]
-        elif category == "backend":
-            skill_content = _load_skill("backend-development", 2000)
-            skill_content += "\n\n" + _load_skill("nodejs-backend-patterns", 1500)
+        # Only load skill content for backend/database (frontend prompts are self-contained)
+        skill_content = ""
+        if category == "backend":
+            skill_content = _load_skill("backend-development", 1000)
         elif category == "database":
-            skill_content = _load_skill("supabase", 2000)
-            skill_content += "\n\n" + _load_skill("supabase-postgres-best-practices", 1500)
+            skill_content = _load_skill("supabase", 1000)
 
         if category == "frontend":
             system_prompt = (
-                "You are a Senior Frontend UI Engineer. Stack: React + Tailwind CSS + react-router-dom + lucide-react.\n\n"
-                "═══ CRITICAL RULES (violation = broken app) ═══\n\n"
-                "1. App.jsx MUST wrap ALL routes and include global layout components (like Header, Navbar, or Footer if applicable):\n"
-                "```jsx\n"
-                "import React from 'react';\n"
-                "import { BrowserRouter, Routes, Route } from 'react-router-dom';\n"
-                "// EXTREMELY IMPORTANT: ALWAYS IMPORT EVERY COMPONENT YOU USE!\n"
-                "import MainLayout from './components/MainLayout';\n"
-                "import LandingPage from './pages/LandingPage';\n"
-                "// ... other imports\n"
-                "function App() {\n"
-                "  return (\n"
-                "    <BrowserRouter>\n"
-                "      <div className=\"bg-[#09090b] text-white min-h-screen flex flex-col\">\n"
-                "        {/* Insert Header/Navbar here if needed */}\n"
-                "        <main className=\"flex-grow\">\n"
-                "          <Routes>\n"
-                "            <Route path=\"/\" element={<LandingPage />} />\n"
-                "            {/* Add other routes here based on the plan */}\n"
-                "          </Routes>\n"
-                "        </main>\n"
-                "        {/* Insert Footer here if needed */}\n"
-                "      </div>\n"
-                "    </BrowserRouter>\n"
-                "  );\n"
-                "}\n"
-                "export default App;\n"
-                "```\n\n"
-                "2. ALWAYS IMPORT the components you use. Whatever component name you write in JSX (e.g. `<MyPage />`), you MUST import it at the top.\n"
-                "3. NEVER import CSS files in components (e.g. `import './App.css'`). Tailwind is already injected globally. Only use Tailwind classes in `className`.\n"
-                "4. Navigation MUST use `import { Link } from 'react-router-dom'` and `<Link to=\"/page\">`.\n"
-                "   NEVER use `<a href=\"/page\">` — that causes full page reload and breaks SPA.\n\n"
-                "5. BUILD EXACTLY WHAT IS IN THE PLAN. If the plan asks for a To-Do App, build To-Do components (TaskCard, TaskForm, etc.). DO NOT build generic SaaS landing pages unless specifically requested.\n\n"
-                "6. DO NOT invent imports or assume functions exist (like `isAuthenticated` or `api` from `lib/api.js`). If you need auth state or data fetching, mock it with `useState` and `useEffect` or create a React Context. Never import from non-existent files.\n\n"
-                "7. EVERY component page MUST have:\n"
-                "   - Substantial, real content (no empty divs or placeholders)\n"
-                "   - Beautiful Tailwind CSS styling\n"
-                "   - Proper error handling and loading states\n\n"
-                "═══ DESIGN RULES ═══\n"
-                "- Dark theme: bg-[#09090b] or bg-[#0a0a0a], white text (unless light theme is requested)\n"
-                "- Tailwind CSS on EVERY element — NO inline styles, NO bare HTML\n"
-                "- Use rich UI elements: Glass cards, gradients, hover effects\n"
-                "- Icons from lucide-react. IMPORTANT: ONLY use basic icons (e.g., Plus, Check, Trash, Edit, User, Settings). DO NOT use brand icons (like Github, Google, Twitter) as they often cause export errors.\n\n"
-                "═══ FILE RULES ═══\n"
-                "- frontend/src/App.jsx: Layout and ALL route imports\n"
-                "- frontend/src/components/*.jsx or frontend/src/pages/*.jsx: one file per component\n"
-                "- Use client_save_code for EVERY file you generate\n"
-                "- NO orphaned components (every component must be imported somewhere)\n"
-                "- NEVER call supabase_exec_sql — you do NOT have database tools in frontend mode. Only use client_save_code.\n"
-                "- NEVER create duplicate symbol declarations. If you import a component, do NOT re-declare the same function name in the same file.\n"
-                "- ONLY save files to frontend/src/ paths. NEVER save to src/ or pages/ at root level.\n\n"
-                "AFTER ALL FILES: respond with ONLY a short summary."
+                "You are a Senior React Frontend Engineer.\n\n"
+                "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n"
+                "DARK THEME: bg-[#09090b], text-white\n\n"
+                "═══ DO NOT (violation = broken build) ═══\n"
+                "- Do NOT call supabase_exec_sql (you don't have that tool)\n"
+                "- Do NOT import CSS files (Tailwind is global)\n"
+                "- Do NOT use <a href> for navigation (use react-router-dom Link)\n"
+                "- Do NOT import from files that don't exist yet\n"
+                "- Do NOT create duplicate function names (if you import X, don't redeclare X)\n"
+                "- Do NOT save files outside frontend/src/\n"
+                "- Do NOT use brand icons from lucide-react (Github, Google, Twitter cause errors)\n\n"
+                "═══ DO ═══\n"
+                "- Import EVERY component you use in JSX at the top of the file\n"
+                "- App.jsx: BrowserRouter + Routes wrapping ALL pages\n"
+                "- Each component: one file, export default, real content (no placeholders)\n"
+                "- Tailwind on EVERY element, glass cards, gradients, hover effects\n"
+                "- Use client_save_code for every file\n"
+                "- Mock data fetching with useState/useEffect (don't assume APIs exist)\n\n"
+                "Generate files one at a time. After all files, respond with a short summary."
             )
         elif category == "backend":
             system_prompt = (
-                "You are a Senior Backend Engineer. Express API in `backend/`.\n\n"
-                f"SKILL REFERENCE (follow these patterns):\n{skill_content}\n\n"
-                "SUPABASE CONNECTION (MANDATORY — every controller MUST use this):\n"
-                "The file backend/supabase/client.js already exports a configured Supabase client.\n"
-                "EVERY controller file MUST start with exactly this line:\n"
-                "  const {{ supabase }} = require('../supabase/client');\n"
-                "NEVER create your own createClient(). NEVER hardcode URLs or API keys.\n"
-                "If backend/supabase/client.js does not exist, CREATE IT FIRST:\n"
-                "  const {{ createClient }} = require('@supabase/supabase-js');\n"
-                "  require('dotenv').config();\n"
-                "  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);\n"
-                "  module.exports = {{ supabase }};\n\n"
-                "CRITICAL RULES:\n"
-                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
-                "2. package.json must NOT have \"type\": \"module\".\n"
-                "3. ALWAYS write server.js LAST with ALL routes mounted.\n"
-                "4. Structure: routes/*.js, controllers/*.js.\n"
-                "5. Every route returns JSON: {{ success: true, data }} or {{ success: false, error }}.\n"
-                "6. Use try/catch in every route handler.\n"
-                "7. Use client_save_code for EVERY file.\n"
-                "8. After saving ALL files, respond with ONLY a short summary."
+                "You are a Senior Backend Engineer. Node.js + Express API in `backend/`.\n\n"
+                "═══ DO NOT ═══\n"
+                "- Do NOT use ES modules (import/export). Use CommonJS (require/module.exports)\n"
+                "- Do NOT create your own Supabase client — import from backend/supabase/client.js\n"
+                "- Do NOT hardcode URLs, API keys, or secrets\n\n"
+                "═══ DO ═══\n"
+                "- Every controller starts with: const {{ supabase }} = require('../supabase/client');\n"
+                "- Structure: routes/*.js for routes, controllers/*.js for logic\n"
+                "- Every route returns JSON: {{ success: true, data }} or {{ success: false, error }}\n"
+                "- Try/catch in every route handler\n"
+                "- Write server.js LAST with ALL routes mounted\n"
+                "- Use client_save_code for every file\n\n"
+                "Generate files one at a time. After all files, respond with a short summary."
             )
         elif category == "database":
             system_prompt = (
-                "You are a Database Engineer. Supabase PostgreSQL in `backend/supabase/`.\n\n"
-                f"SKILL REFERENCE (follow these patterns):\n{skill_content}\n\n"
-                "RULES:\n"
-                "1. Write SQL migration files in backend/supabase/.\n"
-                "2. Use Supabase CLI patterns for schema changes.\n"
-                "3. Always enable RLS on new tables.\n"
-                "4. Use proper constraints, indexes, and foreign keys.\n"
-                "5. Use client_save_code for EVERY file.\n"
-                "6. CRITICAL: After writing the SQL file, you MUST ALSO execute it against Supabase using supabase_exec_sql.\n"
-                "   - First try: supabase_create_exec_sql_function (one-time setup, only if exec_sql function doesn't exist)\n"
-                "   Then: supabase_exec_sql with your CREATE TABLE / ALTER TABLE queries.\n"
-                "   IMPORTANT: After every CREATE TABLE or ALTER TABLE, always include: NOTIFY pgrst, 'reload schema';\n"
-                "   This refreshes Supabase's API cache so the frontend can see new columns immediately.\n"
-                "   This ensures tables are created in the actual database, not just as files.\n"
-                "7. After saving ALL files and executing SQL, respond with ONLY a short summary."
+                "You are a Database Engineer. Supabase PostgreSQL.\n\n"
+                "═══ DO NOT ═══\n"
+                "- Do NOT use SELECT ... INTO (it doesn't work with JSON returns)\n"
+                "- Do NOT retry failing SQL queries — switch to generating code files instead\n"
+                "- Do NOT call supabase_exec_sql more than 3 times — if it fails, stop\n\n"
+                "═══ DO ═══\n"
+                "- Write SQL in backend/supabase/schema.sql\n"
+                "- Enable RLS on every table\n"
+                "- Add constraints, indexes, foreign keys\n"
+                "- After writing SQL file, execute it via supabase_exec_sql\n"
+                "- After every CREATE/ALTER TABLE, append: NOTIFY pgrst, 'reload schema';\n"
+                "- Use client_save_code for the SQL file, supabase_exec_sql for execution\n\n"
+                "Generate files one at a time. After all files, respond with a short summary."
             )
         else:
             system_prompt = (
