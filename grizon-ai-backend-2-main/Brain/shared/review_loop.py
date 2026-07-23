@@ -10,7 +10,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../../../.env'))
 class QualityReviewer:
     def __init__(self):
         self.review_llm = ProviderRouter.get_model(
-            os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"),
+            os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"),
             temperature=0
         )
 

@@ -96,7 +96,7 @@ class TodoAgent(BaseAgent):
         super().__init__(
             name="Todo",
             description="Converts the approved plan into executable tasks (3–15).",
-            model_id="deepseek-v4-pro",
+            model_id="deepseek-chat",
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -197,7 +197,7 @@ class TodoAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Approved Plan: {json.dumps(plan)}"))
 
         print(f"{LOG} Calling LLM now with {len(messages)} messages, total chars={sum(len(m.content) for m in messages)}", flush=True)
-        response_content = await self.chat(messages, model_id="deepseek-v4-pro", timeout=180)
+        response_content = await self.chat(messages, model_id="deepseek-chat", timeout=180)
         print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
         tasks = self._format_json_response(response_content)
 

@@ -11,7 +11,7 @@ class ManagerAgent(BaseAgent):
         super().__init__(
             name="Leader/Manager",
             description="Analyzes user intent, ensures context is complete, and coordinates the workflow.",
-            model_id="deepseek-v4-pro"
+            model_id="deepseek-chat"
         )
 
     def _build_rich_thought(self, prompt: str, analysis: dict, is_post_answers: bool = False) -> str:
@@ -159,7 +159,7 @@ class ManagerAgent(BaseAgent):
             re_eval_messages.append(HumanMessage(content=f"User answers: {user_answers}"))
 
             print(f"DEBUG: ManagerAgent re-evaluating post-answers with {self.model_id}")
-            response_content = await self.chat(re_eval_messages, model_id="deepseek-v4-pro", max_tokens=600)
+            response_content = await self.chat(re_eval_messages, model_id="deepseek-chat", max_tokens=600)
             analysis = self._format_json_response(response_content)
             print(f"DEBUG: ManagerAgent re-eval result: {json.dumps(analysis)[:200]}...")
 
@@ -234,7 +234,7 @@ class ManagerAgent(BaseAgent):
             messages.append(HumanMessage(content=f"Current Update Request: {prompt}"))
             
             print(f"DEBUG: ManagerAgent requesting iterative tasks with {self.model_id}")
-            response_content = await self.chat(messages, model_id="deepseek-v4-pro", max_tokens=1000)
+            response_content = await self.chat(messages, model_id="deepseek-chat", max_tokens=1000)
             tasks = self._format_json_response(response_content)
             
             if not isinstance(tasks, list) or not tasks:
@@ -317,7 +317,7 @@ class ManagerAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current User Input: {prompt}"))
 
         print(f"DEBUG: ManagerAgent requesting chat with model {self.model_id}")
-        response_content = await self.chat(messages, model_id="deepseek-v4-pro", max_tokens=600)
+        response_content = await self.chat(messages, model_id="deepseek-chat", max_tokens=600)
         print(f"DEBUG: ManagerAgent raw response: {response_content[:200]}...")
         analysis = self._format_json_response(response_content)
         print(f"DEBUG: ManagerAgent parsed analysis: {json.dumps(analysis)[:200]}...")

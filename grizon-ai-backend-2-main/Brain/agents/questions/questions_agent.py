@@ -10,7 +10,7 @@ class QuestionsAgent(BaseAgent):
         super().__init__(
             name="Questions",
             description="Asks follow-up questions to gather missing context.",
-            model_id="deepseek-v4-pro"
+            model_id="deepseek-chat"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:

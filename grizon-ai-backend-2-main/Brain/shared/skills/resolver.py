@@ -19,7 +19,7 @@ class SkillResolver:
         self._init_vectorstore()
         self.compiler_llm = ChatOpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"),
-            model=os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"),
+            model=os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"),
             base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
             temperature=0,
             timeout=30

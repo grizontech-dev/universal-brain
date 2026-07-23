@@ -25,6 +25,57 @@ class BuilderAgent(BaseAgent):
         )
         self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"), temperature=0.0)
 
+    @staticmethod
+    def _sanitize_code(code: str, file_path: str) -> str:
+        """Fix duplicate symbol declarations that cause esbuild errors.
+        Pattern: LLM imports `X` from a file, then declares `export default function X()` in same file.
+        Fix: Remove the re-declaration since the import already provides it.
+        """
+        import re
+
+        if not file_path.endswith(('.jsx', '.tsx')):
+            return code
+
+        # Extract all imported identifiers
+        imported_names = set()
+        for match in re.finditer(r'import\s+(?:\w+\s*,\s*)?\{([^}]+)\}\s+from', code):
+            for name in match.group(1).split(','):
+                name = name.strip()
+                if name and not name.startswith('{') and not name.startswith('}'):
+                    imported_names.add(name)
+
+        # Also check: import DefaultName from '...'
+        for match in re.finditer(r'import\s+(\w+)\s+from\s+['""][^'"]+['""]', code):
+            imported_names.add(match.group(1))
+
+        # Find duplicate: `export default function X()` where X is already imported
+        lines = code.split('\n')
+        fixed_lines = []
+        skipped = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Check for `export default function X()` or `function X()` where X is imported
+            func_match = re.match(r'export\s+default\s+function\s+(\w+)\s*\(', stripped)
+            if func_match:
+                func_name = func_match.group(1)
+                if func_name in imported_names:
+                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{func_name}' declaration (already imported)", flush=True)
+                    skipped = True
+                    continue
+            # Also check `const X = () =>` pattern
+            const_match = re.match(r'(?:export\s+)?(?:default\s+)?const\s+(\w+)\s*=\s*(?:\(|function)', stripped)
+            if const_match:
+                const_name = const_match.group(1)
+                if const_name in imported_names:
+                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{const_name}' declaration (already imported)", flush=True)
+                    skipped = True
+                    continue
+            fixed_lines.append(line)
+
+        if skipped:
+            return '\n'.join(fixed_lines)
+        return code
+
     def _make_activity(
         self,
         act_type: str,
@@ -111,6 +162,8 @@ class BuilderAgent(BaseAgent):
         # Free-form loop — LLM generates files until it stops or timeout
         consecutive_duplicates = 0
         MAX_CONSECUTIVE_DUPLICATES = 3
+        sql_failure_count = 0
+        MAX_SQL_FAILURES = 3  # Stop if SQL fails 3 times in a row — LLM is stuck
         while True:
             elapsed = time.time() - start_time
             if elapsed > timeout_sec:
@@ -207,6 +260,31 @@ class BuilderAgent(BaseAgent):
                         break
                     continue
 
+                # PATH FIX: Redirect stray root-level files to frontend/src/
+                if file_path.startswith("src/pages/") and not file_path.startswith("frontend/src/"):
+                    corrected = file_path.replace("src/pages/", "frontend/src/pages/", 1)
+                    tool_args["file_path"] = corrected
+                    file_path = corrected
+                    print(f"{LOG} ↻ Path corrected: {tool_args.get('file_path', '')} → {file_path}", flush=True)
+                elif file_path.startswith("pages/") and not file_path.startswith("frontend/"):
+                    corrected = file_path.replace("pages/", "frontend/src/pages/", 1)
+                    tool_args["file_path"] = corrected
+                    file_path = corrected
+                    print(f"{LOG} ↻ Path corrected: {tool_args.get('file_path', '')} → {file_path}", flush=True)
+                elif file_path.startswith("src/components/") and not file_path.startswith("frontend/src/"):
+                    corrected = file_path.replace("src/components/", "frontend/src/components/", 1)
+                    tool_args["file_path"] = corrected
+                    file_path = corrected
+                    print(f"{LOG} ↻ Path corrected: {tool_args.get('file_path', '')} → {file_path}", flush=True)
+
+                # CODE SANITIZATION: Fix duplicate symbol declarations before saving
+                code_content = tool_args.get("code_content", "")
+                if code_content and file_path.endswith(('.jsx', '.tsx')):
+                    sanitized = self._sanitize_code(code_content, file_path)
+                    if sanitized != code_content:
+                        tool_args["code_content"] = sanitized
+                        print(f"{LOG} ↻ Code sanitized for {file_path} (fixed duplicate declarations)", flush=True)
+
                 print(f"{LOG} → [{len(files_saved)+1}] Generating: {file_path} ({code_len} chars)", flush=True)
 
                 tool_timeout = 30
@@ -262,9 +340,29 @@ class BuilderAgent(BaseAgent):
                                 timeout=60
                             )
                             print(f"{LOG} ✓ SQL tool result: {result[:200]}", flush=True)
-                            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+                            # Track SQL failures — if result contains error patterns, count it
+                            is_sql_error = any(kw in result.lower() for kw in [
+                                '"error"', "into used with a command", "invalid input syntax",
+                                "does not exist", "permission denied", "sql execution error"
+                            ])
+                            if is_sql_error:
+                                sql_failure_count += 1
+                                print(f"{LOG} ⚠ SQL failure #{sql_failure_count}/{MAX_SQL_FAILURES}", flush=True)
+                                if sql_failure_count >= MAX_SQL_FAILURES:
+                                    print(f"{LOG} ✖ BREAKING: {sql_failure_count} consecutive SQL failures. LLM is stuck in SQL loop.", flush=True)
+                                    messages.append(ToolMessage(
+                                        content="SQL keeps failing. STOP calling supabase_exec_sql. You already have the schema. Focus on generating frontend/backend code files using client_save_code instead.",
+                                        tool_call_id=tc["id"]
+                                    ))
+                                    stuck = True
+                                    break
+                                messages.append(ToolMessage(content=f"SQL error: {result[:300]}. Do NOT retry this query. Generate code files instead.", tool_call_id=tc["id"]))
+                            else:
+                                sql_failure_count = 0  # Reset on success
+                                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
                         except Exception as e:
                             print(f"{LOG} ✖ SQL tool error: {e}", flush=True)
+                            sql_failure_count += 1
                             messages.append(ToolMessage(content=f"SQL execution error: {e}", tool_call_id=tc["id"]))
                     else:
                         messages.append(ToolMessage(
@@ -484,6 +582,7 @@ class BuilderAgent(BaseAgent):
                         "- Tailwind CSS layout\n"
                         "- CRITICAL: This must be a COMPLETE, WORKING App.jsx — no placeholders.\n"
                         "- Use client_save_code to save to: frontend/src/App.jsx\n"
+                        "- NEVER call supabase_exec_sql. Only use client_save_code.\n"
                     )),
                     HumanMessage(content=(
                         f"Existing components to import:\n{component_list}\n\n"
@@ -624,7 +723,7 @@ class BuilderAgent(BaseAgent):
                         pass
 
                 messages = [
-                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch."),
+                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch.\nCRITICAL: Do NOT call supabase_exec_sql. Do NOT create duplicate symbol declarations (e.g. do not both import and re-declare the same function name). Only use client_save_code."),
                     HumanMessage(content=prompt)
                 ]
 
@@ -637,6 +736,24 @@ class BuilderAgent(BaseAgent):
                         if tc["name"] == "client_save_code":
                             tool_args = tc["args"]
                             file_path = tool_args.get("file_path", "")
+
+                            # PATH FIX for self-healing saves
+                            if file_path.startswith("src/") and not file_path.startswith("frontend/src/"):
+                                corrected = file_path.replace("src/", "frontend/src/", 1)
+                                tool_args["file_path"] = corrected
+                                file_path = corrected
+                            elif file_path.startswith("pages/") and not file_path.startswith("frontend/"):
+                                corrected = file_path.replace("pages/", "frontend/src/pages/", 1)
+                                tool_args["file_path"] = corrected
+                                file_path = corrected
+
+                            # CODE SANITIZATION
+                            code_content = tool_args.get("code_content", "")
+                            if code_content and file_path.endswith(('.jsx', '.tsx')):
+                                sanitized = self._sanitize_code(code_content, file_path)
+                                if sanitized != code_content:
+                                    tool_args["code_content"] = sanitized
+
                             try:
                                 await asyncio.wait_for(
                                     client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
@@ -784,6 +901,8 @@ class BuilderAgent(BaseAgent):
                 "- Real content, not placeholders\n"
                 "- Each component 50-150 lines\n"
                 "- Export default the component\n"
+                "- NEVER call supabase_exec_sql. Only use client_save_code.\n"
+                "- NEVER create duplicate symbol declarations. Do not import and re-declare the same name.\n"
             ))
         ]
 
@@ -815,6 +934,14 @@ class BuilderAgent(BaseAgent):
                         if tc["name"] == "client_save_code":
                             tool_args = tc["args"]
                             tool_args["file_path"] = rel_path
+
+                            # CODE SANITIZATION
+                            code_content = tool_args.get("code_content", "")
+                            if code_content and rel_path.endswith(('.jsx', '.tsx')):
+                                sanitized = self._sanitize_code(code_content, rel_path)
+                                if sanitized != code_content:
+                                    tool_args["code_content"] = sanitized
+
                             try:
                                 result = await asyncio.wait_for(
                                     client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
@@ -1119,7 +1246,10 @@ class BuilderAgent(BaseAgent):
                 "- frontend/src/App.jsx: Layout and ALL route imports\n"
                 "- frontend/src/components/*.jsx or frontend/src/pages/*.jsx: one file per component\n"
                 "- Use client_save_code for EVERY file you generate\n"
-                "- NO orphaned components (every component must be imported somewhere)\n\n"
+                "- NO orphaned components (every component must be imported somewhere)\n"
+                "- NEVER call supabase_exec_sql — you do NOT have database tools in frontend mode. Only use client_save_code.\n"
+                "- NEVER create duplicate symbol declarations. If you import a component, do NOT re-declare the same function name in the same file.\n"
+                "- ONLY save files to frontend/src/ paths. NEVER save to src/ or pages/ at root level.\n\n"
                 "AFTER ALL FILES: respond with ONLY a short summary."
             )
         elif category == "backend":

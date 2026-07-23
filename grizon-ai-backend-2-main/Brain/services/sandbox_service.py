@@ -42,7 +42,7 @@ class SandboxService:
             "job_id_external": job_id_external,
             "env": env_vars,
             "environment": env_vars,
-            "model": os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"),
+            "model": os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"),
             "provider": "deepseek",
             "api_key": os.getenv("DEEPSEEK_API_KEY", openai_key),
             "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
