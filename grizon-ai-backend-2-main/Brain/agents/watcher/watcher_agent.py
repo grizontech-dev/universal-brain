@@ -10,7 +10,7 @@ class WatcherAgent(BaseAgent):
         super().__init__(
             name="Watcher",
             description="Monitors the sandbox and reports when the task is complete.",
-            model_id="deepseek-chat"
+            model_id="deepseek-v4-pro"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:

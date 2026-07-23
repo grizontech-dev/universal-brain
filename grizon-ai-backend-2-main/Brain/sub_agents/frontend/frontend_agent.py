@@ -12,7 +12,7 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="deepseek-chat"
+            model_id="deepseek-v4-pro"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()

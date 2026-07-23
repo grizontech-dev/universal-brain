@@ -21,9 +21,9 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="deepseek-chat"
+            model_id="deepseek-v4-pro"
         )
-        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.0)
+        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"), temperature=0.0)
 
     def _make_activity(
         self,

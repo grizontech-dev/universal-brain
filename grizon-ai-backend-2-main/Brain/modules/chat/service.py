@@ -574,7 +574,7 @@ class BrainChatService:
                 try:
                     from Brain.agents.leader_agent import LeaderAgent
                     prompt = initial_state.get("content") or ""
-                    model_id = initial_state.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"))
+                    model_id = initial_state.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro"))
                     title = await LeaderAgent.generate_title(prompt, model_id)
                     if title:
                         conversation_service.update_titles(conv_id, title)
@@ -1128,7 +1128,7 @@ class BrainChatService:
             "current_task_index": current_index,
             "executed_tasks": [],
             "current_job_id": conv_id if conv_id != "new" else request.get("current_job_id"),
-            "model_id": request.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat")),
+            "model_id": request.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-v4-pro")),
             "temperature": request.get("temperature", 0.3),
             "question_rounds": request.get("question_rounds", 0),
             "framework": normalize_framework(request.get("framework")),

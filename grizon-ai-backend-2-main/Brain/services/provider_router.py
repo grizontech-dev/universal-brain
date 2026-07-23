@@ -48,8 +48,8 @@ class ProviderRouter:
         # Decide the universal fallback — DeepSeek first, then OpenAI
         def get_fallback_model():
             if deepseek_key:
-                print(f"{LOG} Fallback → DeepSeek 'deepseek-chat' (base={deepseek_base})", flush=True)
-                return _make_deepseek("deepseek-chat")
+                print(f"{LOG} Fallback → DeepSeek 'deepseek-v4-pro' (base={deepseek_base})", flush=True)
+                return _make_deepseek("deepseek-v4-pro")
             print(f"{LOG} Fallback → OpenAI 'gpt-4o' (base={openai_base or 'default'})", flush=True)
             return _make_openai("gpt-4o")
 
