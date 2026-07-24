@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Github, CheckCircle, XCircle, Loader2, ExternalLink, Unplug } from 'lucide-react';
+import { Github, CheckCircle, XCircle, Loader2, ExternalLink, Unplug, Database } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_URL || 'http://localhost:8001';
@@ -15,6 +15,7 @@ interface ConnectorState {
 
 const initialConnectors = {
   github: { status: 'loading' as ConnectorStatus },
+  supabase: { status: 'loading' as ConnectorStatus },
 };
 
 export default function SettingsConnectionsPanel() {
@@ -161,12 +162,19 @@ export default function SettingsConnectionsPanel() {
     if (!token) return;
     setConnectors({
       github: { status: 'loading' },
+      supabase: { status: 'loading' },
     });
     void checkConnector('github', '/connect-github/status');
+    void checkConnector('supabase', '/connect-supabase/status');
   }, [token]);
 
   const connectGitHub = () => {
     const url = `${BRAIN_URL}/connect-github/login${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    window.location.href = url;
+  };
+
+  const connectSupabase = () => {
+    const url = `${BRAIN_URL}/connect-supabase/login${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     window.location.href = url;
   };
 
