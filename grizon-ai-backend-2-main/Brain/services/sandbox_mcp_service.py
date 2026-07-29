@@ -53,11 +53,19 @@ class SandboxMCPService:
         """Verify MCP server is reachable. Each _call_tool creates its own fresh session."""
         print(f"[SANDBOX_MCP] Connecting to MCP server...")
         # Create a temporary session just to verify connectivity
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=30,
-        )
+        try:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=30,
+            )
+        except TypeError:
+            # Older MCP library doesn't support headers kwarg
+            print("[SANDBOX_MCP] headers kwarg not supported, trying without auth header")
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                timeout=30,
+            )
         try:
             transport = await transport_ctx.__aenter__()
             read_stream, write_stream = transport[0], transport[1]
@@ -100,11 +108,17 @@ class SandboxMCPService:
         # 1. GC killing the shared session mid-call
         # 2. Concurrent calls corrupting the SSE stream
         # 3. anyio cancel-scope cross-task errors
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=timeout,
-        )
+        try:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=timeout,
+            )
+        except TypeError:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                timeout=timeout,
+            )
         try:
             # NO asyncio.wait_for here — anyio cancel scope can't handle it.
             # Let the connection establish at its own pace.
