@@ -142,7 +142,16 @@ class BuilderAgent(BaseAgent):
         files_saved = []
         start_time = time.time()
 
-        print(f"{LOG} Using model: deepseek-v4-pro | self-healing also uses this model", flush=True)
+        _cat_models = {
+            "frontend": "kimi-k2.7-code-highspeed",
+            "backend": "kimi-k2.7-code-highspeed",
+            "database": "deepseek-v4-pro",
+            "runner": "deepseek-v4-pro",
+        }
+        _model = _cat_models.get(category, "deepseek-v4-pro")
+        _llm = ProviderRouter.get_model(_model, temperature=0.2)
+
+        print(f"{LOG} Using model: {_model} | category={category}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
         print(f"{LOG} AGENT LOOP START | task='{task_title}' | timeout={timeout_sec}s | session={session_id}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -157,7 +166,7 @@ class BuilderAgent(BaseAgent):
             tools.extend([supabase_exec_sql, supabase_create_exec_sql_function])
 
         # Ask LLM to start generating files directly
-        bound_llm = self.llm.bind_tools(tools)
+        bound_llm = _llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
 
         # Free-form loop — LLM generates files until it stops or timeout
@@ -424,7 +433,8 @@ class BuilderAgent(BaseAgent):
             return files_saved
 
         start_time = _time.time()
-        bound_llm = self.llm.bind_tools([client_save_code])
+        _frontend_llm = ProviderRouter.get_model("kimi-k2.7-code-highspeed", temperature=0.2)
+        bound_llm = _frontend_llm.bind_tools([client_save_code])
 
         # ═══════════════════════════════════════════════════════════════
         # PHASE 1: Import validation — find missing imported files
@@ -883,7 +893,8 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
 
         # Generate each missing file
-        bound_llm = self.llm.bind_tools([client_save_code])
+        _frontend_llm2 = ProviderRouter.get_model("kimi-k2.7-code-highspeed", temperature=0.2)
+        bound_llm = _frontend_llm2.bind_tools([client_save_code])
         messages = [
             SystemMessage(content=(
                 "Generate missing React component files.\n"
@@ -1023,7 +1034,8 @@ class BuilderAgent(BaseAgent):
         max_tool_calls = 20
         tool_call_count = 0
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        bound_llm = self.llm.bind_tools([client_save_code])
+        _fallback_llm = ProviderRouter.get_model("deepseek-v4-pro", temperature=0.2)
+        bound_llm = _fallback_llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
         files_saved = []
