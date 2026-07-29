@@ -83,7 +83,6 @@ services:
     env_file:
       - .env.docker
     environment:
-      - DATABASE_URL=postgresql://app:app@postgres:5432/app?sslmode=disable
       - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"
