@@ -71,17 +71,17 @@ class ProviderRouter:
                 return _make_deepseek(model_id)
             return get_fallback_model()
 
-        # Kimi Models (OpenAI-compatible API)
+        # Kimi Models (OpenAI-compatible API) — only temperature=1 allowed
         elif "kimi" in model_id.lower():
             kimi_key = os.getenv("KIMI_API_KEY", "").strip() or openai_key
             kimi_base = os.getenv("KIMI_BASE_URL", "").strip() or "https://api.moonshot.cn/v1"
             if kimi_key:
-                print(f"{LOG} → Kimi '{model_id}' (base={kimi_base})", flush=True)
+                print(f"{LOG} → Kimi '{model_id}' (base={kimi_base}, temp=1 forced)", flush=True)
                 return ChatOpenAI(
                     model=model_id,
                     api_key=kimi_key,
                     base_url=kimi_base,
-                    temperature=temperature,
+                    temperature=1,
                     max_retries=2,
                     timeout=120,
                     request_timeout=120,
