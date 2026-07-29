@@ -11,7 +11,7 @@ class ReporterAgent(BaseAgent):
         super().__init__(
             name="Reporter",
             description="Generates a final technical report based on the full execution state.",
-            model_id="deepseek-chat"
+            model_id="claude-sonnet-4.6"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:

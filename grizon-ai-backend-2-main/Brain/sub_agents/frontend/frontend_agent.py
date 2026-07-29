@@ -12,7 +12,7 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="deepseek-v4-pro"
+            model_id="kimi-k2.7-code-highspeed"
         )
         self.skill_resolver = SkillResolver()
         self.reviewer = QualityReviewer()
@@ -195,7 +195,7 @@ class FrontendAgent(BaseAgent):
             ),
         )
 
-        # Generation (review loop disabled to prevent timeout)
+        print(f"[FRONTEND] Using model: kimi-k2.7-code-highspeed | task={task.get('title', 'N/A')}", flush=True)
         response_content = await self.chat(messages)
         generated_json = self._format_json_response(response_content)
         return generated_json

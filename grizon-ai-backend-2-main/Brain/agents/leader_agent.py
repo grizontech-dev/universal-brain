@@ -6,8 +6,9 @@ from Brain.services.provider_router import ProviderRouter
 
 class LeaderAgent:
     @staticmethod
-    async def analyze(prompt: str, model_id: str = "deepseek-chat", history: List[Dict[str, Any]] = None, temperature: float = 0.4) -> Dict[str, Any]:
+    async def analyze(prompt: str, model_id: str = "deepseek-v4-pro", history: List[Dict[str, Any]] = None, temperature: float = 0.4) -> Dict[str, Any]:
         """The PM Leader Agent analyzes the request and provides an initial technical perspective."""
+        print(f"[LEADER] Using model: {model_id}", flush=True)
         model = ProviderRouter.get_model(model_id, temperature=temperature)
         
         system_prompt = """You are the Grizon Project Leader (PM Agent). 
@@ -52,8 +53,9 @@ Keep your response concise but authoritative. Use technical terminology appropri
         }
 
     @staticmethod
-    async def generate_title(prompt: str, model_id: str = "deepseek-chat") -> str:
+    async def generate_title(prompt: str, model_id: str = "deepseek-v4-pro") -> str:
         """Generates a concise title for the project."""
+        print(f"[LEADER] generate_title using model: {model_id}", flush=True)
         model = ProviderRouter.get_model(model_id, temperature=0.3)
         system_prompt = "Generate a concise title (max 50 chars) for this project request. Return ONLY the title text."
         response = await model.ainvoke([
