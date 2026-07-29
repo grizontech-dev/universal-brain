@@ -21,9 +21,9 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="gemini-flash-3.6"
+            model_id="deepseek-v4-pro"
         )
-        self.llm = ProviderRouter.get_model("gemini-flash-3.6", temperature=0.2)
+        self.llm = ProviderRouter.get_model("deepseek-v4-pro", temperature=0.2)
 
     @staticmethod
     def _sanitize_code(code: str, file_path: str) -> str:
@@ -142,7 +142,7 @@ class BuilderAgent(BaseAgent):
         files_saved = []
         start_time = time.time()
 
-        print(f"{LOG} Using model: gemini-flash-3.6 | self-healing also uses this model", flush=True)
+        print(f"{LOG} Using model: deepseek-v4-pro | self-healing also uses this model", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
         print(f"{LOG} AGENT LOOP START | task='{task_title}' | timeout={timeout_sec}s | session={session_id}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
