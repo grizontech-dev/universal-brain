@@ -60,7 +60,7 @@ class ProviderRouter:
             return _make_openai("gpt-4o")
 
         # Handle UUIDs/Database IDs by defaulting to fallback
-        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek"])
+        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi"])
 
         print(f"{LOG} get_model(id='{model_id}', temp={temperature}) | known={is_known_id}", flush=True)
 
@@ -69,6 +69,24 @@ class ProviderRouter:
             if deepseek_key:
                 print(f"{LOG} → DeepSeek '{model_id}' (base={deepseek_base})", flush=True)
                 return _make_deepseek(model_id)
+            return get_fallback_model()
+
+        # Kimi Models (OpenAI-compatible API)
+        elif "kimi" in model_id.lower():
+            kimi_key = os.getenv("KIMI_API_KEY", "").strip() or openai_key
+            kimi_base = os.getenv("KIMI_BASE_URL", "").strip() or "https://api.moonshot.cn/v1"
+            if kimi_key:
+                print(f"{LOG} → Kimi '{model_id}' (base={kimi_base})", flush=True)
+                return ChatOpenAI(
+                    model=model_id,
+                    api_key=kimi_key,
+                    base_url=kimi_base,
+                    temperature=temperature,
+                    max_retries=2,
+                    timeout=120,
+                    request_timeout=120,
+                    **({"max_tokens": max_tokens} if max_tokens else {})
+                )
             return get_fallback_model()
 
         # Claude Models or Unknown IDs - Fallback
