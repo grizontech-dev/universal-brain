@@ -301,7 +301,7 @@ class BuilderAgent(BaseAgent):
                 try:
                     if tool_name == "client_save_code":
                         result = await asyncio.wait_for(
-                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=tool_timeout
                         )
                         files_saved.append(file_path)
@@ -554,7 +554,7 @@ class BuilderAgent(BaseAgent):
                                 fp = tool_args.get("file_path", "")
                                 try:
                                     await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)"}}),
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)", "user_id": user_id}}),
                                         timeout=30
                                     )
                                     if fp and fp not in files_saved:
@@ -602,7 +602,7 @@ class BuilderAgent(BaseAgent):
                                 fp = tool_args.get("file_path", "")
                                 try:
                                     await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)"}}),
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)", "user_id": user_id}}),
                                         timeout=30
                                     )
                                     if fp and fp not in files_saved:
@@ -759,7 +759,7 @@ class BuilderAgent(BaseAgent):
 
                             try:
                                 await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
+                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)", "user_id": user_id}}),
                                     timeout=30
                                 )
                                 if file_path and file_path not in files_saved:
@@ -943,7 +943,7 @@ class BuilderAgent(BaseAgent):
 
                             try:
                                 result = await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                                     timeout=30
                                 )
                                 fixed.append(rel_path)
@@ -1070,7 +1070,7 @@ class BuilderAgent(BaseAgent):
                 try:
                     if tc["name"] == "client_save_code":
                         result = await asyncio.wait_for(
-                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=30
                         )
                         files_saved.append(file_path)
@@ -1103,6 +1103,7 @@ class BuilderAgent(BaseAgent):
         executed_tasks = state.get("executed_tasks", [])
         workspace_id = state.get("current_job_id")
         session_id = workspace_id
+        user_id = state.get("user_id")
         category = "backend"  # SAFE DEFAULT — always defined before use
 
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -1173,7 +1174,7 @@ class BuilderAgent(BaseAgent):
                             try:
                                 save_result = await client_save_code.ainvoke(
                                     {"code_content": file_content, "file_path": file_path},
-                                    config={"configurable": {"thread_id": session_id, "task_title": task_title}}
+                                    config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}
                                 )
                                 files_saved.append(file_path)
                                 print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)

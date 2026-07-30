@@ -96,11 +96,11 @@ class RunnerAgent(BaseAgent):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
 
-            # Removed eager sandbox deletion here. Sandbox will be reused or auto-deleted if idle.
+            _user_id = _state.get("user_id")
 
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(
-                    str(_sid), _entrypoint
+                    str(_sid), _entrypoint, user_id=_user_id
                 )
             except Exception as e:
                 print(f"[RUNNER] _background_deploy FAILED: {e}")
@@ -119,6 +119,7 @@ class RunnerAgent(BaseAgent):
                     print(f"[RUNNER] extracted tunnel_url from output: {tunnel_url}")
 
             sandbox_job = _state.get("sandbox_job", {})
+            sandbox_job["job_id"] = str(_sid)
             sandbox_job["runtime"] = RUNTIME_SANDBOX_MCP
             sandbox_job["tunnel_url"] = tunnel_url
             sandbox_job["stream_url"] = tunnel_url

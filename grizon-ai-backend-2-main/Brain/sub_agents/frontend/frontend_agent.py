@@ -141,10 +141,11 @@ class FrontendAgent(BaseAgent):
         """
 
         workspace_id = state.get("current_job_id")
+        user_id = state.get("user_id")
         current_app_jsx = ""
         if workspace_id and not workspace_id.startswith("error:"):
             from Brain.services.workspace_manager import workspace_manager
-            ws_root = workspace_manager.resolve_workspace_path(workspace_id)
+            ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
             if ws_root:
                 app_jsx_path = os.path.join(ws_root, "frontend", "src", "App.jsx")
                 if os.path.exists(app_jsx_path):

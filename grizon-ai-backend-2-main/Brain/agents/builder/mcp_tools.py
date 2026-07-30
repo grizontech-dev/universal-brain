@@ -31,6 +31,7 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     actual_path = file_path or code_path
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
+    user_id = config.get("configurable", {}).get("user_id")
     
     print(f"{LOG} client_save_code | file={actual_path} | size={len(code_content)} chars | session={session_id}", flush=True)
 
@@ -41,7 +42,7 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
         print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id (thread_id) not provided in config."
 
-    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
+    ws_root = workspace_manager.resolve_workspace_path(str(session_id), user_id=user_id)
     if not ws_root:
         print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return f"ERROR: Could not resolve workspace path for session '{session_id}'."
@@ -110,6 +111,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     """Packages the workspace, deploys it to the remote sandbox, and runs the commands."""
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Deploying")
+    user_id = config.get("configurable", {}).get("user_id")
 
     print(f"{LOG} client_execute_in_sandbox | session={session_id} | entry={entry_file}", flush=True)
 
@@ -117,7 +119,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id not provided."
         
-    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
+    ws_root = workspace_manager.resolve_workspace_path(str(session_id), user_id=user_id)
     if not ws_root or not os.path.exists(ws_root):
         print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return "ERROR: Workspace directory not found."
@@ -156,11 +158,11 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
 
     try:
         print(f"{LOG} Calling MCP execute_workspace_archive (timeout=600s)...", flush=True)
-        result = await sandbox_mcp._call_tool("execute_workspace_archive", {
+        result = await sandbox_mcp._call_tool("execute_workspace_archive", sandbox_mcp._with_client_id({
             "session_id": session_id,
             "entrypoint": entry_file,
             "archive_b64": encoded_archive,
-        }, timeout=600)
+        }, user_id), timeout=600)
         print(f"{LOG} MCP result type: {type(result).__name__}", flush=True)
         output_data = sandbox_mcp._parse_response(result)
                 

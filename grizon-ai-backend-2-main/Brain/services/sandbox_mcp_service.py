@@ -92,6 +92,11 @@ class SandboxMCPService:
         """Reset MCP state. Each _call_tool creates its own fresh session."""
         self._initialized = False
 
+    def _with_client_id(self, arguments: dict, client_id: str = None) -> dict:
+        if client_id:
+            arguments["client_id"] = client_id
+        return arguments
+
     async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
         """Call an MCP tool using a FRESH session per call to avoid shared session corruption."""
         if not self._initialized:
@@ -218,17 +223,20 @@ class SandboxMCPService:
         if not self._initialized:
             await self.initialize()
 
-    def get_workspace_dir(self, session_id: str) -> str:
+    def get_workspace_dir(self, session_id: str, user_id: str = None) -> str:
         if not self._workspace_root:
             workspace_base = os.path.join(os.getcwd(), "workspaces")
             os.makedirs(workspace_base, exist_ok=True)
             self._workspace_root = workspace_base
-        d = os.path.abspath(os.path.join(self._workspace_root, session_id))
+        if user_id:
+            d = os.path.abspath(os.path.join(self._workspace_root, user_id, session_id))
+        else:
+            d = os.path.abspath(os.path.join(self._workspace_root, session_id))
         os.makedirs(d, exist_ok=True)
         return d
 
-    async def save_file(self, session_id: str, filename: str, code: str) -> str:
-        workspace_dir = self.get_workspace_dir(session_id)
+    async def save_file(self, session_id: str, filename: str, code: str, user_id: str = None) -> str:
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
         target = os.path.abspath(os.path.join(workspace_dir, filename))
         if not target.startswith(workspace_dir):
             return "ERROR: Path traversal blocked"
@@ -239,17 +247,17 @@ class SandboxMCPService:
         logger.info("[sandbox_mcp] Saved '%s' for session '%s'", filename, session_id)
         return f"Saved {filename}"
 
-    async def save_code_to_sandbox(self, session_id: str, filename: str, code: str) -> Dict[str, Any]:
+    async def save_code_to_sandbox(self, session_id: str, filename: str, code: str, user_id: str = None) -> Dict[str, Any]:
         try:
             logger.info(
                 "[sandbox_mcp] Saving '%s' directly to sandbox '%s' (%d bytes)",
                 filename, session_id, len(code),
             )
-            result = await self._call_tool("save_code", {
+            result = await self._call_tool("save_code", self._with_client_id({
                 "session_id": session_id,
                 "filename": filename,
                 "code": code,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:
@@ -270,9 +278,9 @@ class SandboxMCPService:
         return entrypoint
 
     async def deploy_workspace(
-        self, session_id: str, entrypoint: str
+        self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:
-        workspace_dir = self.get_workspace_dir(session_id)
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
         entrypoint = self._resolve_entrypoint(workspace_dir, entrypoint)
         files = os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else []
         print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | entrypoint={entrypoint} | files={files}")
@@ -395,7 +403,7 @@ class SandboxMCPService:
 
         try:
             print(f"[SANDBOX_MCP] Deleting old sandbox to clear port 9999...")
-            await self.delete_sandbox(session_id)
+            await self.delete_sandbox(session_id, user_id=user_id)
             import asyncio as _dasync
             await _dasync.sleep(2)
         except Exception as e:
@@ -404,11 +412,11 @@ class SandboxMCPService:
         deploy_start = time.time()
         try:
             print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (timeout=600s)...")
-            result = await self._call_tool("execute_workspace_archive", {
+            result = await self._call_tool("execute_workspace_archive", self._with_client_id({
                 "session_id": session_id,
                 "entrypoint": entrypoint,
                 "archive_b64": archive_b64,
-            }, timeout=600)
+            }, user_id), timeout=600)
             elapsed = time.time() - deploy_start
             print(f"[SANDBOX_MCP] MCP call completed in {elapsed:.1f}s | raw type={type(result).__name__}")
             parsed = self._parse_response(result)
@@ -428,21 +436,21 @@ class SandboxMCPService:
             logger.error("[sandbox_mcp] deploy_workspace failed: %s", e)
             return {"status": "error", "error": str(e)}
 
-    async def get_sandbox_status(self, session_id: str) -> Dict[str, Any]:
+    async def get_sandbox_status(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("get_sandbox_status", {
+            result = await self._call_tool("get_sandbox_status", self._with_client_id({
                 "session_id": session_id,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def delete_sandbox(self, session_id: str) -> Dict[str, Any]:
+    async def delete_sandbox(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("delete_sandbox", {
+            result = await self._call_tool("delete_sandbox", self._with_client_id({
                 "session_id": session_id,
-            })
+            }, user_id))
             self._session_activity.pop(session_id, None)
             self._tunnel_urls.pop(session_id, None)
             # Do NOT delete local workspace — files are needed for re-deploy
@@ -451,21 +459,21 @@ class SandboxMCPService:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def list_sandboxes(self) -> Dict[str, Any]:
+    async def list_sandboxes(self, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("list_sandboxes", {})
+            result = await self._call_tool("list_sandboxes", self._with_client_id({}, user_id))
             return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def execute_in_sandbox(
-        self, session_id: str, entrypoint: str
+        self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("execute_in_sandbox", {
+            result = await self._call_tool("execute_in_sandbox", self._with_client_id({
                 "session_id": session_id,
                 "entrypoint": entrypoint,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:

@@ -56,11 +56,14 @@ class WorkspaceManager:
             print(f"WARNING: mkdir '{path}' in {workspace_id}: {e}")
             return False
 
-    def resolve_workspace_path(self, workspace_id: str) -> Optional[str]:
+    def resolve_workspace_path(self, workspace_id: str, user_id: str = None) -> Optional[str]:
+        if user_id:
+            local_path = os.path.join(self.container_workspaces_path, user_id, workspace_id)
+            if os.path.exists(local_path):
+                return local_path
         local_path = os.path.join(self.container_workspaces_path, workspace_id)
         if os.path.exists(local_path):
             return local_path
-        # Auto-create if it doesn't exist yet (prevents list-files 404 after restart)
         try:
             os.makedirs(local_path, exist_ok=True)
             print(f"DEBUG: Auto-created workspace directory: {local_path}")
