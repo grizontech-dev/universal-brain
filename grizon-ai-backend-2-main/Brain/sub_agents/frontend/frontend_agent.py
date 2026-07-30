@@ -174,6 +174,6 @@ class FrontendAgent(BaseAgent):
         )
 
         print(f"[FRONTEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
-        response_content = await self.chat(messages, timeout=300, temperature=0.5)
+        response_content = await self.chat(messages, timeout=300, temperature=0.7)
         generated_json = self._format_json_response(response_content)
         return generated_json
