@@ -23,7 +23,7 @@ class BuilderAgent(BaseAgent):
             description="Coordinates sub-agents to execute tasks and build the application.",
             model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.5)
 
     @staticmethod
     def _sanitize_code(code: str, file_path: str) -> str:
@@ -149,7 +149,7 @@ class BuilderAgent(BaseAgent):
             "runner": "deepseek-v4-pro",
         }
         _model = _cat_models.get(category, "deepseek-v4-pro")
-        _llm = ProviderRouter.get_model(_model, temperature=0.2)
+        _llm = ProviderRouter.get_model(_model, temperature=0.5)
 
         print(f"{LOG} Using model: {_model} | category={category}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -433,7 +433,7 @@ class BuilderAgent(BaseAgent):
             return files_saved
 
         start_time = _time.time()
-        _frontend_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
+        _frontend_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.5)
         bound_llm = _frontend_llm.bind_tools([client_save_code])
 
         # ═══════════════════════════════════════════════════════════════
@@ -893,7 +893,7 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
 
         # Generate each missing file
-        _frontend_llm2 = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
+        _frontend_llm2 = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.5)
         bound_llm = _frontend_llm2.bind_tools([client_save_code])
         messages = [
             SystemMessage(content=(
@@ -1034,7 +1034,7 @@ class BuilderAgent(BaseAgent):
         max_tool_calls = 20
         tool_call_count = 0
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        _fallback_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
+        _fallback_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.5)
         bound_llm = _fallback_llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
@@ -1279,41 +1279,134 @@ class BuilderAgent(BaseAgent):
 
         if category == "frontend":
             system_prompt = (
-                "You are a Senior React Frontend Engineer.\n\n"
+                "You are a Senior React Frontend Engineer. You build COMPLETE, BEAUTIFUL UIs.\n\n"
                 "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n"
-                "DARK THEME: bg-[#09090b], text-white\n\n"
-                "═══ DO NOT (violation = broken build) ═══\n"
-                "- Do NOT call supabase_exec_sql (you don't have that tool)\n"
-                "- Do NOT import CSS files (Tailwind is global)\n"
-                "- Do NOT use <a href> for navigation (use react-router-dom Link)\n"
-                "- Do NOT import from files that don't exist yet\n"
-                "- Do NOT create duplicate function names (if you import X, don't redeclare X)\n"
-                "- Do NOT save files outside frontend/src/\n"
-                "- Do NOT use brand icons from lucide-react (Github, Google, Twitter cause errors)\n\n"
-                "═══ DO ═══\n"
-                "- Import EVERY component you use in JSX at the top of the file\n"
-                "- App.jsx: BrowserRouter + Routes wrapping ALL pages\n"
-                "- Each component: one file, export default, real content (no placeholders)\n"
-                "- Tailwind on EVERY element, glass cards, gradients, hover effects\n"
-                "- Use client_save_code for every file\n"
-                "- Mock data fetching with useState/useEffect (don't assume APIs exist)\n\n"
-                "Generate files one at a time. After all files, respond with a short summary."
+                "DARK THEME: bg-[#09090b], text-white, gradients\n\n"
+                "═══ CRITICAL RULES (violation = broken build) ═══\n"
+                "1. Use client_save_code for EVERY file. One tool call per file.\n"
+                "2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)\n"
+                "3. Import EVERY component you use at the top of the file\n"
+                "4. Do NOT re-declare imported names (if you import X, don't export default function X)\n"
+                "5. Use react-router-dom Link, NOT <a href>\n"
+                "6. Do NOT import CSS files (Tailwind is global)\n"
+                "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n\n"
+                "═══ OUTPUT FORMAT ═══\n"
+                "Generate ONE file per tool call. After ALL files, respond with a short summary.\n\n"
+                "═══ EXAMPLE: How to generate a component ═══\n"
+                "When asked to create a Navbar component, use client_save_code with:\n"
+                "- file_path: frontend/src/components/Navbar.jsx\n"
+                "- code_content:\n"
+                "```jsx\n"
+                "import { Link } from 'react-router-dom';\n"
+                "import { Menu, X } from 'lucide-react';\n"
+                "import { useState } from 'react';\n\n"
+                "export default function Navbar() {\n"
+                "  const [open, setOpen] = useState(false);\n"
+                "  return (\n"
+                "    <nav className=\"bg-[#09090b] border-b border-white/10 sticky top-0 z-50\">\n"
+                "      <div className=\"max-w-7xl mx-auto px-4 py-3 flex items-center justify-between\">\n"
+                "        <Link to=\"/\" className=\"text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent\">\n"
+                "          Grizon AI\n"
+                "        </Link>\n"
+                "        <div className=\"hidden md:flex gap-6\">\n"
+                "          <Link to=\"/\" className=\"text-gray-300 hover:text-white transition\">Home</Link>\n"
+                "          <Link to=\"/dashboard\" className=\"text-gray-300 hover:text-white transition\">Dashboard</Link>\n"
+                "        </div>\n"
+                "        <button onClick={() => setOpen(!open)} className=\"md:hidden text-white\">\n"
+                "          {open ? <X size={24} /> : <Menu size={24} />}\n"
+                "        </button>\n"
+                "      </div>\n"
+                "    </nav>\n"
+                "  );\n"
+                "}\n"
+                "```\n\n"
+                "═══ App.jsx Structure ═══\n"
+                "App.jsx MUST use BrowserRouter + Routes. Import ALL components.\n"
+                "```jsx\n"
+                "import { BrowserRouter, Routes, Route } from 'react-router-dom';\n"
+                "import Navbar from './components/Navbar';\n"
+                "import Home from './pages/Home';\n"
+                "import Dashboard from './pages/Dashboard';\n\n"
+                "export default function App() {\n"
+                "  return (\n"
+                "    <BrowserRouter>\n"
+                "      <div className=\"min-h-screen bg-[#09090b] text-white\">\n"
+                "        <Navbar />\n"
+                "        <Routes>\n"
+                "          <Route path=\"/\" element={<Home />} />\n"
+                "          <Route path=\"/dashboard\" element={<Dashboard />} />\n"
+                "        </Routes>\n"
+                "      </div>\n"
+                "    </BrowserRouter>\n"
+                "  );\n"
+                "}\n"
+                "```\n\n"
+                "Every component MUST have: Tailwind dark theme, real content (not placeholders), responsive design."
             )
         elif category == "backend":
             system_prompt = (
                 "You are a Senior Backend Engineer. Node.js + Express API in `backend/`.\n\n"
-                "═══ DO NOT ═══\n"
-                "- Do NOT use ES modules (import/export). Use CommonJS (require/module.exports)\n"
-                "- Do NOT create your own Supabase client — import from backend/supabase/client.js\n"
-                "- Do NOT hardcode URLs, API keys, or secrets\n\n"
-                "═══ DO ═══\n"
-                "- Every controller starts with: const {{ supabase }} = require('../supabase/client');\n"
-                "- Structure: routes/*.js for routes, controllers/*.js for logic\n"
-                "- Every route returns JSON: {{ success: true, data }} or {{ success: false, error }}\n"
-                "- Try/catch in every route handler\n"
-                "- Write server.js LAST with ALL routes mounted\n"
-                "- Use client_save_code for every file\n\n"
-                "Generate files one at a time. After all files, respond with a short summary."
+                "═══ CRITICAL RULES ═══\n"
+                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
+                "2. Use client_save_code for EVERY file. One tool call per file.\n"
+                "3. Write server.js LAST with ALL routes mounted.\n"
+                "4. Every controller starts with: const { supabase } = require('../supabase/client');\n"
+                "5. Every route returns JSON: { success: true, data } or { success: false, error }\n"
+                "6. Try/catch in every route handler\n\n"
+                "═══ FILE STRUCTURE ═══\n"
+                "backend/\n"
+                "  ├── server.js          (main entry, mounts all routes)\n"
+                "  ├── package.json       (dependencies)\n"
+                "  ├── routes/\n"
+                "  │   └── todos.js       (route definitions)\n"
+                "  ├── controllers/\n"
+                "  │   └── todos.js       (business logic)\n"
+                "  └── supabase/\n"
+                "      └── client.js      (supabase client init)\n\n"
+                "═══ EXAMPLE: Route file ═══\n"
+                "```javascript\n"
+                "// routes/todos.js\n"
+                "const express = require('express');\n"
+                "const router = express.Router();\n"
+                "const { getTodos, createTodo } = require('../controllers/todos');\n\n"
+                "router.get('/', getTodos);\n"
+                "router.post('/', createTodo);\n\n"
+                "module.exports = router;\n"
+                "```\n\n"
+                "═══ EXAMPLE: Controller file ═══\n"
+                "```javascript\n"
+                "// controllers/todos.js\n"
+                "const { supabase } = require('../supabase/client');\n\n"
+                "exports.getTodos = async (req, res) => {\n"
+                "  try {\n"
+                "    const { data, error } = await supabase.from('todos').select('*');\n"
+                "    if (error) throw error;\n"
+                "    res.json({ success: true, data });\n"
+                "  } catch (err) {\n"
+                "    res.status(500).json({ success: false, error: err.message });\n"
+                "  }\n"
+                "};\n\n"
+                "exports.createTodo = async (req, res) => {\n"
+                "  try {\n"
+                "    const { data, error } = await supabase.from('todos').insert(req.body).select();\n"
+                "    if (error) throw error;\n"
+                "    res.json({ success: true, data });\n"
+                "  } catch (err) {\n"
+                "    res.status(500).json({ success: false, error: err.message });\n"
+                "  }\n"
+                "};\n"
+                "```\n\n"
+                "═══ EXAMPLE: server.js ═══\n"
+                "```javascript\n"
+                "const express = require('express');\n"
+                "const cors = require('cors');\n"
+                "const app = express();\n\n"
+                "app.use(cors());\n"
+                "app.use(express.json());\n\n"
+                "app.use('/api/todos', require('./routes/todos'));\n\n"
+                "const PORT = process.env.PORT || 3001;\n"
+                "app.listen(PORT, () => console.log(`Server running on port ${PORT}`));\n"
+                "```"
             )
         elif category == "database":
             system_prompt = (

@@ -90,6 +90,6 @@ class BackendAgent(BaseAgent):
         )
 
         print(f"[BACKEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
-        response_content = await self.chat(messages, timeout=300)
+        response_content = await self.chat(messages, timeout=300, temperature=0.5)
         generated_json = self._format_json_response(response_content)
         return generated_json

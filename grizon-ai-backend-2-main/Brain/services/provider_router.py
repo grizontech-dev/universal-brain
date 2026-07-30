@@ -54,6 +54,13 @@ class ProviderRouter:
             )
 
         def _make_deepinfra(model: str):
+            extra = {}
+            # Qwen-specific optimizations
+            if "qwen" in model.lower():
+                extra = {
+                    "frequency_penalty": 0.1,
+                    "presence_penalty": 0.1,
+                }
             return ChatOpenAI(
                 model=model,
                 api_key=deepinfra_key,
@@ -62,7 +69,8 @@ class ProviderRouter:
                 max_retries=2,
                 timeout=180,
                 request_timeout=180,
-                **({"max_tokens": max_tokens} if max_tokens else {})
+                **({"max_tokens": max_tokens} if max_tokens else {}),
+                **extra
             )
 
         # Decide the universal fallback — DeepSeek first, then OpenAI
