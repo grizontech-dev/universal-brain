@@ -6,8 +6,8 @@ import { BrainWebContainerProvider } from '../../../brain/context/BrainWebContai
 
 function BrainFallback() {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-[#0a0a0a] text-white">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#976df8] border-t-transparent" />
+    <div className="flex h-full w-full items-center justify-center bg-app text-text-primary">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
@@ -15,7 +15,7 @@ function BrainFallback() {
 export default function BrainPage() {
   return (
     <Suspense fallback={<BrainFallback />}>
-      <div className="flex-1 h-full w-full overflow-hidden relative bg-[#0a0a0a]">
+      <div className="flex-1 h-full w-full overflow-hidden relative bg-app text-text-primary">
         <BrainWebContainerProvider>
           <BrainMessages />
         </BrainWebContainerProvider>
@@ -23,3 +23,4 @@ export default function BrainPage() {
     </Suspense>
   );
 }
+

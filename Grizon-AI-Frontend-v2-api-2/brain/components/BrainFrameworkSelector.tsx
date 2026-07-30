@@ -30,13 +30,14 @@ export default function BrainFrameworkSelector({
                         disabled={disabled}
                         onClick={() => onChange(fw.id)}
                         title={fw.description}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border shrink-0
+                        className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider transition-all border shrink-0
                             ${active
-                                ? 'bg-[#976df8]/20 border-[#976df8]/40 text-[#c4b5fd]'
-                                : 'bg-white/5 border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'
+                                ? 'bg-accent border-accent text-white shadow-md shadow-accent/30 scale-105'
+                                : 'bg-surface-3 border-border-subtle text-text-muted hover:text-text-primary hover:border-border-default'
                             }
                             ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                     >
+
                         {fw.label}
                     </button>
                 );
@@ -44,3 +45,4 @@ export default function BrainFrameworkSelector({
         </div>
     );
 }
+

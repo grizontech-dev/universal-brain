@@ -33,6 +33,8 @@ import type {
   StreamTokenTooltip,
 } from './AgentMessage';
 import TaskSelectionView from './TaskSelectionView';
+import { EmptyChatState } from './EmptyChatState';
+
 import RateLimitComposerIndicator from './RateLimitComposerIndicator';
 import ThinkingIndicator from './ThinkingIndicator';
 import MessageSkeleton from './MessageSkeleton';
@@ -1462,7 +1464,7 @@ export default function MessagesStaticShell({
 
   return (
     <div
-      className={`flex flex-col h-full min-h-0 bg-app relative ${showEmptyHero ? 'overflow-visible' : ''}`}
+      className={`flex flex-col h-full min-h-0 bg-app text-text-primary relative ${showEmptyHero ? 'overflow-visible' : ''}`}
     >
       <header className="flex items-center gap-3 px-4 h-[52px] border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1482,12 +1484,14 @@ export default function MessagesStaticShell({
           <button
             type="button"
             onClick={onOpenCanvasAction}
-            className="text-[11px] font-medium text-accent hover:text-accent px-3 py-1.5 rounded-lg border border-border-default hover:bg-surface-2 shrink-0 transition-colors"
+            className="text-[11px] font-medium text-accent hover:text-accent-hover px-3 py-1.5 rounded-lg border border-border-default hover:bg-surface-2 shrink-0 transition-colors"
           >
             Open canvas
           </button>
         ) : null}
       </header>
+
+
 
       {(banner || convError) && (
         <div className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100/95">
@@ -1518,8 +1522,8 @@ export default function MessagesStaticShell({
         }
       >
         {showEmptyHero ? (
-          <div className="w-full max-w-[1080px] mx-auto px-4 sm:px-6 py-8 pb-[200px] overflow-visible">
-            <TaskSelectionView
+          <div className="w-full max-w-[1080px] mx-auto px-4 sm:px-6 py-8 overflow-visible flex flex-col items-center justify-center min-h-[70vh]">
+            <EmptyChatState
               onSelectAction={(text, agentSlug) => {
                 setInput(text);
                 setSelectedAgentSlug(agentSlug?.trim() ? agentSlug.trim() : null);
@@ -1527,6 +1531,7 @@ export default function MessagesStaticShell({
             />
           </div>
         ) : (
+
           <div className="max-w-[820px] lg:max-w-[1080px] mx-auto px-4 sm:px-6 pt-4 pb-[180px] space-y-4">
             {isLoadingMessages && effectiveConvId && sortedMessages.length === 0 ? (
               <MessageSkeleton count={3} />
@@ -1611,7 +1616,9 @@ export default function MessagesStaticShell({
         </button>
       )}
 
-      <footer className="absolute bottom-0 left-0 right-0 px-4 pb-4 pt-2 pointer-events-none z-20">
+      {!showEmptyHero && (
+        <footer className="absolute bottom-0 left-0 right-0 px-4 pb-4 pt-2 pointer-events-none z-20">
+
         <div className="max-w-[820px] lg:max-w-[1080px] mx-auto pointer-events-auto">
           <div
             ref={composerRef}
@@ -2021,7 +2028,9 @@ export default function MessagesStaticShell({
           </p>
         </div>
       </footer>
+      )}
     </div>
+
   );
 }
 

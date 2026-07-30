@@ -232,24 +232,24 @@ function LiveActivityPanel({
   const currentLabel = runningTool?.name ?? 'Thinking';
 
   return (
-    <div className="mb-3 rounded-2xl border border-[#976df8]/20 bg-gradient-to-b from-[#976df8]/[0.07] to-transparent overflow-hidden">
+    <div className="mb-3 rounded-2xl border border-border-subtle bg-surface-2 overflow-hidden shadow-sm font-sans">
       {/* Status bar */}
-      <div className="relative flex items-center gap-2.5 px-3 py-2.5 stream-sweep overflow-hidden">
+      <div className="relative flex items-center gap-2.5 px-3.5 py-3 stream-sweep overflow-hidden">
         <span className="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-          <span className="absolute h-2.5 w-2.5 rounded-full bg-[#976df8]/60 stream-orb" />
-          <span className="h-1.5 w-1.5 rounded-full bg-[#976df8]" />
+          <span className="absolute h-2.5 w-2.5 rounded-full bg-accent/60 stream-orb" />
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-bold text-white/90 tracking-tight leading-none truncate">
+          <p className="text-[13px] font-bold text-text-primary tracking-tight leading-none truncate">
             {currentLabel}
-            <span className="stream-caret ml-0.5 text-[#b59cff]">…</span>
+            <span className="stream-caret ml-0.5 text-accent">…</span>
           </p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {elapsedMs != null ? (
-            <span className={footerChipClass}>
-              <Clock size={10} className="text-white/30" />
-              <span className="tabular-nums">{formatDurationMs(elapsedMs)}</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-3 border border-border-subtle text-[10px] font-medium text-text-muted tracking-tight whitespace-nowrap">
+              <Clock size={10} className="text-accent" />
+              <span className="tabular-nums text-text-secondary">{formatDurationMs(elapsedMs)}</span>
             </span>
           ) : null}
           {tokens ? <StreamOutputTokenChip display={tokens} /> : null}
@@ -257,18 +257,18 @@ function LiveActivityPanel({
       </div>
 
       {/* Indeterminate progress line */}
-      <div className="relative h-[2px] w-full overflow-hidden bg-white/[0.04]">
-        <div className="stream-progress-bar absolute inset-y-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-[#976df8] to-transparent" />
+      <div className="relative h-[2px] w-full overflow-hidden bg-surface-3">
+        <div className="stream-progress-bar absolute inset-y-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-accent to-transparent" />
       </div>
 
       {/* Timeline */}
       {tools.length > 0 ? (
-        <div className="px-3 py-3">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-white/35">
+        <div className="px-3.5 py-3 bg-surface-1/40">
+          <div className="mb-2.5 flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">
               Steps
             </span>
-            <span className="text-[10px] tabular-nums text-white/30">
+            <span className="text-[10px] tabular-nums font-bold text-accent">
               {doneCount}/{tools.length}
             </span>
           </div>
@@ -287,7 +287,7 @@ function LiveActivityPanel({
                   {!isLast ? (
                     <span
                       className={`absolute left-[11px] top-6 bottom-0 w-px ${
-                        isDone ? 'bg-emerald-400/25' : 'bg-white/[0.08]'
+                        isDone ? 'bg-emerald-500/30' : 'bg-border-subtle'
                       }`}
                       aria-hidden
                     />
@@ -296,18 +296,18 @@ function LiveActivityPanel({
                   <span
                     className={`relative z-10 mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border ${
                       isRunning
-                        ? 'border-[#976df8]/60 bg-[#976df8]/15 stream-glow'
+                        ? 'border-accent/60 bg-accent/15 stream-glow'
                         : isDone
-                          ? 'border-emerald-400/40 bg-emerald-400/15'
-                          : 'border-white/10 bg-white/[0.03]'
+                          ? 'border-emerald-500/40 bg-emerald-500/15'
+                          : 'border-border-subtle bg-surface-3'
                     }`}
                   >
                     {isRunning ? (
-                      <Loader2 className="h-3 w-3 animate-spin text-[#b59cff]" aria-hidden />
+                      <Loader2 className="h-3 w-3 animate-spin text-accent" aria-hidden />
                     ) : isDone ? (
-                      <Check className="h-3 w-3 text-emerald-400" aria-hidden />
+                      <Check className="h-3 w-3 text-emerald-500" aria-hidden />
                     ) : (
-                      <Icon size={12} className="text-white/40" aria-hidden />
+                      <Icon size={12} className="text-text-muted" aria-hidden />
                     )}
                   </span>
                   {/* content */}
@@ -315,19 +315,19 @@ function LiveActivityPanel({
                     <div className="flex items-center gap-1.5">
                       <Icon
                         size={12}
-                        className={`shrink-0 ${isRunning ? 'text-[#b59cff]' : 'text-white/45'}`}
+                        className={`shrink-0 ${isRunning ? 'text-accent' : 'text-text-muted'}`}
                         aria-hidden
                       />
                       <span
-                        className={`text-[12.5px] font-semibold tracking-tight truncate ${
-                          isRunning ? 'text-white' : isDone ? 'text-white/80' : 'text-white/55'
+                        className={`text-[12.5px] font-bold tracking-tight truncate ${
+                          isRunning ? 'text-accent' : isDone ? 'text-text-primary' : 'text-text-secondary'
                         }`}
                       >
                         {t.name}
                       </span>
                     </div>
                     {t.subtitle ? (
-                      <p className="mt-0.5 text-[11px] leading-snug text-white/40 line-clamp-2 [overflow-wrap:anywhere]">
+                      <p className="mt-0.5 text-[11px] leading-snug text-text-muted line-clamp-2 [overflow-wrap:anywhere]">
                         {t.subtitle}
                       </p>
                     ) : null}
@@ -341,6 +341,7 @@ function LiveActivityPanel({
     </div>
   );
 }
+
 
 /** Completed tool summary — collapsible, shown after streaming finishes. */
 function ToolStepsSummary({ tools }: { tools: AgentMessageTool[] }) {

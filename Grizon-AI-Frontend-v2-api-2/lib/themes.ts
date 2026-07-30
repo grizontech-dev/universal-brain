@@ -29,6 +29,20 @@ export interface ThemeMeta {
 
 export const THEMES: ThemeMeta[] = [
   {
+    id: 'dark',
+    name: 'Lavender Dusk (V3 Dark)',
+    description: 'Deep violet-charcoal canvas with bright brand violet.',
+    group: 'dark',
+    preview: { app: '#1c1920', sidebar: '#1c1920', chat: '#242028', accent: '#976df8', text: '#f5f3f7' },
+  },
+  {
+    id: 'light',
+    name: 'Lavender Light (V3 Light)',
+    description: 'Lavender-tinted paper with deep violet-ink.',
+    group: 'light',
+    preview: { app: '#faf8fc', sidebar: '#faf8fc', chat: '#f4f0f8', accent: '#976df8', text: '#2c2236' },
+  },
+  {
     id: 'midnight',
     name: 'Midnight',
     description: 'The classic deep-dark theme.',
@@ -57,6 +71,7 @@ export const THEMES: ThemeMeta[] = [
     preview: { app: '#f3ecde', sidebar: '#ece2cf', chat: '#f6efe2', accent: '#b07b3e', text: '#3a3326' },
   },
 ];
+
 
 export const DEFAULT_THEME_ID = 'midnight';
 

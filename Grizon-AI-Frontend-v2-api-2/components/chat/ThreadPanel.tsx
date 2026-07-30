@@ -154,6 +154,7 @@ export default function ThreadPanel({
 
     return (
         <div className="thread-panel flex flex-col w-full lg:w-[260px] h-full shrink-0 border-r border-border-subtle bg-sidebar">
+
             {/* Header */}
             <div className="flex items-center justify-between px-4 h-[52px] shrink-0 border-b border-border-subtle">
                 <h2 className="text-[14px] font-bold text-text-primary tracking-tight uppercase">Conversations</h2>
@@ -172,11 +173,12 @@ export default function ThreadPanel({
             <div className="px-3 pt-4 pb-2">
                 <button
                     onClick={() => handleSelect(null)}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-all text-[13px] font-bold shadow-[0_0_15px_rgba(168,85,247,0.1)]"
+                    className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-accent border border-accent text-white hover:brightness-110 transition-all text-[13.5px] font-semibold shadow-md cursor-pointer"
                 >
                     <Plus size={16} strokeWidth={2.5} />
-                    <span>New Chat</span>
+                    <span>New project</span>
                 </button>
+
             </div>
 
             {/* Search */}
@@ -188,13 +190,13 @@ export default function ThreadPanel({
                         placeholder="Search..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full bg-surface-2 border border-border-subtle rounded-lg py-1.5 pl-9 pr-3 text-[13px] text-text-secondary focus:outline-none focus:border-accent/30 focus:bg-surface-3 transition-all placeholder:text-text-faint"
+                        className="w-full bg-surface-2 border border-border-subtle rounded-lg py-1.5 pl-9 pr-3 text-[13px] text-text-secondary focus:outline-none focus:border-accent focus:bg-surface-3 transition-all placeholder:text-text-faint"
                     />
                 </div>
             </div>
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 scrollbar-thin">
                 {isLoading && conversations.length === 0 ? (
                     <div className="flex items-center justify-center py-10">
                         <Loader2 className="w-5 h-5 animate-spin text-text-faint" />
@@ -214,7 +216,7 @@ export default function ThreadPanel({
                                 <div
                                     key={`${group}-${conv.id}`}
                                     onClick={() => handleSelect(conv.id)}
-                                    className={`thread-item group relative flex flex-col gap-0.5 pl-3 pr-2 py-2 rounded-lg transition-colors duration-150 cursor-pointer mb-0.5 border-l-2 ${currentConversationId === conv.id ? 'bg-surface-2 text-text-primary border-accent/70' : 'text-text-muted hover:bg-surface-2 hover:text-text-secondary border-transparent'}`}
+                                    className={`thread-item group relative flex flex-col gap-0.5 pl-3 pr-2 py-2 rounded-lg transition-colors duration-150 cursor-pointer mb-0.5 border-l-2 ${currentConversationId === conv.id ? 'bg-surface-2 text-text-primary border-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text-secondary border-transparent'}`}
                                 >
                                     <div className="flex items-start justify-between gap-1.5 min-w-0">
                                         <div className="font-medium truncate text-[13px] flex-1 min-w-0">
@@ -225,7 +227,7 @@ export default function ThreadPanel({
                                                     onChange={(e) => setEditTitle(e.target.value)}
                                                     onKeyDown={saveRename}
                                                     onClick={(e) => e.stopPropagation()}
-                                                    className="w-full bg-surface-3 border border-accent/50 rounded px-1.5 py-0.5 outline-none text-text-primary text-[13px]"
+                                                    className="w-full bg-surface-3 border border-accent rounded px-1.5 py-0.5 outline-none text-text-primary text-[13px]"
                                                 />
                                             ) : (
                                                 <span className="truncate block pr-1">
@@ -234,9 +236,9 @@ export default function ThreadPanel({
                                             )}
                                         </div>
                                         
-                                        {/* Actions - Visible by default on mobile, hover-only on desktop */}
+                                        {/* Actions */}
                                         {editingId === conv.id ? (
-                                            <button onClick={saveRename} className="text-accent hover:text-accent-hover p-0.5 shrink-0">
+                                            <button onClick={saveRename} className="text-accent hover:opacity-80 p-0.5 shrink-0">
                                                 <Check size={14} />
                                             </button>
                                         ) : (
@@ -251,10 +253,10 @@ export default function ThreadPanel({
                                         )}
                                     </div>
 
-                                    {/* Dropdown Menu - Adjusted for better mobile positioning */}
+                                    {/* Dropdown Menu */}
                                     {openMenuId === conv.id && (
                                         <div 
-                                            className="absolute right-0 top-[40px] w-[140px] bg-surface-2 border border-border-default rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.6)] py-1.5 z-[100] animate-in fade-in zoom-in-95 duration-150 ring-1 ring-accent/10"
+                                            className="absolute right-0 top-[40px] w-[140px] bg-surface-2 border border-border-default rounded-xl shadow-xl py-1.5 z-[100] animate-in fade-in zoom-in-95 duration-150"
                                             onClick={(e) => e.stopPropagation()}
                                         >
                                             <button onClick={(e) => startEditing(e, conv.id, conv.title || '')} className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] text-text-secondary hover:text-accent hover:bg-surface-3 transition-all text-left font-medium">
@@ -265,13 +267,13 @@ export default function ThreadPanel({
                                                 {conv.isPinned ? 'Unpin' : 'Pin'}
                                             </button>
                                             <div className="h-px bg-border-subtle my-1.5 mx-2" />
-                                            <button onClick={(e) => handleDelete(e, conv.id)} className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] text-red-400/80 hover:text-red-400 hover:bg-red-500/5 transition-all text-left font-medium">
+                                            <button onClick={(e) => handleDelete(e, conv.id)} className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] text-danger hover:bg-danger/10 transition-all text-left font-medium">
                                                 <Trash2 size={13} strokeWidth={2} /> Delete
                                             </button>
                                         </div>
                                     )}
 
-                                    <div className="flex items-center gap-1.5 text-[11px] opacity-40">
+                                    <div className="flex items-center gap-1.5 text-[11px] opacity-60">
                                         <span>{formatDate(conv.updatedAt || conv.createdAt)}</span>
                                         {conv.isPinned && <Pin size={10} className="text-accent rotate-45" />}
                                     </div>
@@ -284,17 +286,17 @@ export default function ThreadPanel({
 
             {/* Footer */}
             <div className="border-t border-border-subtle mt-auto">
-                {/* Account + Settings — mobile only (desktop uses the icon rail) */}
+                {/* Account + Settings — mobile only */}
                 <button
                     onClick={goToSettings}
                     className="lg:hidden w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors"
                 >
-                    <div className="w-9 h-9 rounded-lg bg-accent-soft flex items-center justify-center text-[13px] font-bold text-accent shrink-0 border border-accent/15">
+                    <div className="w-9 h-9 rounded-lg bg-accent/15 flex items-center justify-center text-[13px] font-bold text-accent shrink-0 border border-accent/20">
                         {accountInitial}
                     </div>
                     <div className="min-w-0 flex-1">
                         <p className="text-[13px] font-semibold text-text-primary truncate">{accountLabel}</p>
-                        <p className="text-[11px] text-text-faint truncate">View settings</p>
+                        <p className="text-[11px] text-text-muted truncate">View settings</p>
                     </div>
                     <Settings size={18} className="text-text-muted shrink-0" />
                 </button>
@@ -302,7 +304,7 @@ export default function ThreadPanel({
                 {/* Plan Status */}
                 <div className="px-4 pt-3 pb-4 border-t border-border-subtle lg:border-t-0 lg:pt-4 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
+                        <div className="w-1.5 h-1.5 rounded-full bg-success shadow-sm"></div>
                         <span className="text-[12px] font-bold text-text-secondary tracking-tight">{planName} Plan</span>
                     </div>
                     <div className="text-[10px] font-medium text-text-faint tabular-nums">
@@ -317,4 +319,6 @@ export default function ThreadPanel({
         </div>
     );
 }
+
+
 

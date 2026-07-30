@@ -91,22 +91,23 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
 
     return (
         <div className="w-full mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <div className="bg-[#111111] border border-white/[0.1] rounded-2xl overflow-hidden shadow-2xl">
+
+            <div className="bg-surface-2 border border-border-default rounded-2xl overflow-hidden shadow-xl">
 
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-4">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
                     <div className="flex items-center gap-2.5">
-                        <ListTodo size={16} className="text-white/40 shrink-0" />
-                        <h3 className="text-[14px] font-semibold text-white/90 tracking-tight flex items-center gap-3">
+                        <ListTodo size={16} className="text-accent shrink-0" />
+                        <h3 className="text-[14px] font-bold text-text-primary tracking-tight flex items-center gap-3 font-display">
                             {projectName}
                             {allPlans.length > 1 && (
                                 <select 
-                                    className="bg-white/5 border border-white/10 rounded px-2 py-0.5 text-[11px] text-white/60 font-medium focus:outline-none focus:border-white/20 cursor-pointer"
+                                    className="bg-surface-3 border border-border-subtle rounded-lg px-2 py-0.5 text-[11px] text-text-secondary font-medium focus:outline-none focus:border-accent/40 cursor-pointer"
                                     value={activePlanIdx}
                                     onChange={(e) => setSelectedVersionIdx(Number(e.target.value))}
                                 >
                                     {allPlans.map((_, i) => (
-                                        <option key={i} value={i} className="bg-[#111111]">
+                                        <option key={i} value={i} className="bg-surface-2 text-text-primary">
                                             v{i + 1} {i === allPlans.length - 1 ? '(Latest)' : ''}
                                         </option>
                                     ))}
@@ -120,8 +121,8 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                 {/* Markdown Plan (v0 style) */}
                 {(activePlanContent === "" || (!markdownPlan && summaryPoints.length === 0)) ? (
                     <div className="px-6 py-10 flex flex-col items-center justify-center gap-3">
-                        <Loader2 size={24} className="animate-spin text-white/30" />
-                        <p className="text-[13px] text-white/40 font-medium">Generating new architecture...</p>
+                        <Loader2 size={24} className="animate-spin text-accent" />
+                        <p className="text-[13px] text-text-muted font-medium">Generating new architecture...</p>
                     </div>
                 ) : markdownPlan ? (
                     <div className={`px-6 pb-6 mt-3 relative transition-all duration-300 ${showDetails ? 'max-h-[65vh] overflow-y-auto custom-scrollbar' : 'max-h-[300px] overflow-hidden'}`}>
@@ -129,14 +130,14 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                             <ReactMarkdown 
                                 remarkPlugins={[remarkGfm]}
                                 components={{
-                                    h2: ({node, ...props}) => <h2 className="text-[22px] font-bold tracking-tight text-white/95 mt-8 mb-4 border-b border-white/10 pb-3" {...props} />,
-                                    h3: ({node, ...props}) => <h3 className="text-[18px] font-bold tracking-tight text-white/90 mt-6 mb-3" {...props} />,
-                                    p: ({node, ...props}) => <p className="text-[14.5px] leading-relaxed text-white/75 my-4" {...props} />,
-                                    ul: ({node, ...props}) => <ul className="list-disc pl-5 my-4 space-y-1.5 text-white/75" {...props} />,
-                                    ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-4 space-y-1.5 text-white/75" {...props} />,
+                                    h2: ({node, ...props}) => <h2 className="text-[20px] font-bold tracking-tight text-text-primary mt-6 mb-3 border-b border-border-subtle pb-2.5 font-display" {...props} />,
+                                    h3: ({node, ...props}) => <h3 className="text-[16px] font-bold tracking-tight text-text-primary mt-5 mb-2.5 font-display" {...props} />,
+                                    p: ({node, ...props}) => <p className="text-[14px] leading-relaxed text-text-secondary my-3" {...props} />,
+                                    ul: ({node, ...props}) => <ul className="list-disc pl-5 my-3 space-y-1.5 text-text-secondary" {...props} />,
+                                    ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-3 space-y-1.5 text-text-secondary" {...props} />,
                                     li: ({node, ...props}) => <li className="text-[14px]" {...props} />,
-                                    strong: ({node, ...props}) => <strong className="font-bold text-white/95" {...props} />,
-                                    a: ({node, ...props}) => <a className="text-[#976df8] no-underline hover:underline" {...props} />
+                                    strong: ({node, ...props}) => <strong className="font-bold text-text-primary" {...props} />,
+                                    a: ({node, ...props}) => <a className="text-accent no-underline hover:underline font-semibold" {...props} />
                                 }}
                             >
                                 {markdownPlan}
@@ -144,7 +145,7 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                         </div>
                         {/* Fade out gradient when hidden */}
                         {!showDetails && (
-                            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#111111] to-transparent pointer-events-none" />
+                            <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-t from-surface-2 to-transparent pointer-events-none" />
                         )}
                     </div>
                 ) : (
@@ -154,9 +155,9 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                             <div className="px-5 pb-5 space-y-2">
                                 {summaryPoints.map((point, i) => (
                                     <div key={i} className="flex items-start gap-2.5 text-[13.5px] leading-relaxed">
-                                        <span className="mt-[5px] w-[5px] h-[5px] shrink-0 rounded-full bg-white/25" />
-                                        <p className="text-white/65">
-                                            <strong className="text-white/85 font-semibold">{point.key}</strong>
+                                        <span className="mt-[5px] w-[5px] h-[5px] shrink-0 rounded-full bg-accent" />
+                                        <p className="text-text-secondary">
+                                            <strong className="text-text-primary font-semibold">{point.key}</strong>
                                             {': '}
                                             <span className="font-light">{point.value}</span>
                                         </p>
@@ -169,11 +170,11 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
 
                 {/* Collapsible Details */}
                 {showDetails && structuralDetails.length > 0 && (
-                    <div className="px-5 pb-6 border-t border-white/[0.06] pt-4 animate-in slide-in-from-top-2 duration-300">
+                    <div className="px-5 pb-6 border-t border-border-subtle pt-4 animate-in slide-in-from-top-2 duration-300">
                         <div className="space-y-2">
                             {structuralDetails.map((detail: string, idx: number) => (
-                                <div key={idx} className="flex items-start gap-2.5 text-[13px] text-white/50">
-                                    <span className="mt-[6px] w-[3px] h-[3px] shrink-0 rounded-full bg-white/20" />
+                                <div key={idx} className="flex items-start gap-2.5 text-[13px] text-text-muted">
+                                    <span className="mt-[6px] w-[3px] h-[3px] shrink-0 rounded-full bg-accent/60" />
                                     <span className="font-light">{detail}</span>
                                 </div>
                             ))}
@@ -196,16 +197,16 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                                 if (e.key === 'Escape') setIsRejecting(false);
                             }}
                             placeholder="What would you like to change?"
-                            className="w-full bg-white/[0.02] border border-white/10 rounded-xl px-4 py-3 text-[13px] text-white placeholder:text-white/20 focus:outline-none focus:border-white/20 resize-none min-h-[90px]"
+                            className="w-full bg-surface-3 border border-border-subtle rounded-xl px-4 py-3 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40 resize-none min-h-[90px]"
                         />
                     </div>
                 )}
 
                 {/* Footer: Show details | Request Changes | Build */}
-                <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.06] bg-white/[0.01]">
+                <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle bg-surface-1/40">
                     <button
                         onClick={() => setShowDetails(!showDetails)}
-                        className="flex items-center gap-1.5 text-[12.5px] font-medium text-white/35 hover:text-white/60 transition-colors"
+                        className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-muted hover:text-text-primary transition-colors"
                     >
                         {showDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         <span>{showDetails ? 'Hide details' : 'Show details'}</span>
@@ -216,25 +217,25 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                             <>
                                 <button
                                     onClick={() => setIsRejecting(false)}
-                                    className="px-4 py-1.5 text-[12.5px] font-medium text-white/60 hover:text-white/80 border border-white/[0.1] hover:border-white/20 rounded-xl transition-all"
+                                    className="px-4 py-1.5 text-[12.5px] font-medium text-text-secondary hover:text-text-primary border border-border-subtle hover:bg-surface-3 rounded-xl transition-all"
                                 >
                                     Back
                                 </button>
                                 <button
                                     onClick={handleRejectSubmit}
                                     disabled={!feedback.trim()}
-                                    className="px-4 py-1.5 bg-white hover:bg-white/90 text-black text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
+                                    className="px-4 py-1.5 bg-accent text-white hover:brightness-110 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50 shadow-md"
                                 >
                                     Submit Feedback
                                 </button>
                             </>
                         ) : isCompleted ? (
-                            <div className="px-5 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 text-[12px] font-bold border border-emerald-500/20">
+                            <div className="px-5 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-500 text-[12px] font-bold border border-emerald-500/20">
                                 Complete
                             </div>
                         ) : isExecuting ? (
-                            <div className="px-5 py-1.5 rounded-xl bg-white/5 text-white/40 text-[12px] font-medium border border-white/10 flex items-center gap-2">
-                                <Loader2 size={12} className="animate-spin" />
+                            <div className="px-5 py-1.5 rounded-xl bg-surface-3 text-text-muted text-[12px] font-medium border border-border-subtle flex items-center gap-2">
+                                <Loader2 size={12} className="animate-spin text-accent" />
                                 Building...
                             </div>
                         ) : (
@@ -242,7 +243,7 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                                 {onReject && (
                                     <button
                                         onClick={() => setIsRejecting(true)}
-                                        className="px-4 py-1.5 text-[12.5px] font-medium text-white/60 hover:text-white/80 border border-white/[0.1] hover:border-white/20 rounded-xl transition-all"
+                                        className="px-4 py-1.5 text-[12.5px] font-medium text-text-secondary hover:text-text-primary border border-border-subtle hover:bg-surface-3 rounded-xl transition-all"
                                     >
                                         Request Changes
                                     </button>
@@ -250,11 +251,12 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                                 {onBuild && (
                                     <button
                                         onClick={onBuild}
-                                        className="px-6 py-1.5 bg-white hover:bg-white/90 text-black text-[13px] font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-white/10 whitespace-nowrap shrink-0"
+                                        className="px-6 py-2 bg-accent text-white hover:brightness-110 text-[13px] font-semibold rounded-full transition-all flex items-center gap-2 shadow-lg shadow-accent/25 whitespace-nowrap shrink-0 cursor-pointer"
                                     >
-                                        <Zap size={13} fill="black" />
+                                        <Zap size={13} fill="currentColor" />
                                         Build
                                     </button>
+
                                 )}
                             </>
                         )}
@@ -264,3 +266,4 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
         </div>
     );
 }
+

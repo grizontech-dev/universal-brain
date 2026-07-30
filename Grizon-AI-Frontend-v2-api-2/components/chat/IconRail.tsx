@@ -26,7 +26,7 @@ export default function IconRail({
 
   return (
     <div
-      className='icon-rail hidden lg:flex flex-col items-center py-4 px-2 gap-2 shrink-0 h-full bg-sidebar border-r border-border-subtle'
+      className='hidden lg:flex flex-col items-center py-4 px-2 gap-2 shrink-0 h-full bg-sidebar border-r border-border-subtle'
       style={{ width: '60px' }}
     >
       <div
@@ -44,8 +44,8 @@ export default function IconRail({
         type='button'
         className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all mb-1 group relative ${
           activeMode === 'chat'
-            ? 'bg-surface-3 text-text-primary'
-            : 'text-text-faint hover:text-text-secondary hover:bg-surface-2'
+            ? 'bg-surface-3 text-text-primary font-semibold'
+            : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
         }`}
         onClick={onChatClick}
         aria-label='Chats'
@@ -54,7 +54,7 @@ export default function IconRail({
           size={20}
           className='transition-transform duration-200 group-active:scale-95'
         />
-        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl'>
+        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg'>
           Chats
         </div>
       </button>
@@ -63,8 +63,8 @@ export default function IconRail({
         type='button'
         className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all mb-1 group relative ${
           activeMode === 'brain'
-            ? 'bg-surface-3 text-text-primary'
-            : 'text-text-faint hover:text-text-secondary hover:bg-surface-2'
+            ? 'bg-surface-3 text-text-primary font-semibold'
+            : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
         }`}
         onClick={onBrainClick}
         aria-label='Brain'
@@ -73,7 +73,7 @@ export default function IconRail({
           size={20}
           className='transition-transform duration-200 group-active:scale-95'
         />
-        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl'>
+        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg'>
           Brain
         </div>
       </button>
@@ -84,24 +84,26 @@ export default function IconRail({
         type='button'
         className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all mb-1 group relative ${
           activeMode === 'settings'
-            ? 'bg-surface-3 text-text-primary'
-            : 'text-text-faint hover:text-text-secondary hover:bg-surface-2'
+            ? 'bg-surface-3 text-text-primary font-semibold'
+            : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
         }`}
         onClick={onSettingsClick}
         aria-label='Settings'
       >
         <Settings size={20} />
-        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl'>
+        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg'>
           Settings
         </div>
       </button>
 
       <div
-        className='w-8 h-8 rounded-lg bg-accent-soft flex items-center justify-center text-[12px] font-bold text-accent cursor-pointer mt-1 hover:brightness-110 transition-all border border-accent/15'
+        className='w-8 h-8 rounded-lg bg-accent/15 flex items-center justify-center text-[12px] font-bold text-accent cursor-pointer mt-1 hover:brightness-110 transition-all border border-accent/25'
         title={fullName}
       >
         {initial}
       </div>
     </div>
+
+
   );
 }

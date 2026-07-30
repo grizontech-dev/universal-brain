@@ -186,6 +186,8 @@ class BuilderAgent(BaseAgent):
                 tool_name = tc["name"]
                 tool_args = tc["args"]
                 file_path = tool_args.get("file_path", "")
+                code_content = tool_args.get("code", "")
+                code_len = len(code_content)
 
                 if file_path in seen_files:
                     print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
@@ -193,6 +195,7 @@ class BuilderAgent(BaseAgent):
                     continue
 
                 print(f"{LOG} → [{len(files_saved)+1}] Generating: {file_path} ({code_len} chars)", flush=True)
+
 
                 tool_timeout = 30
                 try:

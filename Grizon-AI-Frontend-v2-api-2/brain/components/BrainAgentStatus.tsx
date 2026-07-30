@@ -47,26 +47,26 @@ const ExploreGroupView = ({ group }: { group: ExploreGroup }) => {
         <div className="flex flex-col text-[13px] font-sans">
             <button 
                 onClick={() => setIsExpanded(!isExpanded)}
-                className="flex items-center gap-2 text-white/50 hover:text-white/80 transition-colors w-fit py-1"
+                className="flex items-center gap-2 text-text-muted hover:text-text-primary transition-colors w-fit py-1"
             >
                 {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 <span className="font-medium tracking-tight">
-                    {group.title} {group.stats && <span className="text-white/30 ml-1">• {group.stats}</span>}
+                    {group.title} {group.stats && <span className="text-text-muted/60 ml-1">• {group.stats}</span>}
                 </span>
             </button>
             
             {isExpanded && (
-                <div className="ml-[7px] pl-4 border-l border-white/10 flex flex-col gap-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="ml-[7px] pl-4 border-l border-border-subtle flex flex-col gap-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
                     {group.actions.map(action => (
                         <div key={action.id} className="flex flex-col">
-                            <div className="flex items-center gap-2 text-white/60">
-                                <ChevronDown size={12} className="text-white/20" />
+                            <div className="flex items-center gap-2 text-text-secondary">
+                                <ChevronDown size={12} className="text-text-muted" />
                                 <span className="font-medium">{action.title}</span>
                             </div>
                             {action.description && (
-                                <div className="ml-[17px] mt-1 pl-3 border-l border-white/10 text-white/40 flex items-center gap-2">
+                                <div className="ml-[17px] mt-1 pl-3 border-l border-border-subtle text-text-muted flex items-center gap-2">
                                     <span className="text-[12.5px] font-light flex items-center gap-1.5">
-                                        <ActionIcon type={action.icon} className="text-white/30" />
+                                        <ActionIcon type={action.icon} className="text-accent" />
                                         {action.description}
                                     </span>
                                 </div>
@@ -104,20 +104,20 @@ export default function BrainAgentStatus({ step, thoughts: propThoughts, timelin
                 <div className="flex flex-col gap-2">
                     <button 
                         onClick={() => setIsExpanded(!isExpanded)}
-                        className="flex items-center gap-1.5 text-white/40 hover:text-white/70 transition-colors w-fit"
+                        className="flex items-center gap-1.5 text-text-muted hover:text-text-primary transition-colors w-fit font-medium"
                     >
                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         <span className="text-[13px] font-medium tracking-tight">Thought for {seconds}s</span>
                     </button>
 
                     {isExpanded && (
-                        <div className="ml-1.5 pl-4 border-l-2 border-white/10 text-white/60 text-[13px] leading-[1.6]">
+                        <div className="ml-1.5 pl-4 border-l-2 border-accent/30 text-text-secondary text-[13px] leading-[1.6]">
                             {/* Render rich markdown thoughts */}
-                            <div className="thought-markdown [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2 [&_li]:mb-0.5 [&_strong]:text-white/80 [&_strong]:font-medium [&_h1]:text-white/80 [&_h2]:text-white/80 [&_h3]:text-white/80">
+                            <div className="thought-markdown [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2 [&_li]:mb-0.5 [&_strong]:text-text-primary [&_strong]:font-semibold [&_h1]:text-text-primary [&_h2]:text-text-primary [&_h3]:text-text-primary">
                                 <MarkdownRenderer content={streamingMessage} />
                             </div>
                             {step !== 'completed' && (
-                                <span className="inline-block w-1.5 h-3.5 ml-1 bg-white/40 animate-pulse align-middle" />
+                                <span className="inline-block w-1.5 h-3.5 ml-1 bg-accent animate-pulse align-middle" />
                             )}
                         </div>
                     )}
@@ -139,13 +139,13 @@ export default function BrainAgentStatus({ step, thoughts: propThoughts, timelin
                     {timeline.map((event, i) => (
                         <div key={event.id || i} className="flex items-center gap-2.5 text-[13px]">
                             {event.type === 'SUCCESS' ? (
-                                <CheckCircle2 size={15} className="text-white/40" />
+                                <CheckCircle2 size={15} className="text-emerald-500" />
                             ) : event.type === 'ERROR' ? (
                                 <Circle size={15} className="text-red-400" />
                             ) : (
-                                <LayoutList size={15} className="text-white/40" />
+                                <LayoutList size={15} className="text-accent" />
                             )}
-                            <span className="text-white/70 font-medium tracking-wide">{event.text}</span>
+                            <span className="text-text-secondary font-medium tracking-wide">{event.text}</span>
                         </div>
                     ))}
                 </div>
@@ -153,11 +153,12 @@ export default function BrainAgentStatus({ step, thoughts: propThoughts, timelin
 
             {/* Worked for footer */}
             {step === 'completed' && (
-                <div className="flex items-center gap-2 text-white/40 text-[12px] pt-3">
-                    <Activity size={14} />
+                <div className="flex items-center gap-2 text-text-muted text-[12px] pt-3">
+                    <Activity size={14} className="text-accent" />
                     <span>Worked for {seconds}s</span>
                 </div>
             )}
         </div>
     );
 }
+

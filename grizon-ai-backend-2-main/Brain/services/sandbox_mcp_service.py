@@ -52,32 +52,22 @@ class SandboxMCPService:
     async def _connect(self):
         """Verify MCP server is reachable. Each _call_tool creates its own fresh session."""
         print(f"[SANDBOX_MCP] Connecting to MCP server...")
-        # Create a temporary session just to verify connectivity
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=30,
-        )
         try:
-            transport = await transport_ctx.__aenter__()
-            read_stream, write_stream = transport[0], transport[1]
-            session_ctx = ClientSession(read_stream, write_stream)
-            session = await session_ctx.__aenter__()
-            await session.initialize()
-            tools_result = await session.list_tools()
-            tool_names = [t.name for t in tools_result.tools]
-            # Clean up immediately — don't store shared session
-            await session_ctx.__aexit__(None, None, None)
-            await transport_ctx.__aexit__(None, None, None)
-            self._initialized = True
-            print(f"[SANDBOX_MCP] Connected OK | tools={tool_names}")
-            logger.info("Loaded %d tools from sandbox MCP server: %s", len(tool_names), tool_names)
+            async with streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=30,
+            ) as (read_stream, write_stream, *rest):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    tools_result = await session.list_tools()
+                    tool_names = [t.name for t in tools_result.tools]
+                    self._initialized = True
+                    print(f"[SANDBOX_MCP] Connected OK | tools={tool_names}")
+                    logger.info("Loaded %d tools from sandbox MCP server: %s", len(tool_names), tool_names)
         except Exception as e:
             print(f"[SANDBOX_MCP] Connection failed: {e}")
-            try:
-                await transport_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
+            self._initialized = False
             raise
 
     async def _disconnect(self):
@@ -96,67 +86,39 @@ class SandboxMCPService:
         call_start_time = time.time()
         print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args_keys={list(arguments.keys())}")
 
-        # Create a FRESH MCP session for each tool call to avoid:
-        # 1. GC killing the shared session mid-call
-        # 2. Concurrent calls corrupting the SSE stream
-        # 3. anyio cancel-scope cross-task errors
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=timeout,
-        )
         try:
-            # NO asyncio.wait_for here — anyio cancel scope can't handle it.
-            # Let the connection establish at its own pace.
             print(f"[SANDBOX_MCP] Opening transport connection...")
-            transport = await transport_ctx.__aenter__()
-            read_stream, write_stream = transport[0], transport[1]
+            async with streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=timeout,
+            ) as (read_stream, write_stream, *rest):
+                print(f"[SANDBOX_MCP] Creating and initializing session...")
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    elapsed_setup = time.time() - call_start_time
+                    print(f"[SANDBOX_MCP] Fresh session ready in {elapsed_setup:.1f}s, calling '{name}'...")
 
-            session_ctx = ClientSession(read_stream, write_stream)
-            print(f"[SANDBOX_MCP] Creating session...")
-            session = await session_ctx.__aenter__()
-            print(f"[SANDBOX_MCP] Initializing session...")
-            await session.initialize()
-
-            elapsed_setup = time.time() - call_start_time
-            print(f"[SANDBOX_MCP] Fresh session ready in {elapsed_setup:.1f}s, calling '{name}'...")
-
-            # Use asyncio.wait for timeout (NOT asyncio.wait_for which breaks on Windows)
-            task = asyncio.create_task(session.call_tool(name, arguments))
-            try:
-                done, pending = await asyncio.wait([task], timeout=timeout)
-                if pending:
-                    task.cancel()
-                    try:
-                        await asyncio.wait_for(task, timeout=5)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        pass
-                    raise RuntimeError(f"MCP call_tool '{name}' timed out after {timeout}s")
-                result = task.result()
-                elapsed = time.time() - call_start_time
-                print(f"[SANDBOX_MCP] _call_tool '{name}' returned in {elapsed:.1f}s | type={type(result).__name__}")
-                return result
-            finally:
-                # Clean up session — MUST be in same task context as __aenter__
-                # Do NOT use asyncio.wait_for here (breaks anyio cancel scope)
-                try:
-                    await session_ctx.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                try:
-                    await transport_ctx.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                    task = asyncio.create_task(session.call_tool(name, arguments))
+                    done, pending = await asyncio.wait([task], timeout=timeout)
+                    if pending:
+                        task.cancel()
+                        try:
+                            await asyncio.wait_for(task, timeout=5)
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            pass
+                        raise RuntimeError(f"MCP call_tool '{name}' timed out after {timeout}s")
+                    result = task.result()
+                    elapsed = time.time() - call_start_time
+                    print(f"[SANDBOX_MCP] _call_tool '{name}' returned in {elapsed:.1f}s | type={type(result).__name__}")
+                    return result
         except RuntimeError:
             raise
         except Exception as e:
             elapsed = time.time() - call_start_time
             print(f"[SANDBOX_MCP] _call_tool '{name}' ERROR after {elapsed:.1f}s: {e}")
-            try:
-                await transport_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
             raise
+
 
     def _parse_response(self, result) -> Dict[str, Any]:
         """Parse MCP CallToolResult into a dict."""
@@ -377,31 +339,45 @@ class SandboxMCPService:
         archive_b64 = base64.b64encode(buf.getvalue()).decode()
         print(f"[SANDBOX_MCP] Archive ready | size={len(archive_b64)} chars | files={len([f for _, _, files in os.walk(workspace_dir) for f in files])} total")
         deploy_start = time.time()
-        try:
-            print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (timeout=600s)...")
-            result = await self._call_tool("execute_workspace_archive", {
-                "session_id": session_id,
-                "entrypoint": entrypoint,
-                "archive_b64": archive_b64,
-            }, timeout=600)
-            elapsed = time.time() - deploy_start
-            print(f"[SANDBOX_MCP] MCP call completed in {elapsed:.1f}s | raw type={type(result).__name__}")
-            parsed = self._parse_response(result)
-            status = parsed.get('status', 'unknown') if isinstance(parsed, dict) else 'unknown'
-            tunnel = (parsed.get('tunnel_url') or 'none')[:80] if isinstance(parsed, dict) else 'none'
-            output = (parsed.get('execution_output') or '')[:300] if isinstance(parsed, dict) else ''
-            print(f"[SANDBOX_MCP] Parsed result | status={status} | tunnel={tunnel} | elapsed={elapsed:.1f}s")
-            if output:
-                print(f"[SANDBOX_MCP] execution_output: {output}")
-            if status == 'error':
-                print(f"[SANDBOX_MCP] FULL RESPONSE: {json.dumps(parsed, indent=2)[:500]}")
-            self._touch(session_id)
-            return parsed
-        except Exception as e:
-            elapsed = time.time() - deploy_start
-            print(f"[SANDBOX_MCP] ERROR: deploy failed after {elapsed:.1f}s: {e}")
-            logger.error("[sandbox_mcp] deploy_workspace failed: %s", e)
-            return {"status": "error", "error": str(e)}
+        last_exception = None
+
+        for attempt in range(1, 4):
+            try:
+                print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (attempt {attempt}/3, timeout=600s)...")
+                result = await self._call_tool("execute_workspace_archive", {
+                    "session_id": session_id,
+                    "entrypoint": entrypoint,
+                    "archive_b64": archive_b64,
+                }, timeout=600)
+                elapsed = time.time() - deploy_start
+                print(f"[SANDBOX_MCP] MCP call completed in {elapsed:.1f}s | raw type={type(result).__name__}")
+                parsed = self._parse_response(result)
+                status = parsed.get('status', 'unknown') if isinstance(parsed, dict) else 'unknown'
+                tunnel = (parsed.get('tunnel_url') or 'none')[:80] if isinstance(parsed, dict) else 'none'
+                output = (parsed.get('execution_output') or '')[:300] if isinstance(parsed, dict) else ''
+                print(f"[SANDBOX_MCP] Parsed result | status={status} | tunnel={tunnel} | elapsed={elapsed:.1f}s")
+                if output:
+                    print(f"[SANDBOX_MCP] execution_output: {output}")
+                
+                if status == 'error' and attempt < 3:
+                    print(f"[SANDBOX_MCP] Attempt {attempt} returned error status, retrying in 2s...")
+                    self._initialized = False
+                    await asyncio.sleep(2)
+                    continue
+
+                self._touch(session_id)
+                return parsed
+            except Exception as e:
+                last_exception = e
+                elapsed = time.time() - deploy_start
+                print(f"[SANDBOX_MCP] ERROR: deploy attempt {attempt} failed after {elapsed:.1f}s: {e}")
+                self._initialized = False
+                if attempt < 3:
+                    await asyncio.sleep(2)
+
+        logger.error("[sandbox_mcp] deploy_workspace failed all 3 attempts: %s", last_exception)
+        return {"status": "error", "error": str(last_exception or "Deployment failed after 3 attempts")}
+
 
     async def get_sandbox_status(self, session_id: str) -> Dict[str, Any]:
         try:
