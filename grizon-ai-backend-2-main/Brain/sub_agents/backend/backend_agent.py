@@ -5,7 +5,6 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.shared.review_loop import QualityReviewer
 
 class BackendAgent(BaseAgent):
     def __init__(self):
@@ -15,7 +14,6 @@ class BackendAgent(BaseAgent):
             model_id="kimi-k2.7-code-highspeed"
         )
         self.skill_resolver = SkillResolver()
-        self.reviewer = QualityReviewer()
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
@@ -92,6 +90,6 @@ class BackendAgent(BaseAgent):
         )
 
         print(f"[BACKEND] Using model: kimi-k2.7-code-highspeed | task={task.get('title', 'N/A')}", flush=True)
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, timeout=300)
         generated_json = self._format_json_response(response_content)
         return generated_json

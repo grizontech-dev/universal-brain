@@ -1143,6 +1143,73 @@ class BuilderAgent(BaseAgent):
             async for ev in self._emit(workspace_id, activities=[start_act], progress_msg=progress_msg):
                 yield ev
 
+        # ═══ DELEGATE TO SUB-AGENTS ═══
+        if category in ("frontend", "backend", "database"):
+            try:
+                if category == "frontend":
+                    from Brain.sub_agents.frontend.frontend_agent import FrontendAgent
+                    agent = FrontendAgent()
+                elif category == "backend":
+                    from Brain.sub_agents.backend.backend_agent import BackendAgent
+                    agent = BackendAgent()
+                else:
+                    from Brain.sub_agents.database.database_agent import DatabaseAgent
+                    agent = DatabaseAgent()
+
+                print(f"{LOG} → Delegating to {agent.name} | task={task_title}", flush=True)
+                result = await asyncio.wait_for(
+                    agent.execute(current_task, state),
+                    timeout=600
+                )
+
+                # Save files from sub-agent result
+                files_saved = []
+                if isinstance(result, dict) and "files" in result:
+                    from Brain.agents.builder.mcp_tools import client_save_code
+                    for file_entry in result["files"]:
+                        if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
+                            file_path = file_entry["path"]
+                            file_content = file_entry["content"]
+                            try:
+                                save_result = await client_save_code.ainvoke(
+                                    {"code_content": file_content, "file_path": file_path},
+                                    config={"configurable": {"thread_id": session_id, "task_title": task_title}}
+                                )
+                                files_saved.append(file_path)
+                                print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)
+                            except Exception as save_err:
+                                print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
+
+                summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
+                output_content = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}\n{summary}"
+                print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)} via {agent.name}", flush=True)
+
+            except asyncio.TimeoutError:
+                print(f"{LOG} ✖ Sub-agent timeout for '{task_title}', falling back to builder loop", flush=True)
+                output_content = None
+            except Exception as sub_err:
+                print(f"{LOG} ✖ Sub-agent error: {type(sub_err).__name__}: {sub_err}, falling back to builder loop", flush=True)
+                output_content = None
+
+            if output_content is not None:
+                # Task completed via sub-agent — skip the builder loop
+                print(f"{LOG} ▶ Task DONE: '{task_title}' | output_len={len(output_content)}", flush=True)
+                print(f"{LOG}   Output preview: {output_content[:300]}", flush=True)
+                # Emit completion and move to next task
+                if session_id and not str(session_id).startswith("error:"):
+                    done_act = self._make_activity("task_done", f"Done — {task_title}", task_title=task_title, status="done")
+                    done_msg = json.dumps({"type": "task_completed", "taskId": str(index), "title": task_title, "timestamp": str(int(time.time() * 1000))})
+                    async for ev in self._emit(workspace_id, activities=[done_act], progress_msg=done_msg):
+                        yield ev
+                current_task["status"] = "completed"
+                state["current_task_index"] = index + 1
+                executed_tasks.append({"title": task_title, "status": "completed", "output": output_content[:500]})
+                state["executed_tasks"] = executed_tasks
+                yield state
+                return
+
+        # ═══ FALLBACK: BUILDER LOOP (for categories without sub-agents) ═══
+
         # Load skills based on category
         skill_content = ""
         system_prompt = ""
