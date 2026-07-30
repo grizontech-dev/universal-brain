@@ -1270,12 +1270,11 @@ class BuilderAgent(BaseAgent):
             except Exception:
                 return ""
 
-        # Only load skill content for backend/database (frontend prompts are self-contained)
         skill_content = ""
         if category == "backend":
-            skill_content = _load_skill("backend-development", 1000)
+            skill_content = _load_skill("backend-development", 3000)
         elif category == "database":
-            skill_content = _load_skill("supabase", 1000)
+            skill_content = _load_skill("supabase", 3000)
 
         if category == "frontend":
             system_prompt = (

@@ -529,36 +529,43 @@ export default function BrainEditorCanvas({
                 : n
         );
 
-    const fetchProjectFiles = useCallback(async (targetJobId: string, pickActive = false) => {
+    const fetchProjectFiles = useCallback(async (targetJobId: string, pickActive = false, retries = 5, delayMs = 1500) => {
         if (!targetJobId) return;
-        try {
-            const apiFiles = await fetchApiFileTree(targetJobId);
-            const files = apiFiles;
-            if (!files.length) return;
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const apiFiles = await fetchApiFileTree(targetJobId);
+                if (apiFiles.length > 0) {
+                    const expanded = openDefaultFolders(sortFileTreeNodes(apiFiles));
+                    const sig = treeSignature(expanded);
+                    fileTreeSigRef.current = sig;
+                    setFileTree(expanded);
 
-            const expanded = openDefaultFolders(sortFileTreeNodes(files));
-            const sig = treeSignature(expanded);
-
-            fileTreeSigRef.current = sig;
-            setFileTree(expanded);
-
-            if (activeFilePathRef.current) {
-                const node: FileNode = { type: 'file', name: activeFilePathRef.current.split('/').pop() || '', path: activeFilePathRef.current };
-                const loaded = await loadFileContent(node, targetJobId);
-                setActiveFile(prev => prev?.path === loaded.path ? loaded : prev);
-                setOpenFiles(prev => prev.map(f => f.path === loaded.path ? loaded : f));
-                filesLoadedRef.current = true;
-            } else if (!filesLoadedRef.current || pickActive) {
-                const first = findFirstFile(expanded);
-                if (first) {
-                    const loaded = await loadFileContent(first, targetJobId);
-                    setActiveFile(loaded);
-                    setOpenFiles([loaded]);
-                    filesLoadedRef.current = true;
+                    if (activeFilePathRef.current) {
+                        const node: FileNode = { type: 'file', name: activeFilePathRef.current.split('/').pop() || '', path: activeFilePathRef.current };
+                        const loaded = await loadFileContent(node, targetJobId);
+                        setActiveFile(prev => prev?.path === loaded.path ? loaded : prev);
+                        setOpenFiles(prev => prev.map(f => f.path === loaded.path ? { ...f, content: loaded.content } : f));
+                        filesLoadedRef.current = true;
+                    } else if (!filesLoadedRef.current || pickActive) {
+                        const first = findFirstFile(expanded);
+                        if (first) {
+                            const loaded = await loadFileContent(first, targetJobId);
+                            setActiveFile(loaded);
+                            setOpenFiles([loaded]);
+                            filesLoadedRef.current = true;
+                        }
+                    }
+                    return;
+                }
+                if (attempt < retries - 1) {
+                    await new Promise(r => setTimeout(r, delayMs));
+                }
+            } catch (err) {
+                console.error('Error fetching project files:', err);
+                if (attempt < retries - 1) {
+                    await new Promise(r => setTimeout(r, delayMs));
                 }
             }
-        } catch (err) {
-            console.error('Error fetching project files:', err);
         }
     }, [runtime, framework]);
 

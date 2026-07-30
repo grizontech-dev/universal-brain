@@ -322,16 +322,18 @@ class SandboxMCPService:
         if os.path.exists(pkg_json):
             try:
                 with open(pkg_json, "r") as f:
-                    content = f.read()
-                patched = content.replace("--port 5173", "--port 9999")
-                # Also catch default vite dev script and force port
-                patched = _re.sub(r'"dev":\s*"vite"', '"dev": "vite --port 9999 --host 0.0.0.0"', patched)
-                if patched != content:
-                    with open(pkg_json, "w") as f:
-                        f.write(patched)
-                    print(f"[SANDBOX_MCP] Patched package.json: 5173 -> 9999")
+                    pkg = json.loads(f.read())
+                scripts = pkg.get("scripts", {})
+                scripts["dev"] = "vite --port 9999 --host 0.0.0.0"
+                scripts["predev"] = "fuser -k 9999/tcp 2>/dev/null || true"
+                pkg["scripts"] = scripts
+                with open(pkg_json, "w") as f:
+                    json.dump(pkg, f, indent=2)
+                print(f"[SANDBOX_MCP] Patched package.json: port=9999 + predev kill")
             except Exception as e:
                 print(f"[SANDBOX_MCP] Could not patch package.json: {e}")
+
+
 
         # Validate App.jsx imports match actual component files
         app_jsx = os.path.join(workspace_dir, "frontend", "src", "App.jsx")
@@ -390,6 +392,15 @@ class SandboxMCPService:
                     tar.add(full_path, arcname=rel_path)
         archive_b64 = base64.b64encode(buf.getvalue()).decode()
         print(f"[SANDBOX_MCP] Archive ready | size={len(archive_b64)} chars | files={len([f for _, _, files in os.walk(workspace_dir) for f in files])} total")
+
+        try:
+            print(f"[SANDBOX_MCP] Deleting old sandbox to clear port 9999...")
+            await self.delete_sandbox(session_id)
+            import asyncio as _dasync
+            await _dasync.sleep(2)
+        except Exception as e:
+            print(f"[SANDBOX_MCP] Delete sandbox attempt: {e}")
+
         deploy_start = time.time()
         try:
             print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (timeout=600s)...")

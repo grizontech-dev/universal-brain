@@ -287,6 +287,16 @@ class TodoAgent(BaseAgent):
                     task["description"] = desc
 
         tasks = clamp_todo_list(tasks)
+
+        import re as _re
+        for task in tasks:
+            title = task.get("title", "")
+            title = _re.sub(r'[^\w\s\-:.,&+()/]', '', title).strip()
+            title = _re.sub(r'\s{2,}', ' ', title)
+            if len(title) > 80:
+                title = title[:80].rsplit(' ', 1)[0]
+            task["title"] = title or f"Task {task.get('id', 'unknown')}"
+
         print(f"DEBUG: TodoAgent produced {len(tasks)} tasks (clamp {MIN_TODOS}-{MAX_TODOS})")
 
         state["tasks"] = tasks
