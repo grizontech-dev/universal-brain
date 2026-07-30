@@ -1715,10 +1715,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         const sandboxJob = (inner.sandbox_job || nodeData.sandbox_job) as Record<string, unknown> | undefined;
                         if (sandboxJob?.job_id) {
                             currentSandboxJob = sandboxJob;
+                            const sjTunnelUrl = sandboxJob.tunnel_url as string | undefined;
                             const job = {
                                 jobId: String(sandboxJob.job_id),
                                 syncUrl: sandboxJob.sync_url as string | undefined,
-                                streamUrl: sandboxJob.stream_url as string | undefined,
+                                streamUrl: sjTunnelUrl || sandboxJob.stream_url as string | undefined,
                                 framework: (sandboxJob.framework as string) || selectedFramework,
                             };
                             setBuildJob(job);
@@ -1726,6 +1727,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             setTimeout(() => {
                                 window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
                             }, 0);
+                            if (sjTunnelUrl) {
+                                window.dispatchEvent(new CustomEvent('brainPreviewReady', {
+                                    detail: { url: sjTunnelUrl, streamUrl: sjTunnelUrl }
+                                }));
+                            }
                         }
 
                         const progressMsg = inner.progress_msg || nodeData.progress_msg;
