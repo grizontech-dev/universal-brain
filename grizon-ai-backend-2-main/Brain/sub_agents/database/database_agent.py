@@ -11,7 +11,7 @@ class DatabaseAgent(BaseAgent):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
-            model_id="deepseek-v4-pro"
+            model_id="deepseek-v4-flash"
         )
         self.skill_resolver = SkillResolver()
 

@@ -20,6 +20,8 @@ class ProviderRouter:
         openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or None
         deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com/v1"
+        deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "").strip() or None
+        deepinfra_base = os.getenv("DEEPINFRA_BASE_URL", "").strip() or "https://api.deepinfra.com/v1/openai"
 
         def _make_openai(model: str):
             return ChatOpenAI(
@@ -51,6 +53,18 @@ class ProviderRouter:
                 **extra
             )
 
+        def _make_deepinfra(model: str):
+            return ChatOpenAI(
+                model=model,
+                api_key=deepinfra_key,
+                base_url=deepinfra_base,
+                temperature=temperature,
+                max_retries=2,
+                timeout=180,
+                request_timeout=180,
+                **({"max_tokens": max_tokens} if max_tokens else {})
+            )
+
         # Decide the universal fallback — DeepSeek first, then OpenAI
         def get_fallback_model():
             if deepseek_key:
@@ -60,7 +74,7 @@ class ProviderRouter:
             return _make_openai("gpt-4o")
 
         # Handle UUIDs/Database IDs by defaulting to fallback
-        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi"])
+        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi", "deepinfra", "qwen", "gemma"])
 
         print(f"{LOG} get_model(id='{model_id}', temp={temperature}) | known={is_known_id}", flush=True)
 
@@ -69,6 +83,13 @@ class ProviderRouter:
             if deepseek_key:
                 print(f"{LOG} → DeepSeek '{model_id}' (base={deepseek_base})", flush=True)
                 return _make_deepseek(model_id)
+            return get_fallback_model()
+
+        # DeepInfra Models (Qwen, Llama, etc.)
+        elif "deepinfra" in model_id.lower() or "qwen" in model_id.lower():
+            if deepinfra_key:
+                print(f"{LOG} → DeepInfra '{model_id}' (base={deepinfra_base})", flush=True)
+                return _make_deepinfra(model_id)
             return get_fallback_model()
 
         # Kimi Models (OpenAI-compatible API) — only temperature=1 allowed
@@ -102,11 +123,17 @@ class ProviderRouter:
             return get_fallback_model()
 
         # Gemini Models
-        elif "gemini" in model_id:
+        elif "gemini" in model_id or "gemma" in model_id:
             gemini_key = os.getenv("GOOGLE_AI_API_KEY", "").strip() or None
             if gemini_key:
                 # Map model names to actual API model IDs
-                if "2.5-flash-lite" in model_id:
+                if "gemma-4-26b" in model_id:
+                    actual_model = "gemma-4-26b-a4b-it"
+                elif "gemma-4-31b" in model_id:
+                    actual_model = "gemma-4-31b-it"
+                elif "gemma" in model_id:
+                    actual_model = "gemma-4-26b-a4b-it"
+                elif "2.5-flash-lite" in model_id:
                     actual_model = "gemini-2.5-flash-lite"
                 elif "2.5-flash" in model_id:
                     actual_model = "gemini-2.5-flash"

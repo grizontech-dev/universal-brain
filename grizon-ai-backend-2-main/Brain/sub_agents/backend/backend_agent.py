@@ -11,7 +11,7 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="kimi-k2.7-code-highspeed"
+            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
         self.skill_resolver = SkillResolver()
 
@@ -89,7 +89,7 @@ class BackendAgent(BaseAgent):
             ),
         )
 
-        print(f"[BACKEND] Using model: kimi-k2.7-code-highspeed | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
         response_content = await self.chat(messages, timeout=300)
         generated_json = self._format_json_response(response_content)
         return generated_json

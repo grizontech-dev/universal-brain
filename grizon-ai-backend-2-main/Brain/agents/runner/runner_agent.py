@@ -20,7 +20,7 @@ class RunnerAgent(BaseAgent):
         super().__init__(
             name="Runner",
             description="Deploys the built project to the remote sandbox MCP server.",
-            model_id="deepseek-v4-pro"
+            model_id="gemma-4-26b-a4b-it"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:

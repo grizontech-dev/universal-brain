@@ -21,9 +21,9 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="deepseek-v4-pro"
+            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
-        self.llm = ProviderRouter.get_model("deepseek-v4-pro", temperature=0.2)
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
 
     @staticmethod
     def _sanitize_code(code: str, file_path: str) -> str:
@@ -143,9 +143,9 @@ class BuilderAgent(BaseAgent):
         start_time = time.time()
 
         _cat_models = {
-            "frontend": "kimi-k2.7-code-highspeed",
-            "backend": "kimi-k2.7-code-highspeed",
-            "database": "deepseek-v4-pro",
+            "frontend": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
+            "backend": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
+            "database": "deepseek-v4-flash",
             "runner": "deepseek-v4-pro",
         }
         _model = _cat_models.get(category, "deepseek-v4-pro")
@@ -433,7 +433,7 @@ class BuilderAgent(BaseAgent):
             return files_saved
 
         start_time = _time.time()
-        _frontend_llm = ProviderRouter.get_model("kimi-k2.7-code-highspeed", temperature=0.2)
+        _frontend_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
         bound_llm = _frontend_llm.bind_tools([client_save_code])
 
         # ═══════════════════════════════════════════════════════════════
@@ -893,7 +893,7 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
 
         # Generate each missing file
-        _frontend_llm2 = ProviderRouter.get_model("kimi-k2.7-code-highspeed", temperature=0.2)
+        _frontend_llm2 = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
         bound_llm = _frontend_llm2.bind_tools([client_save_code])
         messages = [
             SystemMessage(content=(
@@ -1034,7 +1034,7 @@ class BuilderAgent(BaseAgent):
         max_tool_calls = 20
         tool_call_count = 0
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        _fallback_llm = ProviderRouter.get_model("deepseek-v4-pro", temperature=0.2)
+        _fallback_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.2)
         bound_llm = _fallback_llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()

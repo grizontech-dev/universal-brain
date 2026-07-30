@@ -11,7 +11,7 @@ class PlannerAgent(BaseAgent):
         super().__init__(
             name="Planner",
             description="Creates the technical architecture and project plan.",
-            model_id="deepseek-v4-pro"
+            model_id="deepseek-v4-flash"
         )
 
     def _build_context_summary(self, history: List[dict], prompt: str) -> str:
