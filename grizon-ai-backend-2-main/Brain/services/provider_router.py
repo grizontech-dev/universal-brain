@@ -62,7 +62,6 @@ class ProviderRouter:
                     "top_p": 0.8,
                 }
                 model_kw = {
-                    "top_k": 20,
                     "repetition_penalty": 1.05,
                 }
             return ChatOpenAI(
