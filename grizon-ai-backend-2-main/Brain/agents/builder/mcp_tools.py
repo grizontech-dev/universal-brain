@@ -38,6 +38,10 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     if not actual_path:
         return "ERROR: file_path is required."
 
+    if not code_content or len(code_content.strip()) == 0:
+        print(f"{LOG} ⚠ REJECTED empty content for {actual_path} — LLM must provide code_content", flush=True)
+        return f"ERROR: code_content is empty for '{actual_path}'. You MUST provide the actual file content, not an empty string."
+
     if not session_id:
         print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id (thread_id) not provided in config."

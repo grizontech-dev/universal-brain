@@ -284,7 +284,14 @@ class SandboxMCPService:
     async def deploy_workspace(
         self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:
+        # Try user_id path first, then fall back to session_id-only path
+        # (sub-agents may save to session_id-only path when user_id workspace doesn't exist yet)
         workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
+        if not os.path.isdir(workspace_dir) or not os.listdir(workspace_dir):
+            fallback_dir = self.get_workspace_dir(session_id)
+            if os.path.isdir(fallback_dir) and os.listdir(fallback_dir):
+                print(f"[SANDBOX_MCP] deploy_workspace | user_id path empty, using fallback: {fallback_dir}")
+                workspace_dir = fallback_dir
         entrypoint = self._resolve_entrypoint(workspace_dir, entrypoint)
         files = os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else []
         print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | user_id={user_id} | workspace_dir={workspace_dir}")
@@ -304,6 +311,83 @@ class SandboxMCPService:
         if not os.path.isdir(workspace_dir):
             print(f"[SANDBOX_MCP] ERROR: workspace dir not found: {workspace_dir}")
             return {"status": "error", "error": f"Workspace {session_id} not found"}
+
+        # ═══ FALLBACK TEMPLATE CREATION ═══
+        # If essential files are missing (template not loaded), create them now
+        frontend_src = os.path.join(workspace_dir, "frontend", "src")
+        has_frontend = os.path.isdir(frontend_src)
+
+        if has_frontend:
+            # Create main.jsx if missing
+            main_jsx = os.path.join(frontend_src, "main.jsx")
+            if not os.path.isfile(main_jsx):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/src/main.jsx")
+                os.makedirs(os.path.dirname(main_jsx), exist_ok=True)
+                with open(main_jsx, "w") as f:
+                    f.write('import React from "react";\nimport ReactDOM from "react-dom/client";\nimport App from "./App";\nimport "./index.css";\n\nReactDOM.createRoot(document.getElementById("root")).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>\n);')
+
+            # Create index.html if missing
+            index_html = os.path.join(workspace_dir, "frontend", "index.html")
+            if not os.path.isfile(index_html):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/index.html")
+                with open(index_html, "w") as f:
+                    f.write('<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>App</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.jsx"></script>\n  </body>\n</html>')
+
+            # Create vite.config.js if missing
+            vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
+            if not os.path.isfile(vite_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/vite.config.js")
+                with open(vite_cfg, "w") as f:
+                    f.write('import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n  server: { port: 9999, host: "0.0.0.0", hmr: false, allowedHosts: true },\n  base: "./",\n});')
+
+            # Create frontend/package.json if missing
+            pkg_json = os.path.join(workspace_dir, "frontend", "package.json")
+            if not os.path.isfile(pkg_json):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/package.json")
+                with open(pkg_json, "w") as f:
+                    f.write('{\n  "name": "frontend",\n  "private": true,\n  "version": "0.0.0",\n  "type": "module",\n  "scripts": {\n    "dev": "vite --port 9999 --host 0.0.0.0",\n    "build": "vite build",\n    "preview": "vite preview"\n  },\n  "dependencies": {\n    "react": "^18.2.0",\n    "react-dom": "^18.2.0",\n    "react-router-dom": "^6.20.0"\n  },\n  "devDependencies": {\n    "@vitejs/plugin-react": "^4.2.0",\n    "vite": "^5.0.0",\n    "tailwindcss": "^3.3.0",\n    "postcss": "^8.4.0",\n    "autoprefixer": "^10.4.0"\n  }\n}')
+
+            # Create frontend/src/index.css if missing (Tailwind entry)
+            index_css = os.path.join(frontend_src, "index.css")
+            if not os.path.isfile(index_css):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/src/index.css")
+                with open(index_css, "w") as f:
+                    f.write('@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nbody {\n  margin: 0;\n  background: #09090b;\n  color: #fff;\n}\n')
+
+            # Create tailwind.config.js if missing
+            tw_cfg = os.path.join(workspace_dir, "frontend", "tailwind.config.js")
+            if not os.path.isfile(tw_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/tailwind.config.js")
+                with open(tw_cfg, "w") as f:
+                    f.write('/** @type {import("tailwindcss").Config} */\nexport default {\n  content: ["./index.html", "./src/**/*.{js,jsx}"],\n  theme: { extend: {} },\n  plugins: [],\n};')
+
+            # Create postcss.config.js if missing
+            postcss_cfg = os.path.join(workspace_dir, "frontend", "postcss.config.js")
+            if not os.path.isfile(postcss_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/postcss.config.js")
+                with open(postcss_cfg, "w") as f:
+                    f.write('export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n};')
+
+            # Create App.jsx placeholder if missing
+            app_jsx = os.path.join(frontend_src, "App.jsx")
+            if not os.path.isfile(app_jsx):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating placeholder frontend/src/App.jsx")
+                with open(app_jsx, "w") as f:
+                    f.write('export default function App() {\n  return <div className="min-h-screen bg-[#09090b] text-white flex items-center justify-center"><h1 className="text-2xl">App Loading...</h1></div>;\n}\n')
+
+        # Re-scan files after fallback creation
+        all_files = []
+        if os.path.isdir(workspace_dir):
+            for root, dirs, fnames in os.walk(workspace_dir):
+                if "node_modules" in dirs:
+                    dirs.remove("node_modules")
+                for f in fnames:
+                    rel = os.path.relpath(os.path.join(root, f), workspace_dir)
+                    all_files.append(rel)
+        print(f"[SANDBOX_MCP] deploy_workspace | AFTER FALLBACK: {len(all_files)} files")
+        if has_frontend:
+            frontend_files = [f for f in all_files if f.startswith("frontend/")]
+            print(f"[SANDBOX_MCP] deploy_workspace | frontend files: {frontend_files[:20]}")
 
         # Enforce port 9999 + disable HMR in vite.config.js and package.json before archiving
         import re as _re

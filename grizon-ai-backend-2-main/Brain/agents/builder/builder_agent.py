@@ -132,7 +132,7 @@ class BuilderAgent(BaseAgent):
             payload["activities"] = activities
         await ws_manager.broadcast_to_sandbox(workspace_id, payload)
 
-    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend") -> str:
+    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend", user_id: str = None) -> str:
         """
         One-file-at-a-time agent loop.
         Each LLM call generates exactly ONE file. After saving, we tell the LLM
@@ -394,7 +394,7 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         print(f"{LOG} ═══ VALIDATION: Scanning for broken imports ═══", flush=True)
         fixed_files = await self._validate_and_fix_imports(
-            session_id, task_title, files_saved, start_time, timeout_sec
+            session_id, task_title, files_saved, start_time, timeout_sec, user_id=user_id
         )
 
         # ═══════════════════════════════════════════════════════════════
@@ -412,11 +412,11 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
         # ═══════════════════════════════════════════════════════════════
-        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec, user_id=user_id)
 
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
 
-    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
+    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int, user_id: str = None) -> list:
         """Comprehensive self-healing: validate imports → fix missing files → esbuild syntax check → auto-fix errors."""
         import os as _os
         import re as _re
@@ -425,7 +425,7 @@ class BuilderAgent(BaseAgent):
         import subprocess as _sp
         import time as _time
 
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
+        workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or _os.path.join(_os.getcwd(), "workspaces", session_id)
         frontend_dir = _os.path.join(workspace_dir, "frontend")
         frontend_src = _os.path.join(frontend_dir, "src")
 
@@ -781,7 +781,7 @@ class BuilderAgent(BaseAgent):
 
         return files_saved
 
-    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec):
+    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec, user_id=None):
         """Scan ALL .jsx/.js files for imports, check if imported files exist, generate missing ones."""
         import re as _re
         import os as _os
@@ -791,7 +791,7 @@ class BuilderAgent(BaseAgent):
         if not files_saved:
             return fixed
 
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
+        workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or _os.path.join(_os.getcwd(), "workspaces", session_id)
         frontend_src = _os.path.join(workspace_dir, "frontend", "src")
 
         if not _os.path.isdir(frontend_src):
@@ -1171,6 +1171,18 @@ class BuilderAgent(BaseAgent):
                         if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
                             file_path = file_entry["path"]
                             file_content = file_entry["content"]
+                            # Skip empty content — sub-agent already saved via tool calls
+                            if not file_content:
+                                # Verify file exists on disk before skipping
+                                ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
+                                full_check = os.path.join(ws_root, file_path) if ws_root else None
+                                if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
+                                    files_saved.append(file_path)
+                                    print(f"{LOG} ✓ [{len(files_saved)}] Kept (already saved): {file_path}", flush=True)
+                                    continue
+                                else:
+                                    print(f"{LOG} ⚠ Skip empty (not on disk): {file_path}", flush=True)
+                                    continue
                             try:
                                 save_result = await client_save_code.ainvoke(
                                     {"code_content": file_content, "file_path": file_path},
@@ -1219,7 +1231,7 @@ class BuilderAgent(BaseAgent):
         # Gather EXISTING codebase context — ONLY relevant files per category
         existing_code_context = ""
         try:
-            ws_dir = os.path.join(os.getcwd(), "workspaces", session_id)
+            ws_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or os.path.join(os.getcwd(), "workspaces", session_id)
             if os.path.exists(ws_dir):
                 files_to_read = []
                 # Only include files relevant to the current task category
@@ -1464,7 +1476,7 @@ class BuilderAgent(BaseAgent):
 
         try:
             output_content = await asyncio.wait_for(
-                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category),
+                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id),
                 timeout=overall_timeout
             )
         except asyncio.TimeoutError:
