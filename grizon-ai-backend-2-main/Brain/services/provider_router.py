@@ -55,14 +55,10 @@ class ProviderRouter:
 
         def _make_deepinfra(model: str):
             extra = {}
-            model_kw = {}
-            # Qwen3-Coder official recommended settings
+            # Qwen3-Coder: temperature + top_p only (DeepInfra doesn't support top_k, repetition_penalty)
             if "qwen" in model.lower():
                 extra = {
                     "top_p": 0.8,
-                }
-                model_kw = {
-                    "repetition_penalty": 1.05,
                 }
             return ChatOpenAI(
                 model=model,
@@ -74,7 +70,6 @@ class ProviderRouter:
                 request_timeout=180,
                 **({"max_tokens": max_tokens} if max_tokens else {}),
                 **extra,
-                model_kwargs=model_kw if model_kw else None,
             )
 
         # Decide the universal fallback — DeepSeek first, then OpenAI
