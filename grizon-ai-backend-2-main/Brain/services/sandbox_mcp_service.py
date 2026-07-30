@@ -466,6 +466,15 @@ class SandboxMCPService:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    async def get_sandbox_logs(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
+        try:
+            result = await self._call_tool("get_sandbox_logs", self._with_client_id({
+                "session_id": session_id,
+            }, user_id))
+            return self._parse_response(result)
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
     async def execute_in_sandbox(
         self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:

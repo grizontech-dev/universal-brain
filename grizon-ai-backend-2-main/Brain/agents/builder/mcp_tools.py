@@ -389,3 +389,20 @@ GRANT ALL ON public.todos TO authenticated;"""
         f"```sql\n{setup_sql}\n```\n\n"
         f"After running this ONCE, the agent will be able to create any table automatically via supabase_exec_sql."
     )
+
+
+@tool
+async def client_get_sandbox_logs(config: RunnableConfig) -> str:
+    """Retrieves application logs (stdout/stderr) from the running sandbox container."""
+    from Brain.services.sandbox_mcp_service import sandbox_mcp
+    session_id = config.get("configurable", {}).get("thread_id")
+    user_id = config.get("configurable", {}).get("user_id")
+
+    if not session_id:
+        return "ERROR: No session_id (thread_id) provided."
+
+    result = await sandbox_mcp.get_sandbox_logs(session_id, user_id=user_id)
+
+    if isinstance(result, dict):
+        return result.get("logs") or result.get("error") or str(result)
+    return str(result)
