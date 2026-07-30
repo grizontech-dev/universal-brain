@@ -287,7 +287,20 @@ class SandboxMCPService:
         workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
         entrypoint = self._resolve_entrypoint(workspace_dir, entrypoint)
         files = os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else []
-        print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | entrypoint={entrypoint} | files={files}")
+        print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | user_id={user_id} | workspace_dir={workspace_dir}")
+        print(f"[SANDBOX_MCP] deploy_workspace | top-level files={files}")
+        
+        # List all files recursively for debugging
+        all_files = []
+        if os.path.isdir(workspace_dir):
+            for root, dirs, fnames in os.walk(workspace_dir):
+                if "node_modules" in dirs:
+                    dirs.remove("node_modules")
+                for f in fnames:
+                    rel = os.path.relpath(os.path.join(root, f), workspace_dir)
+                    all_files.append(rel)
+        print(f"[SANDBOX_MCP] deploy_workspace | ALL files ({len(all_files)}): {all_files[:30]}")
+        
         if not os.path.isdir(workspace_dir):
             print(f"[SANDBOX_MCP] ERROR: workspace dir not found: {workspace_dir}")
             return {"status": "error", "error": f"Workspace {session_id} not found"}
