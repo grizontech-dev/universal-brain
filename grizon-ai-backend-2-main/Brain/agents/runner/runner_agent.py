@@ -97,6 +97,8 @@ class RunnerAgent(BaseAgent):
             print(f"[RUNNER] _background_deploy started | session={_sid}")
 
             _user_id = _state.get("user_id")
+            print(f"[RUNNER] _background_deploy | user_id={_user_id} | type={type(_user_id).__name__}")
+            print(f"[RUNNER] _background_deploy | state keys={list(_state.keys())[:15]}")
 
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(

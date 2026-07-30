@@ -93,8 +93,12 @@ class SandboxMCPService:
         self._initialized = False
 
     def _with_client_id(self, arguments: dict, client_id: str = None) -> dict:
+        print(f"[SANDBOX_MCP] _with_client_id | client_id={client_id} | type={type(client_id).__name__}")
         if client_id:
-            arguments["client_id"] = client_id
+            arguments["client_id"] = str(client_id)
+            print(f"[SANDBOX_MCP] _with_client_id | ADDED client_id={client_id} to args")
+        else:
+            print(f"[SANDBOX_MCP] _with_client_id | client_id is None/empty — NOT adding to args")
         return arguments
 
     async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
