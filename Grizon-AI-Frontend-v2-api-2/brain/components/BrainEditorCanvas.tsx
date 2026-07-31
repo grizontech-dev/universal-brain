@@ -201,7 +201,7 @@ export default function BrainEditorCanvas({
     const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
     const [recentTerminalLines, setRecentTerminalLines] = useState<string[]>([]);
 
-    const { getAccessToken } = useAuth();
+    const { getAccessToken, user } = useAuth();
     const [showPublish, setShowPublish] = useState(false);
     const [showPublishMenu, setShowPublishMenu] = useState(false);
     const publishMenuRef = useRef<HTMLDivElement>(null);
@@ -513,6 +513,9 @@ export default function BrainEditorCanvas({
                 workspace_id: targetJobId,
                 sandbox_id: targetJobId,
             });
+            if (user?.id) {
+                q.set('user_id', user.id);
+            }
             const response = await brainApiFetch(`sandbox/list-files?${q}`);
             if (!response?.ok) return [];
             const result = await response.json();

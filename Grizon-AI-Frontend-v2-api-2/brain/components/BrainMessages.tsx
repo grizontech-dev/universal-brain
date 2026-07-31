@@ -1856,11 +1856,20 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         }
 
                         const frSandboxJob = frInner.sandbox_job as Record<string, unknown> | undefined;
-                        const tunnelUrl = frSandboxJob?.tunnel_url as string | undefined;
+                        const tunnelUrl = frSandboxJob?.tunnel_url || frSandboxJob?.stream_url as string | undefined;
                         if (tunnelUrl) {
                             window.dispatchEvent(new CustomEvent('brainPreviewReady', {
                                 detail: { url: tunnelUrl, streamUrl: tunnelUrl }
                             }));
+                            const frJob = {
+                                jobId: String(frSandboxJob?.job_id || ''),
+                                syncUrl: frSandboxJob?.sync_url as string | undefined,
+                                streamUrl: tunnelUrl as string,
+                                framework: (frSandboxJob?.framework as string) || selectedFramework,
+                            };
+                            setBuildJob(frJob);
+                            window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: frJob }));
+                            window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: frJob }));
                         }
 
                         completeRunnerBuild();
