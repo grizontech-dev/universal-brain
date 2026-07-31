@@ -76,11 +76,14 @@ async def read_file(
     path: str,
     sandbox_id: Optional[str] = Query(None),
     workspace_id: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
 ):
     wid = workspace_id or sandbox_id
     if not wid:
         raise HTTPException(status_code=422, detail="sandbox_id or workspace_id is required")
-    workspace_path = workspace_manager.resolve_workspace_path(wid)
+    workspace_path = workspace_manager.resolve_workspace_path(wid, user_id=user_id)
+    if not workspace_path or not os.path.exists(workspace_path):
+        workspace_path = workspace_manager.resolve_workspace_path(wid)
     if not workspace_path:
         return {"error": "Workspace not found"}
 
@@ -100,11 +103,14 @@ async def write_file(
     request: Request,
     sandbox_id: Optional[str] = Query(None),
     workspace_id: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
 ):
     wid = workspace_id or sandbox_id
     if not wid:
         raise HTTPException(status_code=422, detail="sandbox_id or workspace_id is required")
-    workspace_path = workspace_manager.resolve_workspace_path(wid)
+    workspace_path = workspace_manager.resolve_workspace_path(wid, user_id=user_id)
+    if not workspace_path or not os.path.exists(workspace_path):
+        workspace_path = workspace_manager.resolve_workspace_path(wid)
     if not workspace_path:
         return {"error": "Workspace not found"}
 

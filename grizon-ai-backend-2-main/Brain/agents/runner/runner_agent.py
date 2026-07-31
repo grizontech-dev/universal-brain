@@ -64,6 +64,34 @@ class RunnerAgent(BaseAgent):
             yield state
             return
 
+        existing_tunnel = sandbox_mcp.get_tunnel_url(str(session_id))
+        if existing_tunnel:
+            print(f"{LOG} SKIP DEPLOY: tunnel URL already exists from builder: {existing_tunnel}")
+            sandbox_job = state.get("sandbox_job") or {}
+            sandbox_job["job_id"] = str(session_id)
+            sandbox_job["runtime"] = RUNTIME_SANDBOX_MCP
+            sandbox_job["tunnel_url"] = existing_tunnel
+            sandbox_job["stream_url"] = existing_tunnel
+            sandbox_job["await_preview"] = True
+            sandbox_job["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{session_id}"
+            state["sandbox_job"] = sandbox_job
+            state["tunnel_url"] = existing_tunnel
+            state["status"] = "running"
+            state["run_report"] = f"Deploy already complete. Tunnel URL: {existing_tunnel}"
+            state["execute_sandbox"] = {
+                "workspace_ops": [],
+                "status": "complete",
+                "progress_msg": f"Sandbox ready: {existing_tunnel}",
+            }
+            await ws_manager.broadcast_to_sandbox(str(session_id), {
+                "type": "sandbox_ready",
+                "tunnel_url": existing_tunnel,
+                "url": existing_tunnel,
+                "stream_url": existing_tunnel,
+            })
+            yield state
+            return
+
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",
             "type": "run_command",

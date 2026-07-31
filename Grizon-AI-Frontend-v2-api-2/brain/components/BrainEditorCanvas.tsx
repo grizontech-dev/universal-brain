@@ -384,12 +384,13 @@ export default function BrainEditorCanvas({
     const persistToFile = useCallback((filePath: string, content: string) => {
         const wid = jobIdRef.current || jobId || '';
         if (!wid || !filePath) return;
-        brainApiFetch(`sandbox/write-file?workspace_id=${encodeURIComponent(wid)}`, {
+        const uid = user?.id ? `&user_id=${encodeURIComponent(user.id)}` : '';
+        brainApiFetch(`sandbox/write-file?workspace_id=${encodeURIComponent(wid)}${uid}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: filePath, content }),
         }).catch(() => {});
-    }, [jobId]);
+    }, [jobId, user?.id]);
 
     const handleEditorChange = useCallback((value: string | undefined) => {
         if (value === undefined) return;
@@ -481,8 +482,9 @@ export default function BrainEditorCanvas({
         const wid = targetJobId || jobIdRef.current || jobId || '';
         try {
             if (!wid) return file;
+            const uid = user?.id ? `&user_id=${encodeURIComponent(user.id)}` : '';
             const res = await brainApiFetch(
-                `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(file.path)}`
+                `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(file.path)}${uid}`
             );
             if (!res?.ok) return file;
             const result = await res.json();
