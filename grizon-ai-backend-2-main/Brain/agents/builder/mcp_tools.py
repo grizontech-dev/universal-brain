@@ -60,6 +60,12 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     elif normalized_path.startswith('/'):
         normalized_path = normalized_path[1:]
 
+    # Reject paths that don't belong to the app
+    VALID_PREFIXES = ('frontend/', 'backend/', 'database/', 'src/', 'public/', 'server.')
+    if not any(normalized_path.startswith(p) for p in VALID_PREFIXES):
+        print(f"{LOG} ⚠ REJECTED invalid path: {actual_path} → {normalized_path} (must start with frontend/, backend/, database/)", flush=True)
+        return f"ERROR: Invalid file path '{actual_path}'. Files must be saved under frontend/, backend/, or database/ directories."
+
     abs_path = os.path.abspath(os.path.join(ws_root, normalized_path))
     if not abs_path.startswith(os.path.abspath(ws_root)):
         print(f"{LOG} ✖ ERROR: Invalid file path (path traversal attempt): {actual_path}", flush=True)

@@ -131,8 +131,16 @@ class BackendAgent(BaseAgent):
                             )
                             files_saved.append(file_path)
                             print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
+                            msgs.append(ToolMessage(
+                                content=f"Successfully saved file: {file_path} ({len(code_content)} chars)",
+                                tool_call_id=tc["id"]
+                            ))
                         except Exception as e:
                             print(f"[BACKEND] ✖ Failed to save {file_path}: {e}", flush=True)
+                            msgs.append(ToolMessage(
+                                content=f"Error saving {file_path}: {str(e)}",
+                                tool_call_id=tc["id"]
+                            ))
 
         if not files_saved:
             last_content = msgs[-1].content if msgs else ""
