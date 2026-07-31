@@ -717,11 +717,23 @@ export default function BrainEditorCanvas({
             }
         };
 
+        const handlePreviewReady = (e: Event) => {
+            const d = (e as CustomEvent).detail || {};
+            const url = d.streamUrl || d.url;
+            if (url && typeof url === 'string') {
+                console.log('[BrainEditor] brainPreviewReady received:', url);
+                setPreviewUrl(url);
+                setIsBuilding(false);
+                setViewMode('preview');
+            }
+        };
+
         window.addEventListener('openBrainEditor', handleOpen);
         window.addEventListener('openSandboxCanvas', handleOpen);
         window.addEventListener('updateSandboxProgress', handleProgress);
         window.addEventListener('refreshBrainFiles', handleRefresh);
         window.addEventListener('closeBrainEditor', handleClose);
+        window.addEventListener('brainPreviewReady', handlePreviewReady);
 
         return () => {
             window.removeEventListener('openBrainEditor', handleOpen);
@@ -729,6 +741,7 @@ export default function BrainEditorCanvas({
             window.removeEventListener('updateSandboxProgress', handleProgress);
             window.removeEventListener('refreshBrainFiles', handleRefresh);
             window.removeEventListener('closeBrainEditor', handleClose);
+            window.removeEventListener('brainPreviewReady', handlePreviewReady);
         };
     }, []);
 
