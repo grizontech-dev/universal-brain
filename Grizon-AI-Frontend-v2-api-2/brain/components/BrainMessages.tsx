@@ -713,12 +713,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     detail: {
                         jobId: conversationId,
                         syncUrl: payload.sync_url,
+                        streamUrl: payload.tunnel_url,
                         framework: payload.framework,
                         runtime: 'sandbox_mcp',
                         todoList: normalized,
                     },
                 })
             );
+            if (payload.tunnel_url) {
+                window.dispatchEvent(
+                    new CustomEvent('brainPreviewReady', { detail: { url: payload.tunnel_url, streamUrl: payload.tunnel_url } })
+                );
+            }
 
             const allOps = [...(payload.workspace_ops || []), ...(payload.startup_ops || [])];
             if (allOps.length) {
