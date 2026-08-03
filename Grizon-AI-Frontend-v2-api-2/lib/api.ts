@@ -44,6 +44,8 @@ export const brainApi = {
         question_rounds?: number;
         resume_build?: boolean;
         project_id?: string;
+        attached_file_ids?: string[];
+        attachedFileIds?: string[];
     }, onChunk: (chunk: any) => void, signal?: AbortSignal, retries = 2) => {
         const attemptStream = async (attempt: number): Promise<void> => {
             let response: Response | null = null;

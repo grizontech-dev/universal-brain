@@ -189,12 +189,23 @@ export const fileService = {
     extractedText: string | null;
     vectorised: boolean;
   }> {
-    const file = await this.getByIdForUser(userId, fileId);
-    if (file.processingStatus !== "ready") throw Errors.attachedFileNotReady();
+    let file = await this.getByIdForUser(userId, fileId);
+
+    // Poll up to 10 seconds if file is still processing/pending
+    let attempts = 0;
+    while (file && file.processingStatus !== "ready" && file.processingStatus !== "failed" && attempts < 10) {
+      await new Promise((res) => setTimeout(res, 1000));
+      file = await this.getByIdForUser(userId, fileId);
+      attempts++;
+    }
+
+    if (!file || (file.processingStatus !== "ready" && !file.extractedText)) {
+      throw Errors.attachedFileNotReady();
+    }
     return {
       id: file.id,
       mimeType: file.fileType,
-      extractedText: file.extractedText,
+      extractedText: file.extractedText || `[Attached File: ${file.originalName}]`,
       vectorised: file.vectorised,
     };
   },

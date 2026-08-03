@@ -131,12 +131,77 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [brainAttachments, setBrainAttachments] = useState<Array<{ id: string; name: string; status: 'uploading' | 'ready' }>>([]);
     const activeConvIdRef = useRef<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const sendingRef = useRef(false);
     const userScrolledUpRef = useRef(false);
     const pollTaskIndexRef = useRef(-1);
     const maxSeenTaskIndexRef = useRef(-1);
+
+    const handleBrainFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        const fileList = Array.from(files);
+        for (const file of fileList) {
+            const tempId = crypto.randomUUID();
+            setBrainAttachments(prev => [...prev, { id: tempId, name: file.name, status: 'uploading' }]);
+            try {
+                const base64 = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                const token = (typeof getAccessToken === 'function' ? getAccessToken() : null) || 
+                    (typeof window !== 'undefined' ? localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('grizon_access_token') : null);
+
+                const reqHeaders: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                };
+
+                let res = await fetch('/api/v1/files/upload', {
+                    method: 'POST',
+                    headers: reqHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        fileType: file.type || 'application/pdf',
+                        fileSize: file.size,
+                        contentBase64: base64,
+                    }),
+                }).catch(() => null);
+
+                if (!res || !res.ok) {
+                    res = await fetch('http://localhost:4000/api/v1/files/upload', {
+                        method: 'POST',
+                        headers: reqHeaders,
+                        credentials: 'include',
+                        body: JSON.stringify({
+                            fileName: file.name,
+                            fileType: file.type || 'application/pdf',
+                            fileSize: file.size,
+                            contentBase64: base64,
+                        }),
+                    }).catch(() => null);
+                }
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    const uploadedId = data.data?.file?.id || tempId;
+                    setBrainAttachments(prev => prev.map(item => item.id === tempId ? { ...item, id: uploadedId, status: 'ready' } : item));
+                } else {
+                    setBrainAttachments(prev => prev.filter(item => item.id !== tempId));
+                }
+            } catch {
+                setBrainAttachments(prev => prev.filter(item => item.id !== tempId));
+            }
+        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
     // Reset sending lock when conversation changes (prevents stale lock from blocking new conversations)
     useEffect(() => {
@@ -1255,7 +1320,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         pending.temperature,
                         pending.isPlanApproval,
                         pending.approvedPlan,
-                        pending.targetMessageId
+                        pending.targetMessageId,
+                        pending.attachedFileIds
                     );
                     sessionStorage.removeItem('brainPendingMessage');
                 } catch (e) {
@@ -1313,10 +1379,12 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         temperature: number = 0.3,
         isPlanApproval?: boolean,
         approvedPlan?: string,
-        targetMessageId?: string
+        targetMessageId?: string,
+        overrideFileIds?: string[]
     ) => {
         const textValue = typeof overrideText === 'string' ? overrideText : input;
-        console.log('BrainMessages: handleSendMessage called', { textValue, isPlanApproval, targetMessageId });
+        const activeFileIds = overrideFileIds || brainAttachments.map(a => a.id);
+        console.log('BrainMessages: handleSendMessage called', { textValue, isPlanApproval, targetMessageId, activeFileIds });
 
         if (!isAuthenticated) {
             openAuthModal('signin-email');
@@ -1342,6 +1410,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         }
 
         setInput('');
+        setBrainAttachments([]);
         setIsLoading(true);
 
         if (abortControllerRef.current) {
@@ -1402,6 +1471,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         isPlanApproval,
                         approvedPlan,
                         targetMessageId,
+                        attachedFileIds: activeFileIds,
                         modelId: selectedModel?.id || 'gpt-5.4',
                         framework: selectedFramework,
                         questionRounds,
@@ -1514,6 +1584,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 framework: selectedFramework,
                 temperature: temperature,
                 project_id: projectIdRef.current || undefined,
+                attached_file_ids: activeFileIds,
+                attachedFileIds: activeFileIds,
             }, (event) => {
                 const eventKeys = Object.keys(event || {});
                 if (eventKeys.length === 0) return;
@@ -2179,16 +2251,45 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 </p>
 
                                 {/* Glassmorphic Pill Input Container */}
-                                <div className="w-full max-w-[760px] relative mb-6 sm:mb-8 px-1">
+                                <div className="w-full max-w-[760px] relative mb-6 sm:mb-8 px-1 flex flex-col gap-2">
+                                    {brainAttachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 px-2 py-1">
+                                            {brainAttachments.map(att => (
+                                                <div key={att.id} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-3 border border-border-default text-xs text-text-primary">
+                                                    <span className="truncate max-w-[140px]">{att.name}</span>
+                                                    {att.status === 'uploading' ? (
+                                                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                                                    ) : (
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setBrainAttachments(prev => prev.filter(x => x.id !== att.id))} 
+                                                            className="text-text-muted hover:text-red-400 font-bold ml-1"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                     <div className="group relative rounded-2xl sm:rounded-full border border-border-default bg-surface-2/90 backdrop-blur-xl px-3.5 sm:px-5 py-2.5 sm:py-3 shadow-glass transition-all duration-300 focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 hover:border-border-strong flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-[140px]">
                                             <button 
                                                 type="button" 
-                                                onClick={() => textareaRef.current?.focus()}
+                                                onClick={() => fileInputRef.current?.click()}
                                                 className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-3 transition-all shrink-0"
+                                                title="Add Attachment (Image / PDF)"
                                             >
                                                 <Plus size={16} className="sm:w-[18px] sm:h-[18px]" />
                                             </button>
+
+                                            <input
+                                                ref={fileInputRef}
+                                                type="file"
+                                                multiple
+                                                onChange={handleBrainFileSelect}
+                                                className="hidden"
+                                            />
 
                                             <input
                                                 value={input}
@@ -2413,7 +2514,35 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         <div className={`bg-app border-t border-border-subtle relative z-10 shrink-0 ${isBuildMode ? 'px-3 py-3' : 'p-4 sm:p-6'}`}>
                             <div className={`${isBuildMode ? 'w-full' : 'max-w-3xl mx-auto'} relative group`}>
                                 <div className="relative flex flex-col gap-2 bg-surface-2/90 border border-border-default rounded-2xl p-2 pr-3 focus-within:border-accent/40 focus-within:ring-2 focus-within:ring-accent/15 transition-all duration-300 shadow-xl">
+                                    {brainAttachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 px-2 pt-1 border-b border-border-subtle pb-2">
+                                            {brainAttachments.map(att => (
+                                                <div key={att.id} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-3 border border-border-default text-xs text-text-primary">
+                                                    <span className="truncate max-w-[140px]">{att.name}</span>
+                                                    {att.status === 'uploading' ? (
+                                                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                                                    ) : (
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setBrainAttachments(prev => prev.filter(x => x.id !== att.id))} 
+                                                            className="text-text-muted hover:text-red-400 font-bold ml-1"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                     <div className="relative flex items-end gap-3 pt-1">
+                                        <button 
+                                            type="button" 
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-3 transition-all shrink-0 mb-1"
+                                            title="Add Attachment (Image / PDF)"
+                                        >
+                                            <Plus size={18} />
+                                        </button>
                                         {tokenEstimate !== null && !isBuildMode && (
                                             <div className="absolute -top-10 right-0 px-3 py-1.5 rounded-lg bg-surface-2 border border-border-subtle shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300">
                                                 <div className="flex items-center gap-2">

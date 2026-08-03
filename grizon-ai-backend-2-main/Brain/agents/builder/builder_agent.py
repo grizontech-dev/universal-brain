@@ -6,9 +6,12 @@ import sys
 import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
+from Brain.agents.builder.mcp_tools import (
+    client_save_code,
+    client_execute_in_sandbox,
+    supabase_exec_sql,
+    supabase_create_exec_sql_function,
+)
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 
 from Brain.services.workspace_manager import workspace_manager
@@ -110,6 +113,7 @@ class BuilderAgent(BaseAgent):
         bound_llm = self.llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
+        tool_call_count = 0
 
         # Free-form loop — LLM generates files until it stops or timeout
         consecutive_duplicates = 0
@@ -202,6 +206,16 @@ class BuilderAgent(BaseAgent):
                     if tool_name == "client_save_code":
                         result = await asyncio.wait_for(
                             client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                    elif tool_name == "supabase_exec_sql":
+                        result = await asyncio.wait_for(
+                            supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                    elif tool_name == "supabase_create_exec_sql_function":
+                        result = await asyncio.wait_for(
+                            supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
                     else:
