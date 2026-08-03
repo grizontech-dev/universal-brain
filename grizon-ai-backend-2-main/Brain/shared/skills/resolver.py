@@ -152,8 +152,7 @@ class SkillResolver:
         parts = [f"# {name}\n\n{text}" for name, text in filtered]
         compiled = "\n\n---\n\n".join(parts)
 
-        # Trim only if extremely long, but prefer returning the full relevant set.
-        max_len = 6000
+        max_len = 12000
         if len(compiled) > max_len:
             print(f"[SkillResolver] ⚠️ Local fallback output truncated from {len(compiled)} to {max_len} chars.")
             compiled = compiled[:max_len] + "\n\n...\n\n(truncated local skill guidance)"

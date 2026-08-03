@@ -83,7 +83,6 @@ services:
     env_file:
       - .env.docker
     environment:
-      - DATABASE_URL=postgresql://grizon_user:grizon_password_123@postgres:5432/grizon_db?sslmode=disable
       - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"

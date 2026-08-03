@@ -7,6 +7,7 @@ class PlannerAgent:
     
     @staticmethod
     async def create_plan(content: str, search_results: str, model_id: str, repo_url: str = None, temperature: float = 0.3) -> Dict[str, Any]:
+        print(f"[PLANNER] Using model: {model_id}", flush=True)
         model = ProviderRouter.get_model(model_id, temperature=temperature)
         
         system_prompt = """

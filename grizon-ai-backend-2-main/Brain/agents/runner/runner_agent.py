@@ -20,7 +20,7 @@ class RunnerAgent(BaseAgent):
         super().__init__(
             name="Runner",
             description="Deploys the built project to the remote sandbox MCP server.",
-            model_id="deepseek-chat"
+            model_id="gemma-4-26b-a4b-it"
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,6 +64,34 @@ class RunnerAgent(BaseAgent):
             yield state
             return
 
+        existing_tunnel = sandbox_mcp.get_tunnel_url(str(session_id))
+        if existing_tunnel:
+            print(f"{LOG} SKIP DEPLOY: tunnel URL already exists from builder: {existing_tunnel}")
+            sandbox_job = state.get("sandbox_job") or {}
+            sandbox_job["job_id"] = str(session_id)
+            sandbox_job["runtime"] = RUNTIME_SANDBOX_MCP
+            sandbox_job["tunnel_url"] = existing_tunnel
+            sandbox_job["stream_url"] = existing_tunnel
+            sandbox_job["await_preview"] = True
+            sandbox_job["sync_url"] = f"{WS_BASE}/brain/sandbox/sync/{session_id}"
+            state["sandbox_job"] = sandbox_job
+            state["tunnel_url"] = existing_tunnel
+            state["status"] = "running"
+            state["run_report"] = f"Deploy already complete. Tunnel URL: {existing_tunnel}"
+            state["execute_sandbox"] = {
+                "workspace_ops": [],
+                "status": "complete",
+                "progress_msg": f"Sandbox ready: {existing_tunnel}",
+            }
+            await ws_manager.broadcast_to_sandbox(str(session_id), {
+                "type": "sandbox_ready",
+                "tunnel_url": existing_tunnel,
+                "url": existing_tunnel,
+                "stream_url": existing_tunnel,
+            })
+            yield state
+            return
+
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",
             "type": "run_command",
@@ -96,11 +124,13 @@ class RunnerAgent(BaseAgent):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
 
-            # Removed eager sandbox deletion here. Sandbox will be reused or auto-deleted if idle.
+            _user_id = _state.get("user_id")
+            print(f"[RUNNER] _background_deploy | user_id={_user_id} | type={type(_user_id).__name__}")
+            print(f"[RUNNER] _background_deploy | state keys={list(_state.keys())[:15]}")
 
             try:
                 deploy_result = await sandbox_mcp.deploy_workspace(
-                    str(_sid), _entrypoint
+                    str(_sid), _entrypoint, user_id=_user_id
                 )
             except Exception as e:
                 print(f"[RUNNER] _background_deploy FAILED: {e}")
@@ -119,6 +149,7 @@ class RunnerAgent(BaseAgent):
                     print(f"[RUNNER] extracted tunnel_url from output: {tunnel_url}")
 
             sandbox_job = _state.get("sandbox_job", {})
+            sandbox_job["job_id"] = str(_sid)
             sandbox_job["runtime"] = RUNTIME_SANDBOX_MCP
             sandbox_job["tunnel_url"] = tunnel_url
             sandbox_job["stream_url"] = tunnel_url

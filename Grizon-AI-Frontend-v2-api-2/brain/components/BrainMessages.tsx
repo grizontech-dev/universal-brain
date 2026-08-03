@@ -562,6 +562,24 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 if (frInner.workspace_ops) {
                     ingestBuildPayload(frInner);
                 }
+
+                const frSandboxJob = frInner.sandbox_job as Record<string, unknown> | undefined;
+                const tunnelUrl = (frSandboxJob?.tunnel_url || frSandboxJob?.stream_url) as string | undefined;
+                if (tunnelUrl) {
+                    window.dispatchEvent(new CustomEvent('brainPreviewReady', {
+                        detail: { url: tunnelUrl, streamUrl: tunnelUrl }
+                    }));
+                    const frJob = {
+                        jobId: String(frSandboxJob?.job_id || currentConversationId || ''),
+                        syncUrl: frSandboxJob?.sync_url as string | undefined,
+                        streamUrl: tunnelUrl,
+                        framework: (frSandboxJob?.framework as string) || selectedFramework,
+                    };
+                    setBuildJob(frJob);
+                    window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: frJob }));
+                    window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: frJob }));
+                }
+
                 completeRunnerBuild();
             }
         },
@@ -695,12 +713,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     detail: {
                         jobId: conversationId,
                         syncUrl: payload.sync_url,
+                        streamUrl: payload.tunnel_url,
                         framework: payload.framework,
                         runtime: 'sandbox_mcp',
                         todoList: normalized,
                     },
                 })
             );
+            if (payload.tunnel_url) {
+                window.dispatchEvent(
+                    new CustomEvent('brainPreviewReady', { detail: { url: payload.tunnel_url, streamUrl: payload.tunnel_url } })
+                );
+            }
 
             const allOps = [...(payload.workspace_ops || []), ...(payload.startup_ops || [])];
             if (allOps.length) {
@@ -1715,10 +1739,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         const sandboxJob = (inner.sandbox_job || nodeData.sandbox_job) as Record<string, unknown> | undefined;
                         if (sandboxJob?.job_id) {
                             currentSandboxJob = sandboxJob;
+                            const sjTunnelUrl = sandboxJob.tunnel_url as string | undefined;
                             const job = {
                                 jobId: String(sandboxJob.job_id),
                                 syncUrl: sandboxJob.sync_url as string | undefined,
-                                streamUrl: sandboxJob.stream_url as string | undefined,
+                                streamUrl: sjTunnelUrl || sandboxJob.stream_url as string | undefined,
                                 framework: (sandboxJob.framework as string) || selectedFramework,
                             };
                             setBuildJob(job);
@@ -1726,6 +1751,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             setTimeout(() => {
                                 window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: job }));
                             }, 0);
+                            if (sjTunnelUrl) {
+                                window.dispatchEvent(new CustomEvent('brainPreviewReady', {
+                                    detail: { url: sjTunnelUrl, streamUrl: sjTunnelUrl }
+                                }));
+                            }
                         }
 
                         const progressMsg = inner.progress_msg || nodeData.progress_msg;
@@ -1850,11 +1880,20 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         }
 
                         const frSandboxJob = frInner.sandbox_job as Record<string, unknown> | undefined;
-                        const tunnelUrl = frSandboxJob?.tunnel_url as string | undefined;
+                        const tunnelUrl = frSandboxJob?.tunnel_url || frSandboxJob?.stream_url as string | undefined;
                         if (tunnelUrl) {
                             window.dispatchEvent(new CustomEvent('brainPreviewReady', {
                                 detail: { url: tunnelUrl, streamUrl: tunnelUrl }
                             }));
+                            const frJob = {
+                                jobId: String(frSandboxJob?.job_id || ''),
+                                syncUrl: frSandboxJob?.sync_url as string | undefined,
+                                streamUrl: tunnelUrl as string,
+                                framework: (frSandboxJob?.framework as string) || selectedFramework,
+                            };
+                            setBuildJob(frJob);
+                            window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: frJob }));
+                            window.dispatchEvent(new CustomEvent('openSandboxCanvas', { detail: frJob }));
                         }
 
                         completeRunnerBuild();

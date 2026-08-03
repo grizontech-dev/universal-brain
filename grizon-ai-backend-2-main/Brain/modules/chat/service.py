@@ -1361,9 +1361,9 @@ class BrainChatService:
         self.STOP_REGISTRY.add(conversation_id)
         return {"status": "stopping", "conversation_id": conversation_id}
 
-    def get_sandbox_files(self, conversation_id: str):
+    def get_sandbox_files(self, conversation_id: str, user_id: str = None):
         """Returns the file tree for a given conversation workspace (disk mirror)."""
-        host_path = workspace_manager.resolve_workspace_path(conversation_id)
+        host_path = workspace_manager.resolve_workspace_path(conversation_id, user_id=user_id)
         if not host_path:
             return []
         sandbox_path = host_path

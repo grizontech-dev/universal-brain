@@ -201,7 +201,7 @@ export default function BrainEditorCanvas({
     const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
     const [recentTerminalLines, setRecentTerminalLines] = useState<string[]>([]);
 
-    const { getAccessToken } = useAuth();
+    const { getAccessToken, user } = useAuth();
     const [showPublish, setShowPublish] = useState(false);
     const [showPublishMenu, setShowPublishMenu] = useState(false);
     const publishMenuRef = useRef<HTMLDivElement>(null);
@@ -384,12 +384,13 @@ export default function BrainEditorCanvas({
     const persistToFile = useCallback((filePath: string, content: string) => {
         const wid = jobIdRef.current || jobId || '';
         if (!wid || !filePath) return;
-        brainApiFetch(`sandbox/write-file?workspace_id=${encodeURIComponent(wid)}`, {
+        const uid = user?.id ? `&user_id=${encodeURIComponent(user.id)}` : '';
+        brainApiFetch(`sandbox/write-file?workspace_id=${encodeURIComponent(wid)}${uid}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: filePath, content }),
         }).catch(() => {});
-    }, [jobId]);
+    }, [jobId, user?.id]);
 
     const handleEditorChange = useCallback((value: string | undefined) => {
         if (value === undefined) return;
@@ -481,8 +482,9 @@ export default function BrainEditorCanvas({
         const wid = targetJobId || jobIdRef.current || jobId || '';
         try {
             if (!wid) return file;
+            const uid = user?.id ? `&user_id=${encodeURIComponent(user.id)}` : '';
             const res = await brainApiFetch(
-                `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(file.path)}`
+                `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(file.path)}${uid}`
             );
             if (!res?.ok) return file;
             const result = await res.json();
@@ -513,6 +515,9 @@ export default function BrainEditorCanvas({
                 workspace_id: targetJobId,
                 sandbox_id: targetJobId,
             });
+            if (user?.id) {
+                q.set('user_id', user.id);
+            }
             const response = await brainApiFetch(`sandbox/list-files?${q}`);
             if (!response?.ok) return [];
             const result = await response.json();
@@ -529,36 +534,43 @@ export default function BrainEditorCanvas({
                 : n
         );
 
-    const fetchProjectFiles = useCallback(async (targetJobId: string, pickActive = false) => {
+    const fetchProjectFiles = useCallback(async (targetJobId: string, pickActive = false, retries = 5, delayMs = 1500) => {
         if (!targetJobId) return;
-        try {
-            const apiFiles = await fetchApiFileTree(targetJobId);
-            const files = apiFiles;
-            if (!files.length) return;
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const apiFiles = await fetchApiFileTree(targetJobId);
+                if (apiFiles.length > 0) {
+                    const expanded = openDefaultFolders(sortFileTreeNodes(apiFiles));
+                    const sig = treeSignature(expanded);
+                    fileTreeSigRef.current = sig;
+                    setFileTree(expanded);
 
-            const expanded = openDefaultFolders(sortFileTreeNodes(files));
-            const sig = treeSignature(expanded);
-
-            fileTreeSigRef.current = sig;
-            setFileTree(expanded);
-
-            if (activeFilePathRef.current) {
-                const node: FileNode = { type: 'file', name: activeFilePathRef.current.split('/').pop() || '', path: activeFilePathRef.current };
-                const loaded = await loadFileContent(node, targetJobId);
-                setActiveFile(prev => prev?.path === loaded.path ? loaded : prev);
-                setOpenFiles(prev => prev.map(f => f.path === loaded.path ? loaded : f));
-                filesLoadedRef.current = true;
-            } else if (!filesLoadedRef.current || pickActive) {
-                const first = findFirstFile(expanded);
-                if (first) {
-                    const loaded = await loadFileContent(first, targetJobId);
-                    setActiveFile(loaded);
-                    setOpenFiles([loaded]);
-                    filesLoadedRef.current = true;
+                    if (activeFilePathRef.current) {
+                        const node: FileNode = { type: 'file', name: activeFilePathRef.current.split('/').pop() || '', path: activeFilePathRef.current };
+                        const loaded = await loadFileContent(node, targetJobId);
+                        setActiveFile(prev => prev?.path === loaded.path ? loaded : prev);
+                        setOpenFiles(prev => prev.map(f => f.path === loaded.path ? { ...f, content: loaded.content } : f));
+                        filesLoadedRef.current = true;
+                    } else if (!filesLoadedRef.current || pickActive) {
+                        const first = findFirstFile(expanded);
+                        if (first) {
+                            const loaded = await loadFileContent(first, targetJobId);
+                            setActiveFile(loaded);
+                            setOpenFiles([loaded]);
+                            filesLoadedRef.current = true;
+                        }
+                    }
+                    return;
+                }
+                if (attempt < retries - 1) {
+                    await new Promise(r => setTimeout(r, delayMs));
+                }
+            } catch (err) {
+                console.error('Error fetching project files:', err);
+                if (attempt < retries - 1) {
+                    await new Promise(r => setTimeout(r, delayMs));
                 }
             }
-        } catch (err) {
-            console.error('Error fetching project files:', err);
         }
     }, [runtime, framework]);
 
@@ -707,11 +719,23 @@ export default function BrainEditorCanvas({
             }
         };
 
+        const handlePreviewReady = (e: Event) => {
+            const d = (e as CustomEvent).detail || {};
+            const url = d.streamUrl || d.url;
+            if (url && typeof url === 'string') {
+                console.log('[BrainEditor] brainPreviewReady received:', url);
+                setPreviewUrl(url);
+                setIsBuilding(false);
+                setViewMode('preview');
+            }
+        };
+
         window.addEventListener('openBrainEditor', handleOpen);
         window.addEventListener('openSandboxCanvas', handleOpen);
         window.addEventListener('updateSandboxProgress', handleProgress);
         window.addEventListener('refreshBrainFiles', handleRefresh);
         window.addEventListener('closeBrainEditor', handleClose);
+        window.addEventListener('brainPreviewReady', handlePreviewReady);
 
         return () => {
             window.removeEventListener('openBrainEditor', handleOpen);
@@ -719,6 +743,7 @@ export default function BrainEditorCanvas({
             window.removeEventListener('updateSandboxProgress', handleProgress);
             window.removeEventListener('refreshBrainFiles', handleRefresh);
             window.removeEventListener('closeBrainEditor', handleClose);
+            window.removeEventListener('brainPreviewReady', handlePreviewReady);
         };
     }, []);
 

@@ -53,11 +53,19 @@ class SandboxMCPService:
         """Verify MCP server is reachable. Each _call_tool creates its own fresh session."""
         print(f"[SANDBOX_MCP] Connecting to MCP server...")
         # Create a temporary session just to verify connectivity
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=30,
-        )
+        try:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=30,
+            )
+        except TypeError:
+            # Older MCP library doesn't support headers kwarg
+            print("[SANDBOX_MCP] headers kwarg not supported, trying without auth header")
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                timeout=30,
+            )
         try:
             transport = await transport_ctx.__aenter__()
             read_stream, write_stream = transport[0], transport[1]
@@ -84,6 +92,17 @@ class SandboxMCPService:
         """Reset MCP state. Each _call_tool creates its own fresh session."""
         self._initialized = False
 
+    def _with_client_id(self, arguments: dict, client_id: str = None) -> dict:
+        print(f"[SANDBOX_MCP] _with_client_id | client_id={client_id} | type={type(client_id).__name__}")
+        if client_id:
+            prefixed = f"grizon-{client_id}"
+            arguments["client_id"] = str(prefixed)
+            print(f"[SANDBOX_MCP] _with_client_id | ADDED client_id={prefixed} to args (prefixed with grizon-)")
+        else:
+            arguments["client_id"] = "grizon-default"
+            print(f"[SANDBOX_MCP] _with_client_id | client_id is None/empty — using grizon-default")
+        return arguments
+
     async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
         """Call an MCP tool using a FRESH session per call to avoid shared session corruption."""
         if not self._initialized:
@@ -94,17 +113,25 @@ class SandboxMCPService:
             )
 
         call_start_time = time.time()
-        print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args_keys={list(arguments.keys())}")
+        safe_args = {k: (v[:50] + "..." if isinstance(v, str) and len(v) > 50 else v) for k, v in arguments.items()}
+        print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args={safe_args}")
+        print(f"[SANDBOX_MCP] _call_tool '{name}' | full args_keys={list(arguments.keys())} | args_sizes={ {k: len(str(v)) for k, v in arguments.items()} }")
 
         # Create a FRESH MCP session for each tool call to avoid:
         # 1. GC killing the shared session mid-call
         # 2. Concurrent calls corrupting the SSE stream
         # 3. anyio cancel-scope cross-task errors
-        transport_ctx = streamablehttp_client(
-            url=self._url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=timeout,
-        )
+        try:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=timeout,
+            )
+        except TypeError:
+            transport_ctx = streamablehttp_client(
+                url=self._url,
+                timeout=timeout,
+            )
         try:
             # NO asyncio.wait_for here — anyio cancel scope can't handle it.
             # Let the connection establish at its own pace.
@@ -204,17 +231,20 @@ class SandboxMCPService:
         if not self._initialized:
             await self.initialize()
 
-    def get_workspace_dir(self, session_id: str) -> str:
+    def get_workspace_dir(self, session_id: str, user_id: str = None) -> str:
         if not self._workspace_root:
             workspace_base = os.path.join(os.getcwd(), "workspaces")
             os.makedirs(workspace_base, exist_ok=True)
             self._workspace_root = workspace_base
-        d = os.path.abspath(os.path.join(self._workspace_root, session_id))
+        if user_id:
+            d = os.path.abspath(os.path.join(self._workspace_root, user_id, session_id))
+        else:
+            d = os.path.abspath(os.path.join(self._workspace_root, session_id))
         os.makedirs(d, exist_ok=True)
         return d
 
-    async def save_file(self, session_id: str, filename: str, code: str) -> str:
-        workspace_dir = self.get_workspace_dir(session_id)
+    async def save_file(self, session_id: str, filename: str, code: str, user_id: str = None) -> str:
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
         target = os.path.abspath(os.path.join(workspace_dir, filename))
         if not target.startswith(workspace_dir):
             return "ERROR: Path traversal blocked"
@@ -225,17 +255,17 @@ class SandboxMCPService:
         logger.info("[sandbox_mcp] Saved '%s' for session '%s'", filename, session_id)
         return f"Saved {filename}"
 
-    async def save_code_to_sandbox(self, session_id: str, filename: str, code: str) -> Dict[str, Any]:
+    async def save_code_to_sandbox(self, session_id: str, filename: str, code: str, user_id: str = None) -> Dict[str, Any]:
         try:
             logger.info(
                 "[sandbox_mcp] Saving '%s' directly to sandbox '%s' (%d bytes)",
                 filename, session_id, len(code),
             )
-            result = await self._call_tool("save_code", {
+            result = await self._call_tool("save_code", self._with_client_id({
                 "session_id": session_id,
                 "filename": filename,
                 "code": code,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:
@@ -256,82 +286,197 @@ class SandboxMCPService:
         return entrypoint
 
     async def deploy_workspace(
-        self, session_id: str, entrypoint: str
+        self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:
-        workspace_dir = self.get_workspace_dir(session_id)
+        print(f"\n{'='*80}")
+        print(f"[SANDBOX_MCP] ===== deploy_workspace START =====")
+        print(f"[SANDBOX_MCP] session_id = {session_id}")
+        print(f"[SANDBOX_MCP] entrypoint = {entrypoint}")
+        print(f"[SANDBOX_MCP] user_id    = {user_id}")
+        print(f"[SANDBOX_MCP] user_id type = {type(user_id).__name__}")
+        print(f"{'='*80}")
+
+        # Try user_id path first, then fall back to session_id-only path
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
+        print(f"[SANDBOX_MCP] STEP-1 workspace_dir (user_id)  = {workspace_dir}")
+        print(f"[SANDBOX_MCP] STEP-1 exists={os.path.isdir(workspace_dir)} | empty={not os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else 'N/A'}")
+
+        if not os.path.isdir(workspace_dir) or not os.listdir(workspace_dir):
+            fallback_dir = self.get_workspace_dir(session_id)
+            print(f"[SANDBOX_MCP] STEP-1 fallback_dir (no user) = {fallback_dir}")
+            print(f"[SANDBOX_MCP] STEP-1 fallback exists={os.path.isdir(fallback_dir)} | files={os.listdir(fallback_dir)[:10] if os.path.isdir(fallback_dir) else 'N/A'}")
+            if os.path.isdir(fallback_dir) and os.listdir(fallback_dir):
+                print(f"[SANDBOX_MCP] STEP-1 USING FALLBACK: {fallback_dir}")
+                workspace_dir = fallback_dir
+            else:
+                print(f"[SANDBOX_MCP] STEP-1 BOTH PATHS EMPTY!")
+
         entrypoint = self._resolve_entrypoint(workspace_dir, entrypoint)
+        print(f"[SANDBOX_MCP] STEP-2 resolved entrypoint = {entrypoint}")
+
         files = os.listdir(workspace_dir) if os.path.isdir(workspace_dir) else []
-        print(f"[SANDBOX_MCP] deploy_workspace | session={session_id} | entrypoint={entrypoint} | files={files}")
+        print(f"[SANDBOX_MCP] STEP-2 top-level files = {files}")
+
+        # List all files recursively
+        all_files = []
+        if os.path.isdir(workspace_dir):
+            for root, dirs, fnames in os.walk(workspace_dir):
+                if "node_modules" in dirs:
+                    dirs.remove("node_modules")
+                for f in fnames:
+                    rel = os.path.relpath(os.path.join(root, f), workspace_dir)
+                    all_files.append(rel)
+        print(f"[SANDBOX_MCP] STEP-2 ALL files ({len(all_files)}): {all_files[:50]}")
+
         if not os.path.isdir(workspace_dir):
             print(f"[SANDBOX_MCP] ERROR: workspace dir not found: {workspace_dir}")
             return {"status": "error", "error": f"Workspace {session_id} not found"}
 
-        # Enforce port 9999 + disable HMR in vite.config.js and package.json before archiving
+        # ═══ FALLBACK TEMPLATE CREATION ═══
+        # If essential files are missing (template not loaded), create them now
+        frontend_src = os.path.join(workspace_dir, "frontend", "src")
+        has_frontend = os.path.isdir(frontend_src)
+
+        if has_frontend:
+            # Create main.jsx if missing
+            main_jsx = os.path.join(frontend_src, "main.jsx")
+            if not os.path.isfile(main_jsx):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/src/main.jsx")
+                os.makedirs(os.path.dirname(main_jsx), exist_ok=True)
+                with open(main_jsx, "w") as f:
+                    f.write('import React from "react";\nimport ReactDOM from "react-dom/client";\nimport App from "./App";\nimport "./index.css";\n\nReactDOM.createRoot(document.getElementById("root")).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>\n);')
+
+            # Create index.html if missing
+            index_html = os.path.join(workspace_dir, "frontend", "index.html")
+            if not os.path.isfile(index_html):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/index.html")
+                with open(index_html, "w") as f:
+                    f.write('<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>App</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.jsx"></script>\n  </body>\n</html>')
+
+            # Create vite.config.js if missing
+            vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
+            if not os.path.isfile(vite_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/vite.config.js")
+                with open(vite_cfg, "w") as f:
+                    f.write('import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n  server: { port: 9999, host: "0.0.0.0", hmr: false, allowedHosts: true },\n  base: "./",\n});')
+
+            # Create frontend/package.json if missing
+            pkg_json = os.path.join(workspace_dir, "frontend", "package.json")
+            if not os.path.isfile(pkg_json):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/package.json")
+                with open(pkg_json, "w") as f:
+                    f.write('{\n  "name": "frontend",\n  "private": true,\n  "version": "0.0.0",\n  "type": "module",\n  "scripts": {\n    "dev": "vite --port 9999 --host 0.0.0.0",\n    "build": "vite build",\n    "preview": "vite preview"\n  },\n  "dependencies": {\n    "react": "^18.2.0",\n    "react-dom": "^18.2.0",\n    "react-router-dom": "^6.20.0"\n  },\n  "devDependencies": {\n    "@vitejs/plugin-react": "^4.2.0",\n    "vite": "^5.0.0",\n    "tailwindcss": "^3.3.0",\n    "postcss": "^8.4.0",\n    "autoprefixer": "^10.4.0"\n  }\n}')
+
+            # Create frontend/src/index.css if missing (Tailwind entry)
+            index_css = os.path.join(frontend_src, "index.css")
+            if not os.path.isfile(index_css):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/src/index.css")
+                with open(index_css, "w") as f:
+                    f.write('@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nbody {\n  margin: 0;\n  background: #09090b;\n  color: #fff;\n}\n')
+
+            # Create tailwind.config.js if missing
+            tw_cfg = os.path.join(workspace_dir, "frontend", "tailwind.config.js")
+            if not os.path.isfile(tw_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/tailwind.config.js")
+                with open(tw_cfg, "w") as f:
+                    f.write('/** @type {import("tailwindcss").Config} */\nexport default {\n  content: ["./index.html", "./src/**/*.{js,jsx}"],\n  theme: { extend: {} },\n  plugins: [],\n};')
+
+            # Create postcss.config.js if missing
+            postcss_cfg = os.path.join(workspace_dir, "frontend", "postcss.config.js")
+            if not os.path.isfile(postcss_cfg):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/postcss.config.js")
+                with open(postcss_cfg, "w") as f:
+                    f.write('export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n};')
+
+            # Create App.jsx placeholder if missing
+            app_jsx = os.path.join(frontend_src, "App.jsx")
+            if not os.path.isfile(app_jsx):
+                print(f"[SANDBOX_MCP] FALLBACK: Creating placeholder frontend/src/App.jsx")
+                with open(app_jsx, "w") as f:
+                    f.write('export default function App() {\n  return <div className="min-h-screen bg-[#09090b] text-white flex items-center justify-center"><h1 className="text-2xl">App Loading...</h1></div>;\n}\n')
+
+        # Re-scan files after fallback creation
+        all_files = []
+        if os.path.isdir(workspace_dir):
+            for root, dirs, fnames in os.walk(workspace_dir):
+                if "node_modules" in dirs:
+                    dirs.remove("node_modules")
+                for f in fnames:
+                    rel = os.path.relpath(os.path.join(root, f), workspace_dir)
+                    all_files.append(rel)
+        print(f"[SANDBOX_MCP] STEP-3 deploy_workspace | AFTER FALLBACK: {len(all_files)} files")
+        if has_frontend:
+            frontend_files = [f for f in all_files if f.startswith("frontend/")]
+            print(f"[SANDBOX_MCP] STEP-3 frontend files: {frontend_files[:30]}")
+
+        # ═══ VITE + PKG PATCHES ═══
         import re as _re
         vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
         if os.path.exists(vite_cfg):
             try:
                 with open(vite_cfg, "r") as f:
                     content = f.read()
-                patched = _re.sub(r'port:\s*5173', 'port: 9999', content)
-                
-                # If no server config exists, inject it right after defineConfig({
-                if 'server:' not in patched and 'server :' not in patched and 'defineConfig({' in patched:
-                    patched = _re.sub(r'defineConfig\(\{', 'defineConfig({\n  server: { port: 9999, host: "0.0.0.0", hmr: false, allowedHosts: true },\n  base: "./",', patched)
-                else:
-                    # Fallback logic if server config exists
-                    if "base:" not in patched and "base :" not in patched:
-                        patched = patched.replace(
-                            'server: {',
-                            'base: "./",\n  server: {'
-                        ) if 'server: {' in patched else patched.replace(
-                            'server:{',
-                            'base:"./",server:{'
-                        )
-                    if 'hmr' not in patched:
-                        patched = patched.replace(
-                            'server: {',
-                            'server: { hmr: false, host: "0.0.0.0", allowedHosts: true,'
-                        ) if 'server: {' in patched else patched.replace(
-                            'server:{',
-                            'server:{ hmr: false, host: "0.0.0.0", allowedHosts: true,'
-                        )
-                
-                if patched != content:
-                    with open(vite_cfg, "w") as f:
-                        f.write(patched)
-                    print(f"[SANDBOX_MCP] Patched vite.config.js: base='./', port=9999, hmr=false")
+                # Replace entire defineConfig block with clean version
+                clean_vite = """import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  base: "./",
+  server: {
+    port: 9999,
+    host: "0.0.0.0",
+    hmr: false,
+    allowedHosts: true,
+    proxy: {
+      "/api": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+        secure: false
+      }
+    }
+  }
+});"""
+                with open(vite_cfg, "w") as f:
+                    f.write(clean_vite)
+                print(f"[SANDBOX_MCP] STEP-3 Rewrote vite.config.js: clean version with proxy, port=9999")
             except Exception as e:
-                print(f"[SANDBOX_MCP] Could not patch vite.config.js: {e}")
+                print(f"[SANDBOX_MCP] STEP-3 Could not patch vite.config.js: {e}")
 
         pkg_json = os.path.join(workspace_dir, "frontend", "package.json")
         if os.path.exists(pkg_json):
             try:
                 with open(pkg_json, "r") as f:
-                    content = f.read()
-                patched = content.replace("--port 5173", "--port 9999")
-                # Also catch default vite dev script and force port
-                patched = _re.sub(r'"dev":\s*"vite"', '"dev": "vite --port 9999 --host 0.0.0.0"', patched)
-                if patched != content:
-                    with open(pkg_json, "w") as f:
-                        f.write(patched)
-                    print(f"[SANDBOX_MCP] Patched package.json: 5173 -> 9999")
+                    pkg = json.loads(f.read())
+                scripts = pkg.get("scripts", {})
+                scripts["dev"] = "vite --port 9999 --host 0.0.0.0"
+                scripts["predev"] = "fuser -k 9999/tcp 2>/dev/null || true"
+                pkg["scripts"] = scripts
+                with open(pkg_json, "w") as f:
+                    json.dump(pkg, f, indent=2)
+                print(f"[SANDBOX_MCP] STEP-3 Patched package.json: port=9999 + predev kill")
             except Exception as e:
-                print(f"[SANDBOX_MCP] Could not patch package.json: {e}")
+                print(f"[SANDBOX_MCP] STEP-3 Could not patch package.json: {e}")
 
-        # Validate App.jsx imports match actual component files
+        # ═══ ENSURE backend/ EXISTS (runner requires it for dual-service mode) ═══
+        backend_dir = os.path.join(workspace_dir, "backend")
+        if not os.path.isdir(backend_dir):
+            print(f"[SANDBOX_MCP] STEP-3 Creating minimal backend/ folder (runner needs it for dual-service mode)")
+            os.makedirs(backend_dir, exist_ok=True)
+            with open(os.path.join(backend_dir, "server.js"), "w") as f:
+                f.write('const express = require("express");\nconst app = express();\napp.get("/api/health", (req, res) => res.json({ status: "ok" }));\napp.listen(3001, "0.0.0.0", () => console.log("Backend running on 3001"));\n')
+            with open(os.path.join(backend_dir, "package.json"), "w") as f:
+                json.dump({"name": "backend", "version": "1.0.0", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.18.0", "cors": "^2.8.5"}}, f, indent=2)
+
+        # Validate App.jsx imports
         app_jsx = os.path.join(workspace_dir, "frontend", "src", "App.jsx")
         components_dir = os.path.join(workspace_dir, "frontend", "src", "components")
         if os.path.exists(app_jsx):
             try:
                 with open(app_jsx, "r") as f:
                     app_content = f.read()
-                # Find all import paths from ./components/XXX
                 import_matches = _re.findall(r"import\s+\w+\s+from\s+['\"]\.\/components\/(\w+)", app_content)
-                # Also check ./pages/XXX imports
                 import_matches += _re.findall(r"import\s+\w+\s+from\s+['\"]\.\/pages\/(\w+)", app_content)
-
-                # Get actual files
                 actual_files = set()
                 if os.path.isdir(components_dir):
                     for fname in os.listdir(components_dir):
@@ -342,28 +487,25 @@ class SandboxMCPService:
                     for fname in os.listdir(pages_dir):
                         if fname.endswith(('.jsx', '.tsx', '.js', '.ts')):
                             actual_files.add(fname.split('.')[0])
-
-                # Check for missing imports
                 missing = [imp for imp in import_matches if imp not in actual_files]
                 if missing:
-                    print(f"[SANDBOX_MCP] WARNING: App.jsx imports missing components: {missing}")
-                    print(f"[SANDBOX_MCP] Actual files: {sorted(actual_files)}")
-                    # Auto-fix: rewrite App.jsx to only import existing components
+                    print(f"[SANDBOX_MCP] STEP-3 WARNING: App.jsx imports missing: {missing}")
                     for imp in missing:
-                        # Remove the import line and any route using it
                         app_content = _re.sub(rf"import\s+\w+\s+from\s+['\"]\.\/components\/{imp}['\"].*\n", "", app_content)
                         app_content = _re.sub(rf"import\s+\w+\s+from\s+['\"]\.\/pages\/{imp}['\"].*\n", "", app_content)
-                        # Remove route lines referencing this component
                         app_content = _re.sub(rf"<Route[^>]*component\s*=\s*{{?{imp}}}?[^/]*/?>\s*\n?", "", app_content)
                     with open(app_jsx, "w") as f:
                         f.write(app_content)
-                    print(f"[SANDBOX_MCP] Auto-fixed App.jsx: removed {len(missing)} broken imports")
+                    print(f"[SANDBOX_MCP] STEP-3 Auto-fixed App.jsx: removed {len(missing)} broken imports")
                 else:
-                    print(f"[SANDBOX_MCP] Import validation OK: {len(import_matches)} imports match {len(actual_files)} files")
+                    print(f"[SANDBOX_MCP] STEP-3 Import validation OK: {len(import_matches)} imports match {len(actual_files)} files")
             except Exception as e:
-                print(f"[SANDBOX_MCP] Could not validate App.jsx imports: {e}")
+                print(f"[SANDBOX_MCP] STEP-3 Could not validate App.jsx imports: {e}")
 
+        # ═══ ARCHIVE CREATION ═══
+        print(f"[SANDBOX_MCP] STEP-4 Creating archive from: {workspace_dir}")
         buf = io.BytesIO()
+        archive_files = []
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             for root, dirs, files in os.walk(workspace_dir):
                 if "node_modules" in dirs:
@@ -374,50 +516,107 @@ class SandboxMCPService:
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, workspace_dir)
                     tar.add(full_path, arcname=rel_path)
-        archive_b64 = base64.b64encode(buf.getvalue()).decode()
-        print(f"[SANDBOX_MCP] Archive ready | size={len(archive_b64)} chars | files={len([f for _, _, files in os.walk(workspace_dir) for f in files])} total")
+                    archive_files.append(rel_path)
+        raw_bytes = buf.getvalue()
+        archive_b64 = base64.b64encode(raw_bytes).decode()
+        print(f"[SANDBOX_MCP] STEP-4 archive raw_bytes={len(raw_bytes)} | b64_chars={len(archive_b64)}")
+        print(f"[SANDBOX_MCP] STEP-4 archive contains {len(archive_files)} files:")
+        for f in archive_files:
+            print(f"[SANDBOX_MCP]   -> {f}")
+
+        has_fe = any(f.startswith("frontend/") for f in archive_files)
+        has_be = any(f.startswith("backend/") for f in archive_files)
+        has_runner = "sandbox_runner.sh" in archive_files
+        print(f"[SANDBOX_MCP] STEP-4 archive CHECK: frontend={has_fe} | backend={has_be} | sandbox_runner.sh={has_runner}")
+
+        # ═══ BUILD MCP CALL ARGS ═══
+        args_dict = {
+            "session_id": session_id,
+            "entrypoint": entrypoint,
+            "archive_b64": archive_b64,
+        }
+        args_with_client = self._with_client_id(args_dict, user_id)
+        print(f"[SANDBOX_MCP] STEP-5 FINAL args_keys = {list(args_with_client.keys())}")
+        print(f"[SANDBOX_MCP] STEP-5 client_id = {repr(args_with_client.get('client_id', 'NOT IN ARGS'))}")
+        print(f"[SANDBOX_MCP] STEP-5 session_id = {args_with_client.get('session_id')}")
+        print(f"[SANDBOX_MCP] STEP-5 entrypoint = {args_with_client.get('entrypoint')}")
+        print(f"[SANDBOX_MCP] STEP-5 archive_b64 len = {len(args_with_client.get('archive_b64', ''))}")
+
+        # ═══ DELETE OLD SANDBOX ═══
+        try:
+            print(f"[SANDBOX_MCP] STEP-6 Deleting old sandbox to clear port 9999...")
+            del_result = await self.delete_sandbox(session_id, user_id=user_id)
+            print(f"[SANDBOX_MCP] STEP-6 delete result = {del_result}")
+            import asyncio as _dasync
+            await _dasync.sleep(2)
+        except Exception as e:
+            print(f"[SANDBOX_MCP] STEP-6 Delete sandbox exception: {e}")
+
+        # ═══ CALL execute_workspace_archive ═══
         deploy_start = time.time()
         try:
-            print(f"[SANDBOX_MCP] Calling MCP execute_workspace_archive (timeout=600s)...")
-            result = await self._call_tool("execute_workspace_archive", {
-                "session_id": session_id,
-                "entrypoint": entrypoint,
-                "archive_b64": archive_b64,
-            }, timeout=600)
+            print(f"[SANDBOX_MCP] STEP-7 === CALLING execute_workspace_archive ===")
+            print(f"[SANDBOX_MCP] STEP-7 MCP URL = {self._url}")
+            token_display = self._token[:12] + "..." if self._token and len(self._token) > 12 else self._token
+            print(f"[SANDBOX_MCP] STEP-7 MCP token = {token_display}")
+            result = await self._call_tool("execute_workspace_archive", args_with_client, timeout=600)
             elapsed = time.time() - deploy_start
-            print(f"[SANDBOX_MCP] MCP call completed in {elapsed:.1f}s | raw type={type(result).__name__}")
+            print(f"[SANDBOX_MCP] STEP-7 === MCP CALL RETURNED in {elapsed:.1f}s ===")
+            print(f"[SANDBOX_MCP] STEP-7 raw result type = {type(result).__name__}")
+
+            if hasattr(result, 'content'):
+                for i, c in enumerate(result.content):
+                    print(f"[SANDBOX_MCP] STEP-7 result.content[{i}] type={type(c).__name__} text={str(c.text)[:400] if hasattr(c, 'text') else str(c)[:400]}")
+            if hasattr(result, 'isError'):
+                print(f"[SANDBOX_MCP] STEP-7 result.isError = {result.isError}")
+
             parsed = self._parse_response(result)
+            print(f"[SANDBOX_MCP] STEP-8 === PARSED RESULT ===")
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    val_str = str(v)[:300] if v else str(v)
+                    print(f"[SANDBOX_MCP] STEP-8   {k} = {val_str}")
+            else:
+                print(f"[SANDBOX_MCP] STEP-8   parsed = {str(parsed)[:600]}")
+
             status = parsed.get('status', 'unknown') if isinstance(parsed, dict) else 'unknown'
-            tunnel = (parsed.get('tunnel_url') or 'none')[:80] if isinstance(parsed, dict) else 'none'
-            output = (parsed.get('execution_output') or '')[:300] if isinstance(parsed, dict) else ''
-            print(f"[SANDBOX_MCP] Parsed result | status={status} | tunnel={tunnel} | elapsed={elapsed:.1f}s")
+            tunnel = (parsed.get('tunnel_url') or 'none')[:150] if isinstance(parsed, dict) else 'none'
+            output = (parsed.get('execution_output') or '')[:600] if isinstance(parsed, dict) else ''
+            sandbox_name = parsed.get('sandbox_name', 'NONE') if isinstance(parsed, dict) else 'NONE'
+            print(f"[SANDBOX_MCP] STEP-9 FINAL: status={status} | sandbox_name={sandbox_name}")
+            print(f"[SANDBOX_MCP] STEP-9 tunnel_url={tunnel}")
             if output:
-                print(f"[SANDBOX_MCP] execution_output: {output}")
+                print(f"[SANDBOX_MCP] STEP-9 execution_output={output}")
             if status == 'error':
-                print(f"[SANDBOX_MCP] FULL RESPONSE: {json.dumps(parsed, indent=2)[:500]}")
+                print(f"[SANDBOX_MCP] STEP-9 FULL ERROR:")
+                print(json.dumps(parsed, indent=2)[:1500])
             self._touch(session_id)
+            print(f"[SANDBOX_MCP] ===== deploy_workspace END (status={status}) =====\n")
             return parsed
         except Exception as e:
             elapsed = time.time() - deploy_start
-            print(f"[SANDBOX_MCP] ERROR: deploy failed after {elapsed:.1f}s: {e}")
+            print(f"[SANDBOX_MCP] STEP-7 EXCEPTION after {elapsed:.1f}s: {e}")
+            import traceback
+            traceback.print_exc()
             logger.error("[sandbox_mcp] deploy_workspace failed: %s", e)
+            print(f"[SANDBOX_MCP] ===== deploy_workspace END (EXCEPTION) =====\n")
             return {"status": "error", "error": str(e)}
 
-    async def get_sandbox_status(self, session_id: str) -> Dict[str, Any]:
+    async def get_sandbox_status(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("get_sandbox_status", {
+            result = await self._call_tool("get_sandbox_status", self._with_client_id({
                 "session_id": session_id,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def delete_sandbox(self, session_id: str) -> Dict[str, Any]:
+    async def delete_sandbox(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("delete_sandbox", {
+            result = await self._call_tool("delete_sandbox", self._with_client_id({
                 "session_id": session_id,
-            })
+            }, user_id))
             self._session_activity.pop(session_id, None)
             self._tunnel_urls.pop(session_id, None)
             # Do NOT delete local workspace — files are needed for re-deploy
@@ -426,21 +625,30 @@ class SandboxMCPService:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def list_sandboxes(self) -> Dict[str, Any]:
+    async def list_sandboxes(self, user_id: str = None) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("list_sandboxes", {})
+            result = await self._call_tool("list_sandboxes", self._with_client_id({}, user_id))
+            return self._parse_response(result)
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    async def get_sandbox_logs(self, session_id: str, user_id: str = None) -> Dict[str, Any]:
+        try:
+            result = await self._call_tool("get_sandbox_logs", self._with_client_id({
+                "session_id": session_id,
+            }, user_id))
             return self._parse_response(result)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def execute_in_sandbox(
-        self, session_id: str, entrypoint: str
+        self, session_id: str, entrypoint: str, user_id: str = None
     ) -> Dict[str, Any]:
         try:
-            result = await self._call_tool("execute_in_sandbox", {
+            result = await self._call_tool("execute_in_sandbox", self._with_client_id({
                 "session_id": session_id,
                 "entrypoint": entrypoint,
-            })
+            }, user_id))
             self._touch(session_id)
             return self._parse_response(result)
         except Exception as e:

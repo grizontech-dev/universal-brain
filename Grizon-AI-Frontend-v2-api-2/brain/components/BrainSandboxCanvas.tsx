@@ -174,6 +174,19 @@ export default function BrainSandboxCanvas({ streamUrl, jobId, onClose, todoList
                             console.error("Sandbox reported error:", frame.data);
                             break;
 
+                        case "sandbox_ready":
+                            const readyUrl = frame.data.tunnel_url || frame.data.url || frame.data.stream_url;
+                            if (readyUrl) {
+                                console.log(`Sandbox ready with URL: ${readyUrl}`);
+                                window.dispatchEvent(new CustomEvent('openBrainEditor', {
+                                    detail: { jobId, streamUrl: readyUrl, syncUrl: null, framework: null }
+                                }));
+                                window.dispatchEvent(new CustomEvent('openSandboxCanvas', {
+                                    detail: { jobId, streamUrl: readyUrl, syncUrl: null, framework: null }
+                                }));
+                            }
+                            break;
+
                         case "done":
                             setStatus(frame.data.outcome);
                             if (frame.data.outcome === 'failed') {

@@ -20,6 +20,8 @@ class ProviderRouter:
         openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or None
         deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com/v1"
+        deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "").strip() or None
+        deepinfra_base = os.getenv("DEEPINFRA_BASE_URL", "").strip() or "https://api.deepinfra.com/v1/openai"
 
         def _make_openai(model: str):
             return ChatOpenAI(
@@ -34,6 +36,11 @@ class ProviderRouter:
             )
 
         def _make_deepseek(model: str):
+            # Enable thinking mode for deepseek-v4-pro (reasoning model)
+            extra = {}
+            if "v4-pro" in model.lower():
+                extra["extra_body"] = {"thinking": {"type": "enabled"}}
+                print(f"{LOG} → Thinking mode ENABLED for {model}", flush=True)
             return ChatOpenAI(
                 model=model,
                 api_key=deepseek_key,
@@ -42,7 +49,27 @@ class ProviderRouter:
                 max_retries=2,
                 timeout=120,
                 request_timeout=120,
-                **({"max_tokens": max_tokens} if max_tokens else {})
+                **({"max_tokens": max_tokens} if max_tokens else {}),
+                **extra
+            )
+
+        def _make_deepinfra(model: str):
+            extra = {}
+            # Qwen3-Coder: temperature + top_p only (DeepInfra doesn't support top_k, repetition_penalty)
+            if "qwen" in model.lower():
+                extra = {
+                    "top_p": 0.8,
+                }
+            return ChatOpenAI(
+                model=model,
+                api_key=deepinfra_key,
+                base_url=deepinfra_base,
+                temperature=temperature,
+                max_retries=2,
+                timeout=180,
+                request_timeout=180,
+                **({"max_tokens": max_tokens} if max_tokens else {}),
+                **extra,
             )
 
         # Decide the universal fallback — DeepSeek first, then OpenAI
@@ -54,16 +81,41 @@ class ProviderRouter:
             return _make_openai("gpt-4o")
 
         # Handle UUIDs/Database IDs by defaulting to fallback
-        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek"])
+        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi", "deepinfra", "qwen", "gemma"])
+
         print(f"{LOG} get_model(id='{model_id}', temp={temperature}) | known={is_known_id}", flush=True)
 
         # DeepSeek Models — primary provider
         if "deepseek" in model_id.lower():
             if deepseek_key:
                 print(f"{LOG} → DeepSeek '{model_id}' (base={deepseek_base})", flush=True)
-                model = _make_deepseek(model_id)
-            else:
-                model = get_fallback_model()
+                return _make_deepseek(model_id)
+            return get_fallback_model()
+
+        # DeepInfra Models (Qwen, Llama, etc.)
+        elif "deepinfra" in model_id.lower() or "qwen" in model_id.lower():
+            if deepinfra_key:
+                print(f"{LOG} → DeepInfra '{model_id}' (base={deepinfra_base})", flush=True)
+                return _make_deepinfra(model_id)
+            return get_fallback_model()
+
+        # Kimi Models (OpenAI-compatible API) — only temperature=1 allowed
+        elif "kimi" in model_id.lower():
+            kimi_key = os.getenv("KIMI_API_KEY", "").strip() or openai_key
+            kimi_base = os.getenv("KIMI_BASE_URL", "").strip() or "https://api.moonshot.cn/v1"
+            if kimi_key:
+                print(f"{LOG} → Kimi '{model_id}' (base={kimi_base}, temp=1 forced)", flush=True)
+                return ChatOpenAI(
+                    model=model_id,
+                    api_key=kimi_key,
+                    base_url=kimi_base,
+                    temperature=1,
+                    max_retries=2,
+                    timeout=120,
+                    request_timeout=120,
+                    **({"max_tokens": max_tokens} if max_tokens else {})
+                )
+            return get_fallback_model()
 
         # Claude Models or Unknown IDs - Fallback
         elif "claude" in model_id.lower() or not is_known_id:
@@ -79,11 +131,17 @@ class ProviderRouter:
                 model = get_fallback_model()
 
         # Gemini Models
-        elif "gemini" in model_id:
+        elif "gemini" in model_id or "gemma" in model_id:
             gemini_key = os.getenv("GOOGLE_AI_API_KEY", "").strip() or None
             if gemini_key:
                 # Map model names to actual API model IDs
-                if "2.5-flash-lite" in model_id:
+                if "gemma-4-26b" in model_id:
+                    actual_model = "gemma-4-26b-a4b-it"
+                elif "gemma-4-31b" in model_id:
+                    actual_model = "gemma-4-31b-it"
+                elif "gemma" in model_id:
+                    actual_model = "gemma-4-26b-a4b-it"
+                elif "2.5-flash-lite" in model_id:
                     actual_model = "gemini-2.5-flash-lite"
                 elif "2.5-flash" in model_id:
                     actual_model = "gemini-2.5-flash"

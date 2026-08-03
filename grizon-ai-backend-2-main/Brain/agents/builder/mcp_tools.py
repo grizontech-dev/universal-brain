@@ -32,17 +32,22 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     actual_path = file_path or code_path
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
+    user_id = config.get("configurable", {}).get("user_id")
     
     print(f"{LOG} client_save_code | file={actual_path} | size={len(code_content)} chars | session={session_id}", flush=True)
 
     if not actual_path:
         return "ERROR: file_path is required."
 
+    if not code_content or len(code_content.strip()) == 0:
+        print(f"{LOG} ⚠ REJECTED empty content for {actual_path} — LLM must provide code_content", flush=True)
+        return f"ERROR: code_content is empty for '{actual_path}'. You MUST provide the actual file content, not an empty string."
+
     if not session_id:
         print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id (thread_id) not provided in config."
 
-    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
+    ws_root = workspace_manager.resolve_workspace_path(str(session_id), user_id=user_id)
     if not ws_root:
         print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return f"ERROR: Could not resolve workspace path for session '{session_id}'."
@@ -55,6 +60,12 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
         normalized_path = normalized_path[len('workspace/'):]
     elif normalized_path.startswith('/'):
         normalized_path = normalized_path[1:]
+
+    # Reject paths that don't belong to the app
+    VALID_PREFIXES = ('frontend/', 'backend/', 'database/', 'src/', 'public/', 'server.')
+    if not any(normalized_path.startswith(p) for p in VALID_PREFIXES):
+        print(f"{LOG} ⚠ REJECTED invalid path: {actual_path} → {normalized_path} (must start with frontend/, backend/, database/)", flush=True)
+        return f"ERROR: Invalid file path '{actual_path}'. Files must be saved under frontend/, backend/, or database/ directories."
 
     abs_path = os.path.abspath(os.path.join(ws_root, normalized_path))
     if not abs_path.startswith(os.path.abspath(ws_root)):
@@ -182,6 +193,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
     """Packages the workspace, deploys it to the remote sandbox, and runs the commands."""
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Deploying")
+    user_id = config.get("configurable", {}).get("user_id")
 
     print(f"{LOG} client_execute_in_sandbox | session={session_id} | entry={entry_file}", flush=True)
 
@@ -189,13 +201,24 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         print(f"{LOG} ✖ ERROR: No session_id provided", flush=True)
         return "ERROR: session_id not provided."
         
-    ws_root = workspace_manager.resolve_workspace_path(str(session_id))
+    ws_root = workspace_manager.resolve_workspace_path(str(session_id), user_id=user_id)
     if not ws_root or not os.path.exists(ws_root):
         print(f"{LOG} ✖ ERROR: workspace not found for session={session_id}", flush=True)
         return "ERROR: Workspace directory not found."
 
     entry_file = _resolve_entrypoint(ws_root, entry_file)
     print(f"{LOG} Packaging workspace from: {ws_root} | entrypoint={entry_file}", flush=True)
+
+    has_frontend = os.path.isdir(os.path.join(ws_root, "frontend"))
+    has_backend = os.path.isdir(os.path.join(ws_root, "backend"))
+    if has_frontend and not has_backend:
+        backend_dir = os.path.join(ws_root, "backend")
+        os.makedirs(backend_dir, exist_ok=True)
+        with open(os.path.join(backend_dir, "server.js"), "w") as bf:
+            bf.write('const express = require("express");\nconst app = express();\napp.get("/api/health", (req, res) => res.json({ status: "ok" }));\napp.listen(3001, "0.0.0.0", () => console.log("Backend running on 3001"));\n')
+        with open(os.path.join(backend_dir, "package.json"), "w") as bf:
+            json.dump({"name": "backend", "version": "1.0.0", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.18.0", "cors": "^2.8.5"}}, bf, indent=2)
+        print(f"{LOG} Created minimal backend/ folder for dual-service mode", flush=True)
 
     # Package workspace to base64
     memory_file = io.BytesIO()
@@ -228,11 +251,11 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
 
     try:
         print(f"{LOG} Calling MCP execute_workspace_archive (timeout=600s)...", flush=True)
-        result = await sandbox_mcp._call_tool("execute_workspace_archive", {
+        result = await sandbox_mcp._call_tool("execute_workspace_archive", sandbox_mcp._with_client_id({
             "session_id": session_id,
             "entrypoint": entry_file,
             "archive_b64": encoded_archive,
-        }, timeout=600)
+        }, user_id), timeout=600)
         print(f"{LOG} MCP result type: {type(result).__name__}", flush=True)
         output_data = sandbox_mcp._parse_response(result)
                 
@@ -242,6 +265,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
             if tunnel_url:
                 print(f"{LOG} TUNNEL URL: {tunnel_url}", flush=True)
                 output_text += f"\nTunnel URL: {tunnel_url}"
+                sandbox_mcp.store_tunnel_url(session_id, tunnel_url)
                 # Broadcast dedicated sandbox_ready event so the frontend canvas loads the preview
                 await ws_manager.broadcast_to_sandbox(session_id, {
                     "type": "sandbox_ready",
@@ -459,3 +483,20 @@ GRANT ALL ON public.todos TO authenticated;"""
         f"```sql\n{setup_sql}\n```\n\n"
         f"After running this ONCE, the agent will be able to create any table automatically via supabase_exec_sql."
     )
+
+
+@tool
+async def client_get_sandbox_logs(config: RunnableConfig) -> str:
+    """Retrieves application logs (stdout/stderr) from the running sandbox container."""
+    from Brain.services.sandbox_mcp_service import sandbox_mcp
+    session_id = config.get("configurable", {}).get("thread_id")
+    user_id = config.get("configurable", {}).get("user_id")
+
+    if not session_id:
+        return "ERROR: No session_id (thread_id) provided."
+
+    result = await sandbox_mcp.get_sandbox_logs(session_id, user_id=user_id)
+
+    if isinstance(result, dict):
+        return result.get("logs") or result.get("error") or str(result)
+    return str(result)

@@ -56,17 +56,23 @@ class WorkspaceManager:
             print(f"WARNING: mkdir '{path}' in {workspace_id}: {e}")
             return False
 
-    def resolve_workspace_path(self, workspace_id: str) -> Optional[str]:
-        local_path = os.path.join(self.container_workspaces_path, workspace_id)
-        if os.path.exists(local_path):
-            return local_path
-        # Auto-create if it doesn't exist yet (prevents list-files 404 after restart)
+    def resolve_workspace_path(self, workspace_id: str, user_id: str = None) -> Optional[str]:
+        target_path = os.path.join(self.container_workspaces_path, user_id, workspace_id) if user_id else os.path.join(self.container_workspaces_path, workspace_id)
+        
+        # If target path already exists, return it
+        if os.path.exists(target_path):
+            return target_path
+            
+        # If a legacy path exists and we're looking for a user path, check if it has files
+        # (This helps with backward compatibility, but we shouldn't use it if we want strict user isolation.
+        # However, to be safe, we'll just create the target path.)
+        
         try:
-            os.makedirs(local_path, exist_ok=True)
-            print(f"DEBUG: Auto-created workspace directory: {local_path}")
-            return local_path
+            os.makedirs(target_path, exist_ok=True)
+            print(f"DEBUG: Auto-created workspace directory: {target_path}")
+            return target_path
         except OSError as e:
-            print(f"WARNING: Could not create workspace directory {local_path}: {e}")
+            print(f"WARNING: Could not create workspace directory {target_path}: {e}")
             return None
 
     def build_op_write_file(self, path: str, content: str) -> Dict[str, Any]:

@@ -1,21 +1,22 @@
 from typing import Any, Dict, List
 import os
 import json
+import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.shared.review_loop import QualityReviewer
+from Brain.agents.builder.mcp_tools import client_save_code
+from Brain.services.provider_router import ProviderRouter
 
 class BackendAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="deepseek-chat"
+            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
         self.skill_resolver = SkillResolver()
-        self.reviewer = QualityReviewer()
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
@@ -91,7 +92,62 @@ class BackendAgent(BaseAgent):
             ),
         )
 
-        # Generation (review loop disabled to prevent timeout)
-        response_content = await self.chat(messages)
-        generated_json = self._format_json_response(response_content)
-        return generated_json
+        print(f"[BACKEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
+
+        llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
+        bound_llm = llm.bind_tools([client_save_code])
+
+        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=messages[-1].content)]
+
+        files_saved = []
+        max_iterations = 8
+        for iteration in range(max_iterations):
+            try:
+                response = await asyncio.wait_for(
+                    bound_llm.ainvoke(msgs),
+                    timeout=180
+                )
+            except Exception as e:
+                print(f"[BACKEND] LLM error: {e}", flush=True)
+                break
+
+            msgs.append(response)
+
+            if not response.tool_calls:
+                break
+
+            for tc in response.tool_calls:
+                if tc["name"] == "client_save_code":
+                    tool_args = tc["args"]
+                    file_path = tool_args.get("file_path", "")
+                    code_content = tool_args.get("code_content", "")
+
+                    if file_path and code_content:
+                        config = {"configurable": {"thread_id": state.get("current_job_id"), "task_title": task.get("title", ""), "user_id": state.get("user_id")}}
+                        try:
+                            await asyncio.wait_for(
+                                client_save_code.ainvoke(tool_args, config=config),
+                                timeout=30
+                            )
+                            files_saved.append(file_path)
+                            print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
+                            msgs.append(ToolMessage(
+                                content=f"Successfully saved file: {file_path} ({len(code_content)} chars)",
+                                tool_call_id=tc["id"]
+                            ))
+                        except Exception as e:
+                            print(f"[BACKEND] ✖ Failed to save {file_path}: {e}", flush=True)
+                            msgs.append(ToolMessage(
+                                content=f"Error saving {file_path}: {str(e)}",
+                                tool_call_id=tc["id"]
+                            ))
+
+        if not files_saved:
+            last_content = msgs[-1].content if msgs else ""
+            if isinstance(last_content, list):
+                last_content = str(last_content)
+            parsed = self._format_json_response(last_content)
+            if isinstance(parsed, dict) and "files" in parsed:
+                return parsed
+
+        return {"files": [{"path": f, "content": ""} for f in files_saved], "summary": f"Saved {len(files_saved)} files via tool calls"}

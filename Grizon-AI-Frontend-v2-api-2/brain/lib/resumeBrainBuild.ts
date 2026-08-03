@@ -14,6 +14,7 @@ export type ResumeBrainPayload = {
     workspace_ops: WorkspaceOp[];
     startup_ops: WorkspaceOp[];
     sync_url: string;
+    tunnel_url?: string;
 };
 
 export async function fetchResumePayload(

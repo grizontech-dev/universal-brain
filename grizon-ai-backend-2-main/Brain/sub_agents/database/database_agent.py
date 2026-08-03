@@ -5,17 +5,15 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.shared.review_loop import QualityReviewer
 
 class DatabaseAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
-            model_id="deepseek-chat"
+            model_id="deepseek-v4-flash"
         )
         self.skill_resolver = SkillResolver()
-        self.reviewer = QualityReviewer()
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
@@ -88,6 +86,6 @@ class DatabaseAgent(BaseAgent):
         )
 
         # Generation (review loop disabled to prevent timeout)
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, timeout=300)
         generated_json = self._format_json_response(response_content)
         return generated_json

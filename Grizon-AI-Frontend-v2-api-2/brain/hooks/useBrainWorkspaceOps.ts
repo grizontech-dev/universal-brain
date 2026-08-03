@@ -47,7 +47,22 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
     useEffect(() => {
         if (!syncUrl || !jobId) return;
 
-        const ws = new WebSocket(syncUrl);
+        // Rewrite syncUrl: backend sends ws://localhost:8001 but browser needs real host
+        let wsUrl = syncUrl;
+        try {
+            const apiBase = (process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
+            const wsBase = apiBase.replace(/^http/, 'ws');
+            const urlObj = new URL(syncUrl);
+            if (urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1') {
+                const baseObj = new URL(wsBase);
+                urlObj.hostname = baseObj.hostname;
+                urlObj.port = baseObj.port || (baseObj.protocol === 'wss:' ? '443' : '80');
+                urlObj.protocol = baseObj.protocol;
+                wsUrl = urlObj.toString();
+            }
+        } catch { /* keep original syncUrl */ }
+
+        const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
         ws.onopen = () => ws.send('ping');

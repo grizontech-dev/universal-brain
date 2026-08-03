@@ -96,7 +96,7 @@ class TodoAgent(BaseAgent):
         super().__init__(
             name="Todo",
             description="Converts the approved plan into executable tasks (3–15).",
-            model_id="deepseek-chat",
+            model_id="deepseek-v4-flash",
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -197,7 +197,7 @@ class TodoAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Approved Plan: {json.dumps(plan)}"))
 
         print(f"{LOG} Calling LLM now with {len(messages)} messages, total chars={sum(len(m.content) for m in messages)}", flush=True)
-        response_content = await self.chat(messages, model_id="deepseek-chat", timeout=180)
+        response_content = await self.chat(messages, model_id="deepseek-v4-flash", timeout=300)
         print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
         tasks = self._format_json_response(response_content)
 
@@ -287,6 +287,16 @@ class TodoAgent(BaseAgent):
                     task["description"] = desc
 
         tasks = clamp_todo_list(tasks)
+
+        import re as _re
+        for task in tasks:
+            title = task.get("title", "")
+            title = _re.sub(r'[^\w\s\-:.,&+()/]', '', title).strip()
+            title = _re.sub(r'\s{2,}', ' ', title)
+            if len(title) > 80:
+                title = title[:80].rsplit(' ', 1)[0]
+            task["title"] = title or f"Task {task.get('id', 'unknown')}"
+
         print(f"DEBUG: TodoAgent produced {len(tasks)} tasks (clamp {MIN_TODOS}-{MAX_TODOS})")
 
         state["tasks"] = tasks
