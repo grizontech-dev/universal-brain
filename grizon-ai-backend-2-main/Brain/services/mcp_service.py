@@ -18,7 +18,7 @@ class MCPServiceError(Exception):
 
 class MCPService:
     def __init__(self):
-        self.gcp_mcp_base_url = os.getenv("GCP_MCP_BASE_URL", "http://34.131.119.144")
+        self.gcp_mcp_base_url = os.getenv("GCP_MCP_BASE_URL", "http://34.131.51.97")
         self.github_service = GitHubConnectorService()
 
     @asynccontextmanager
