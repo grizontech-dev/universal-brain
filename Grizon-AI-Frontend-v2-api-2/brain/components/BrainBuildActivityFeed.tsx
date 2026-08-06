@@ -108,10 +108,16 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
     const actionColor = isNew ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 border-amber-500/20';
     const hasLines = (singleAct.linesAdded || 0) > 0 || (singleAct.linesRemoved || 0) > 0;
 
+    const handleFileOpen = () => {
+        if (!isFolder && filePath) {
+            window.dispatchEvent(new CustomEvent('openBrainFile', { detail: { path: filePath } }));
+        }
+    };
+
     return (
         <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
             <button
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={() => { setIsOpen(!isOpen); handleFileOpen(); }}
                 className="w-full flex items-center gap-2.5 py-2 px-2.5 rounded-lg hover:bg-surface-2 transition-colors group"
             >
                 {isFolder

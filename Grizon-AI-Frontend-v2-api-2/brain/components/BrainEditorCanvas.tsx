@@ -620,6 +620,23 @@ export default function BrainEditorCanvas({
     }, [jobId]);
 
     useEffect(() => {
+        const onOpenFile = async (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            const filePath = detail?.path;
+            if (!filePath) return;
+            const name = filePath.split('/').pop() || filePath;
+            const loaded = await loadFileContent({ type: 'file', name, path: filePath } as FileNode);
+            setActiveFile(loaded);
+            setOpenFiles(prev => {
+                if (prev.find(f => f.path === loaded.path)) return prev;
+                return [...prev, loaded];
+            });
+        };
+        window.addEventListener('openBrainFile', onOpenFile);
+        return () => window.removeEventListener('openBrainFile', onOpenFile);
+    }, []);
+
+    useEffect(() => {
         const id = jobIdRef.current || jobId;
         if (!id) return;
         scheduleFileRefresh(id, !filesLoadedRef.current);
