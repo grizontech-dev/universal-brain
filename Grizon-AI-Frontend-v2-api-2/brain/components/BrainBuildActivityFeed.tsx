@@ -52,6 +52,51 @@ function todoStatusIcon(status?: string) {
     return <Circle size={14} className="text-white/20 shrink-0" />;
 }
 
+function fileBasename(p: string): string {
+    const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+function TodoChips({ todo }: { todo: BuildTodoItem }) {
+    const files = (todo.files || []).filter(Boolean);
+    const apis = (todo.api || []).filter(Boolean);
+    if (files.length === 0 && apis.length === 0) return null;
+
+    const fileChips = files.slice(0, 3).map(fileBasename);
+    const apiChips = apis.slice(0, 2);
+    const extraFiles = files.length - fileChips.length;
+    const extraApis = apis.length - apiChips.length;
+
+    return (
+        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+            {fileChips.map((f, i) => (
+                <span
+                    key={`f-${i}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-[10px] font-mono text-white/40"
+                >
+                    <FilePlus size={9} className="shrink-0" />
+                    {f}
+                </span>
+            ))}
+            {extraFiles > 0 && (
+                <span className="text-[10px] text-white/30 font-mono">+{extraFiles}</span>
+            )}
+            {apiChips.map((a, i) => (
+                <span
+                    key={`a-${i}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#976df8]/[0.08] border border-[#976df8]/[0.15] text-[10px] font-mono text-[#c4b5fd]"
+                >
+                    <Terminal size={9} className="shrink-0" />
+                    {a}
+                </span>
+            ))}
+            {extraApis > 0 && (
+                <span className="text-[10px] text-white/30 font-mono">+{extraApis}</span>
+            )}
+        </div>
+    );
+}
+
 function CollapsibleActivityGroup({ act, activities }: { act: any, activities: any[] }) {
     const [isOpen, setIsOpen] = useState(false);
     const filesCount = activities.length;
@@ -197,23 +242,28 @@ export default function BrainBuildActivityFeed({
                             <li
                                 key={t.id || i}
                                 ref={isRunning ? tasksEndRef : undefined}
-                                className="flex items-center gap-2 text-[11px]"
+                                className="flex flex-col py-0.5"
                             >
-                                <span className={`shrink-0 ${
-                                    isDone ? 'text-emerald-400'
-                                    : isRunning ? 'text-[#c4b5fd]' : 'text-white/40'
-                                }`}>
-                                    {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
-                                </span>
-                                <span className={`leading-snug truncate ${
-                                    isDone
-                                        ? 'text-white/50'
-                                        : isRunning
-                                          ? 'text-[#c4b5fd] font-medium'
-                                          : 'text-white/70'
-                                }`}>
-                                    {t.title || t.task || 'Task'}
-                                </span>
+                                <div className="flex items-center gap-2 text-[11px]">
+                                    <span className={`shrink-0 ${
+                                        isDone ? 'text-emerald-400'
+                                        : isRunning ? 'text-[#c4b5fd]' : 'text-white/40'
+                                    }`}>
+                                        {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
+                                    </span>
+                                    <span className={`leading-snug truncate ${
+                                        isDone
+                                            ? 'text-white/50'
+                                            : isRunning
+                                              ? 'text-[#c4b5fd] font-medium'
+                                              : 'text-white/70'
+                                    }`}>
+                                        {t.title || t.task || 'Task'}
+                                    </span>
+                                </div>
+                                <div className="pl-[18px]">
+                                    <TodoChips todo={t} />
+                                </div>
                             </li>
                             );
                         })}

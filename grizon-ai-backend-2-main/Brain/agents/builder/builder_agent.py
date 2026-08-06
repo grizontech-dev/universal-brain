@@ -1460,10 +1460,14 @@ class BuilderAgent(BaseAgent):
         if existing_code_context:
             system_prompt += existing_code_context
 
+        from Brain.shared.structured_spec import format_structured_spec
+        structured_hint = format_structured_spec(current_task)
+
         instruction = (
             f"Task Title: {task_title}\n"
             f"Description: {current_task.get('description', '')}\n\n"
-            "REMINDER: This is a PRODUCTION application. Every component must be visually stunning "
+            + (f"STRUCTURED SPEC (follow exactly):\n{structured_hint}\n\n" if structured_hint else "")
+            + "REMINDER: This is a PRODUCTION application. Every component must be visually stunning "
             "with dark theme, gradients, animations, real content, and responsive design. "
             "Do NOT create minimal/placeholder components. Build complete, beautiful UI.\n\n"
             "BEFORE WRITING App.jsx: List ALL component files you created and ONLY import those. "

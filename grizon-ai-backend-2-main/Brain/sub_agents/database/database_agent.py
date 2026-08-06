@@ -5,6 +5,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.shared.skills.resolver import SkillResolver
+from Brain.shared.structured_spec import format_structured_spec
 
 class DatabaseAgent(BaseAgent):
     def __init__(self):
@@ -20,6 +21,7 @@ class DatabaseAgent(BaseAgent):
         plan = state.get("project_plan", {})
 
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
+        structured_spec = format_structured_spec(task)
         
         skills_content = "{}"
         try:
@@ -48,6 +50,7 @@ class DatabaseAgent(BaseAgent):
         TASK:
         Title: {task.get('title')}
         Description: {task.get('description')}
+        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
 
         Respond ONLY in JSON:
         {{

@@ -1,12 +1,47 @@
 "use client";
 
 import React from 'react';
-import { CheckCircle2, Circle, Loader2, PlayCircle, Terminal, Layout, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, PlayCircle, Terminal, ShieldCheck, FilePlus } from 'lucide-react';
 
 interface Task {
     task: string;
     description: string;
     status: 'pending' | 'executing' | 'completed' | 'failed';
+    files?: string[];
+    api?: string[];
+}
+
+function fileBasename(p: string): string {
+    const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+function TaskChips({ files, apis }: { files?: string[]; apis?: string[] }) {
+    const fileList = (files || []).filter(Boolean);
+    const apiList = (apis || []).filter(Boolean);
+    if (fileList.length === 0 && apiList.length === 0) return null;
+    return (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+            {fileList.slice(0, 3).map((f, i) => (
+                <span key={`f-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-[10px] font-mono text-white/40">
+                    <FilePlus size={9} className="shrink-0" />
+                    {fileBasename(f)}
+                </span>
+            ))}
+            {fileList.length > 3 && (
+                <span className="text-[10px] text-white/30 font-mono">+{fileList.length - 3}</span>
+            )}
+            {apiList.slice(0, 2).map((a, i) => (
+                <span key={`a-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#976df8]/[0.08] border border-[#976df8]/[0.15] text-[10px] font-mono text-[#c4b5fd]">
+                    <Terminal size={9} className="shrink-0" />
+                    {a}
+                </span>
+            ))}
+            {apiList.length > 2 && (
+                <span className="text-[10px] text-white/30 font-mono">+{apiList.length - 2}</span>
+            )}
+        </div>
+    );
 }
 
 interface BrainTodoCanvasProps {
@@ -101,6 +136,7 @@ export default function BrainTodoCanvas({ todoList }: BrainTodoCanvasProps) {
                                                 {item.description}
                                             </p>
                                         )}
+                                        <TaskChips files={item.files} apis={item.api} />
                                         {isFailed && (item as any).error && (
                                             <p className="text-[10px] text-rose-400 mt-2 font-mono bg-rose-500/10 p-2 rounded border border-rose-500/20 whitespace-pre-wrap">
                                                 {(item as any).error}

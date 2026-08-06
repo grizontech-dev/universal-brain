@@ -12,16 +12,20 @@ MAX_TODOS = 15
 
 
 def _compact_plan(plan: dict) -> str:
-    """Return only task-relevant sections of the plan instead of the full JSON dump."""
+    """Return task-relevant sections of the plan. Falls back to a generous
+    portion of the full markdown when sections are thin, so context is never
+    lost (prevents hallucinating generic tasks)."""
     if not isinstance(plan, dict):
         return str(plan)
     name = plan.get("project_name", "Project")
     stack = plan.get("tech_stack", [])
     markdown = str(plan.get("markdown_plan", "") or "")
     keep_headers = (
-        "overview", "architecture", "data model", "key pages",
+        "overview", "architecture", "data model", "key pages", "pages",
         "components to build", "components & utilities", "implementation steps",
-        "utilities & helpers", "frontend stack", "backend stack",
+        "utilities & helpers", "frontend", "backend", "features", "schema",
+        "database", "api", "routes", "endpoints", "auth", "data storage",
+        "models", "tables",
     )
     sections = []
     if markdown:
@@ -35,7 +39,11 @@ def _compact_plan(plan: dict) -> str:
         if current:
             sections.append(current)
         kept = [s for s in sections if any(h in s[0].lower() for h in keep_headers)]
-        compact = "\n\n".join("\n".join(s) for s in kept) if kept else markdown[:1500]
+        kept_text = "\n\n".join("\n".join(s) for s in kept) if kept else ""
+        if not kept or len(kept_text) < 2000:
+            compact = markdown[:5000]
+        else:
+            compact = kept_text[:5000]
     else:
         compact = ""
     out = f"Project: {name}"
@@ -44,6 +52,56 @@ def _compact_plan(plan: dict) -> str:
     if compact:
         out += f"\nPlan Details:\n{compact}"
     return out
+
+
+def _normalize_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce structured task output into a Builder-compatible shape.
+    Composes the free-text description from structured fields (files/ui/api/acceptance)
+    so legacy consumers (BuilderAgent, service.py) keep working unchanged."""
+    if not isinstance(task, dict):
+        return task
+    task.setdefault("category", "frontend")
+    task.setdefault("skill_required", "implement")
+
+    files = task.get("files")
+    if not isinstance(files, list):
+        files = []
+    ui = task.get("ui")
+    if not isinstance(ui, list):
+        ui = []
+    api = task.get("api")
+    if not isinstance(api, list):
+        api = []
+    acc = task.get("acceptance") or task.get("acceptance_criteria")
+    if isinstance(acc, str):
+        acc = [acc]
+    if not isinstance(acc, list):
+        acc = []
+
+    if acc:
+        task["acceptance_criteria"] = "; ".join(str(a) for a in acc)
+
+    parts = []
+    if files:
+        parts.append("Files: " + ", ".join(str(f) for f in files))
+    if ui:
+        parts.append("UI: " + ", ".join(str(u) for u in ui))
+    if api:
+        parts.append("API: " + ", ".join(str(a) for a in api))
+    if acc:
+        parts.append("Acceptance: " + "; ".join(str(a) for a in acc))
+
+    desc = task.get("description") or ""
+    if len(desc) < 80 and parts:
+        desc = desc.rstrip()
+        if desc and not desc.endswith((".", "!", "?")):
+            desc += "."
+        task["description"] = ((desc + " ") if desc else "") + "\n".join(parts)
+
+    task["files"] = files
+    task["ui"] = ui
+    task["api"] = api
+    return task
 
 
 def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -209,17 +267,28 @@ class TodoAgent(BaseAgent):
 
         TASK CATEGORIES: frontend | backend | database | runner
 
-        Respond ONLY with a JSON array:
+        Respond ONLY with a JSON array. Each task is a STRUCTURED object with short, precise values (no long prose):
         [
           {{
             "id": "t1",
             "title": "Task Title",
-            "description": "DETAILED: What to build, exact files, exact UI elements, exact dependencies",
             "category": "frontend",
-            "skill_required": "skill",
-            "acceptance_criteria": "How to verify"
+            "skill_required": "implement",
+            "files": ["frontend/src/components/Dashboard.jsx", "frontend/src/components/StatsCard.jsx"],
+            "ui": ["sidebar", "stats cards", "chart", "dark theme"],
+            "api": ["/api/dashboard", "/api/stats"],
+            "depends_on": ["t2"],
+            "acceptance": ["Dashboard renders real stats from /api/dashboard", "Components imported in App.jsx"]
           }}
         ]
+
+        FIELD GUIDE:
+        - files: EXACT file paths to create or modify (max 5). CRITICAL — the Builder writes exactly these files.
+        - ui: specific UI elements/components to build with Tailwind styling (no placeholders).
+        - api: exact /api/* endpoints this task connects to (only routes from the plan).
+        - depends_on: task ids that must finish first (empty if none).
+        - acceptance: 2-3 concrete verification checks.
+        - description: OPTIONAL — only a short 1-2 sentence summary if needed.
         """
 
         messages = [
@@ -258,6 +327,7 @@ class TodoAgent(BaseAgent):
             route_hint = "Use frontend/src/lib/api.js (apiGet/apiPost/apiPut/apiDelete) for any data calls; see backend tasks for exact /api/* routes."
 
         if isinstance(tasks, list):
+            tasks = [_normalize_task(t) for t in tasks]
             for task in tasks:
                 if task.get("category") == "frontend":
                     desc = task.get("description", "") or ""
@@ -267,6 +337,8 @@ class TodoAgent(BaseAgent):
                     desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
                     desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
                     task["description"] = desc
+                    if not task.get("api") and backend_routes:
+                        task["api"] = list(backend_routes)
 
         if not isinstance(tasks, list):
             tasks = [
@@ -276,6 +348,10 @@ class TodoAgent(BaseAgent):
                     "description": "SQL tables in backend/supabase/ using the Shared Table + JSONB Data Matrix Pattern.",
                     "category": "database",
                     "skill_required": "database",
+                    "files": ["backend/supabase/schema.sql"],
+                    "ui": [],
+                    "api": [],
+                    "acceptance": ["Schema file matches API needs and keeps tenant data isolated"],
                     "acceptance_criteria": "Schema file matches API needs and keeps tenant data isolated",
                 },
                 {
@@ -284,6 +360,10 @@ class TodoAgent(BaseAgent):
                     "description": "Routes, controllers, and the Python Backend Proxy integration mounted in backend/server.js.",
                     "category": "backend",
                     "skill_required": "backend",
+                    "files": ["backend/server.js"],
+                    "ui": [],
+                    "api": [],
+                    "acceptance": ["All /api/* routes mounted in server.js and persistence flows through the proxy"],
                     "acceptance_criteria": "All /api/* routes mounted in server.js and persistence flows through the proxy",
                 },
                 {
@@ -292,6 +372,10 @@ class TodoAgent(BaseAgent):
                     "description": "Navbar, Hero, Features, Contact with Tailwind in frontend/src/components/.",
                     "category": "frontend",
                     "skill_required": "frontend",
+                    "files": ["frontend/src/components/"],
+                    "ui": ["Navbar", "Hero", "Features", "Contact"],
+                    "api": [],
+                    "acceptance": ["Components created under frontend/src/components/"],
                     "acceptance_criteria": "Components created under frontend/src/components/",
                 },
                 {
@@ -300,6 +384,10 @@ class TodoAgent(BaseAgent):
                     "description": "Rewrite App.jsx, react-router-dom, api.js forms, and backend proxy wiring.",
                     "category": "frontend",
                     "skill_required": "integration",
+                    "files": ["frontend/src/App.jsx"],
+                    "ui": [],
+                    "api": [],
+                    "acceptance": ["Preview shows full site, not template demo"],
                     "acceptance_criteria": "Preview shows full site, not template demo",
                 },
                 {
@@ -308,7 +396,11 @@ class TodoAgent(BaseAgent):
                     "description": "Runner starts backend and frontend dev servers.",
                     "category": "runner",
                     "skill_required": "runner",
-                    "acceptance_criteria": "Preview loads on port 5173",
+                    "files": [],
+                    "ui": [],
+                    "api": [],
+                    "acceptance": ["Preview loads on port 9999"],
+                    "acceptance_criteria": "Preview loads on port 9999",
                 },
             ]
             for task in tasks:

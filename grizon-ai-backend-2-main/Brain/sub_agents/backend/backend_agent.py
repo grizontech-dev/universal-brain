@@ -8,6 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code
 from Brain.services.provider_router import ProviderRouter
+from Brain.shared.structured_spec import format_structured_spec
 
 class BackendAgent(BaseAgent):
     def __init__(self):
@@ -24,6 +25,7 @@ class BackendAgent(BaseAgent):
         executed = state.get("executed_tasks", [])[-5:]
 
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
+        structured_spec = format_structured_spec(task)
         
         skills_content = "{}"
         try:
@@ -51,6 +53,7 @@ class BackendAgent(BaseAgent):
         Title: {task.get('title')}
         Description: {task.get('description')}
         Acceptance: {task.get('acceptance_criteria', '')}
+        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
 
         Respond ONLY in JSON:
         {{
