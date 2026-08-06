@@ -72,14 +72,36 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
         print(f"{LOG} ✖ ERROR: Invalid file path (path traversal attempt): {actual_path}", flush=True)
         return "ERROR: Invalid file path."
 
+    # Read old content for diff info
+    old_content = ""
+    is_new_file = not os.path.exists(abs_path)
+    if not is_new_file:
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                old_content = f.read()
+        except Exception:
+            old_content = ""
+
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(code_content)
 
     print(f"{LOG} ✓ Saved: {actual_path} → {abs_path} ({len(code_content)} chars)", flush=True)
 
+    # Compute diff stats
+    old_lines = old_content.splitlines() if old_content else []
+    new_lines = code_content.splitlines() if code_content else []
+    old_set = set(old_lines)
+    new_set = set(new_lines)
+    lines_added = max(0, len(new_lines) - len([l for l in old_lines if l in new_set]))
+    lines_removed = max(0, len(old_lines) - len([l for l in new_lines if l in old_set]))
+    action = "Created" if is_new_file else "Edited"
+
     # Emit WebSocket event
-    act = _make_activity("edit_file", f"Saved {actual_path}", path=actual_path, task_title=task_title)
+    act = _make_activity("edit_file", f"{action} {actual_path}", path=actual_path, task_title=task_title)
+    act["linesAdded"] = lines_added
+    act["linesRemoved"] = lines_removed
+    act["isNew"] = is_new_file
     progress_msg = json.dumps({
         "type": "file_updated",
         "file": actual_path,

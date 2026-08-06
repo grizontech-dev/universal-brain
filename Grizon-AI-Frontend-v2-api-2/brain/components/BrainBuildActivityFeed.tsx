@@ -72,85 +72,83 @@ function TodoChips({ todo }: { todo: BuildTodoItem }) {
             {fileChips.map((f, i) => (
                 <span
                     key={`f-${i}`}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-[10px] font-mono text-white/40"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface-2 border border-border-subtle text-[10px] font-mono text-text-muted"
                 >
                     <FilePlus size={9} className="shrink-0" />
                     {f}
                 </span>
             ))}
             {extraFiles > 0 && (
-                <span className="text-[10px] text-white/30 font-mono">+{extraFiles}</span>
+                <span className="text-[10px] text-text-muted/60 font-mono">+{extraFiles}</span>
             )}
             {apiChips.map((a, i) => (
                 <span
                     key={`a-${i}`}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#976df8]/[0.08] border border-[#976df8]/[0.15] text-[10px] font-mono text-[#c4b5fd]"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-[10px] font-mono text-accent"
                 >
                     <Terminal size={9} className="shrink-0" />
                     {a}
                 </span>
             ))}
             {extraApis > 0 && (
-                <span className="text-[10px] text-white/30 font-mono">+{extraApis}</span>
+                <span className="text-[10px] text-text-muted/60 font-mono">+{extraApis}</span>
             )}
         </div>
     );
 }
 
-function CollapsibleActivityGroup({ act, activities }: { act: any, activities: any[] }) {
+function FileChangeCard({ singleAct }: { singleAct: any }) {
     const [isOpen, setIsOpen] = useState(false);
-    const filesCount = activities.length;
-    const totalAdded = act.linesAdded || 0;
-    const totalRemoved = act.linesRemoved || 0;
+    const filePath = singleAct.path || singleAct.label || '';
+    const fileName = fileBasename(filePath);
+    const dirPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
+    const isFolder = filePath.endsWith('/');
+    const isNew = singleAct.isNew;
+    const actionLabel = isNew ? 'Created' : 'Edited';
+    const actionColor = isNew ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 border-amber-500/20';
+    const hasLines = (singleAct.linesAdded || 0) > 0 || (singleAct.linesRemoved || 0) > 0;
 
     return (
-        <div className="flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200 py-0.5">
-            {/* Compact v0-style group header */}
+        <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 text-text-muted hover:text-text-primary transition-colors py-1 group"
+                className="w-full flex items-center gap-2.5 py-2 px-2.5 rounded-lg hover:bg-surface-2 transition-colors group"
             >
-                <div className="flex items-center gap-1.5">
-                    {isOpen ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
-                    {act.status === 'running' && <Loader2 size={11} className="text-accent animate-spin shrink-0" />}
-                    <span className="text-[12px] font-medium">
-                        {act.status === 'running' ? 'Editing' : 'Modified'} {filesCount} {filesCount === 1 ? 'file' : 'files'}
+                {isFolder
+                    ? <FolderPlus size={14} className="text-text-muted shrink-0" />
+                    : <FilePen size={14} className="text-text-muted shrink-0" />}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${actionColor} shrink-0`}>
+                        {actionLabel}
                     </span>
+                    <div className="flex flex-col items-start min-w-0">
+                        <span className="text-[13px] font-medium text-text-primary truncate max-w-full">{fileName}</span>
+                        {dirPath && (
+                            <span className="text-[10px] text-text-muted truncate max-w-full">{dirPath}</span>
+                        )}
+                    </div>
                 </div>
-                {(totalAdded > 0 || totalRemoved > 0) && (
-                    <div className="flex items-center gap-1 text-[11px] font-mono">
-                        {totalAdded > 0 && <span className="text-emerald-500">+{totalAdded}</span>}
-                        {totalRemoved > 0 && <span className="text-red-500">-{totalRemoved}</span>}
+                {hasLines && (
+                    <div className="flex items-center gap-1 text-[11px] font-mono shrink-0">
+                        {singleAct.linesAdded > 0 && <span className="text-emerald-500">+{singleAct.linesAdded}</span>}
+                        {singleAct.linesRemoved > 0 && <span className="text-red-500">-{singleAct.linesRemoved}</span>}
                     </div>
                 )}
+                <ChevronRight
+                    size={12}
+                    className={`text-text-muted shrink-0 transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`}
+                />
             </button>
+        </div>
+    );
+}
 
-            {/* Expanded file list */}
-            {isOpen && (
-                <div className="flex flex-col pl-4 border-l border-border-subtle mt-0.5 space-y-0.5">
-                    {activities.map((singleAct: any) => {
-                        let filePath = singleAct.path || singleAct.label;
-                        const match = singleAct.label.match(/^(Generated|Created folder|Edited|Modified|Removed|Updated|Fixed|Improved|Added|Created)\s+`?([^`\s]+)`?/);
-                        const fileLabel = singleAct.label || filePath.split('/').pop();
-                        const isFolder = filePath.endsWith('/');
-
-                        return (
-                            <div key={singleAct.id} className="flex items-center gap-2 py-0.5">
-                                {isFolder
-                                    ? <FolderPlus size={11} className="text-text-muted shrink-0" />
-                                    : <FilePen size={11} className="text-text-muted shrink-0" />}
-                                <span className="text-[12px] text-text-secondary truncate">{fileLabel}</span>
-                                {(singleAct.linesAdded > 0 || singleAct.linesRemoved > 0) && (
-                                    <div className="flex items-center gap-1 text-[10px] font-mono ml-auto shrink-0">
-                                        {singleAct.linesAdded > 0 && <span className="text-emerald-500">+{singleAct.linesAdded}</span>}
-                                        {singleAct.linesRemoved > 0 && <span className="text-red-500">-{singleAct.linesRemoved}</span>}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
+function CollapsibleActivityGroup({ act, activities }: { act: any, activities: any[] }) {
+    return (
+        <div className="flex flex-col py-0.5">
+            {activities.map((singleAct: any) => (
+                <FileChangeCard key={singleAct.id} singleAct={singleAct} />
+            ))}
         </div>
     );
 }
@@ -246,17 +244,17 @@ export default function BrainBuildActivityFeed({
                             >
                                 <div className="flex items-center gap-2 text-[11px]">
                                     <span className={`shrink-0 ${
-                                        isDone ? 'text-emerald-400'
-                                        : isRunning ? 'text-[#c4b5fd]' : 'text-white/40'
+                                        isDone ? 'text-emerald-500'
+                                        : isRunning ? 'text-accent' : 'text-text-muted'
                                     }`}>
                                         {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
                                     </span>
                                     <span className={`leading-snug truncate ${
                                         isDone
-                                            ? 'text-white/50'
+                                            ? 'text-text-muted line-through'
                                             : isRunning
-                                              ? 'text-[#c4b5fd] font-medium'
-                                              : 'text-white/70'
+                                              ? 'text-accent font-semibold'
+                                              : 'text-text-primary'
                                     }`}>
                                         {t.title || t.task || 'Task'}
                                     </span>
@@ -284,46 +282,14 @@ export default function BrainBuildActivityFeed({
                     for (const act of dedupedStream) {
                         const isFileOp = ['write_file', 'edit_file', 'mkdir', 'read_file'].includes(act.type);
                         if (isFileOp) {
-                            if (!currentGroup) {
-                                currentGroup = {
-                                    id: `group-${act.id}`,
-                                    isGroup: true,
-                                    label: 'Updated project files',
-                                    type: 'file_group',
-                                    activities: [act],
-                                    linesAdded: act.linesAdded || 0,
-                                    linesRemoved: act.linesRemoved || 0,
-                                    status: act.status,
-                                    lastTimestamp: act.timestamp
-                                };
-                                grouped.push(currentGroup);
-                            } else {
-                                const currentDir = act.label.split('/').slice(0, -1).join('/');
-                                const lastDir = currentGroup.activities[0].label.split('/').slice(0, -1).join('/');
-                                
-                                if (currentDir === lastDir && currentGroup.activities.length < 3) {
-                                    // Same directory and small group, so group them
-                                    currentGroup.activities.push(act);
-                                    currentGroup.linesAdded += (act.linesAdded || 0);
-                                    currentGroup.linesRemoved += (act.linesRemoved || 0);
-                                    currentGroup.lastTimestamp = act.timestamp;
-                                    if (act.status === 'running') currentGroup.status = 'running';
-                                } else {
-                                    // Create new group
-                                    currentGroup = {
-                                        id: `group-${act.id}`,
-                                        isGroup: true,
-                                        label: 'Updated project files',
-                                        type: 'file_group',
-                                        activities: [act],
-                                        linesAdded: act.linesAdded || 0,
-                                        linesRemoved: act.linesRemoved || 0,
-                                        status: act.status,
-                                        lastTimestamp: act.timestamp
-                                    };
-                                    grouped.push(currentGroup);
-                                }
-                            }
+                            // Each file op becomes its own individual card (Lovable style)
+                            currentGroup = null;
+                            grouped.push({
+                                id: act.id,
+                                isGroup: true,
+                                type: 'file_single',
+                                singleAct: act,
+                            });
                         } else {
                             currentGroup = null;
                             grouped.push(act);
@@ -377,6 +343,9 @@ export default function BrainBuildActivityFeed({
                         }
 
                         if (act.isGroup) {
+                            if (act.type === 'file_single') {
+                                return <FileChangeCard key={act.id} singleAct={act.singleAct} />;
+                            }
                             return <CollapsibleActivityGroup key={act.id} act={act} activities={act.activities} />;
                         }
 

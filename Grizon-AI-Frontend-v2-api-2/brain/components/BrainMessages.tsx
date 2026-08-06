@@ -1901,9 +1901,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                     // --- Tasks (second handler) ---
                     if (event.create_tasks) {
-                        const progress = event.create_tasks.progress_msg || event.create_tasks.report;
+                        const ct = event.create_tasks;
+                        const progress = ct.progress_msg || ct.report;
                         if (progress) {
                             chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + String(progress);
+                        }
+                        const planFromCt = ct.plan as BuildTodoItem[] | undefined;
+                        if (Array.isArray(planFromCt) && planFromCt.length > 0) {
+                            currentTodoList = planFromCt;
+                            applyPlanToTodos(planFromCt, {
+                                activeIndex: 0,
+                                buildPhase: 'building',
+                            });
                         }
                     }
 
