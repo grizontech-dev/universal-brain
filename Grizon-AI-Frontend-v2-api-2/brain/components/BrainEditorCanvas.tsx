@@ -617,6 +617,20 @@ export default function BrainEditorCanvas({
     }, [jobId, scheduleFileRefresh]);
 
     useEffect(() => {
+        if (embedded && buildJobId && !buildComplete && fileTree.length === 0) {
+            const id = jobIdRef.current || jobId;
+            if (!id) return;
+            const poll = setInterval(() => {
+                const cur = jobIdRef.current || jobId;
+                if (cur && fileTree.length === 0) {
+                    fetchProjectFiles(cur, true, 1, 3000);
+                }
+            }, 3000);
+            return () => clearInterval(poll);
+        }
+    }, [embedded, buildJobId, buildComplete, fileTree.length, jobId, fetchProjectFiles]);
+
+    useEffect(() => {
         if (!buildComplete) return;
         setIsBuilding(false);
         const id = jobIdRef.current || jobId;

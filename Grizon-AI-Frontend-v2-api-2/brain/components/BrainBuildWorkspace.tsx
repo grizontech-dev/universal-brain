@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import BrainBuildActivityFeed, { type BuildTodoItem } from './BrainBuildActivityFeed';
 import BrainEditorCanvas from './BrainEditorCanvas';
+import BrainWorkspaceBoot from './BrainWorkspaceBoot';
 import type { BuildActivity } from '../lib/buildActivity';
 import { isBuildTodosComplete } from '../lib/buildActivity';
 import { ArrowRight } from 'lucide-react';
@@ -89,9 +90,7 @@ export default function BrainBuildWorkspace({
                     />
                 )}
                 {!job && (
-                    <div className="flex-1 flex items-center justify-center text-white/30 text-sm">
-                        Initializing workspace…
-                    </div>
+                    <BrainWorkspaceBoot />
                 )}
             </main>
         </div>

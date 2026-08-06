@@ -20,6 +20,7 @@ import { fetchSession, type SessionState, workflowPhaseLabel, workflowPhaseColor
 import { createProject, getProject, appendRequirement, updateProjectStack } from '../lib/projectMemory';
 import BrainEditorCanvas from './BrainEditorCanvas';
 import BrainFrameworkSelector from './BrainFrameworkSelector';
+import BrainWorkspaceBoot from './BrainWorkspaceBoot';
 
 import { DEFAULT_BRAIN_FRAMEWORK, type BrainFrameworkId } from '../constants/frameworks';
 import {
@@ -2487,9 +2488,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 isSyncing={isBuildSyncing}
                             />
                         ) : (
-                            <div className="flex-1 flex items-center justify-center text-white/30 text-sm">
-                                Initializing workspace…
-                            </div>
+                            <BrainWorkspaceBoot />
                         )}
                     </main>
                 )}

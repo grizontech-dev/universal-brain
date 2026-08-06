@@ -1,6 +1,8 @@
 from typing import Any, Dict, List
 import json
 import re
+import asyncio
+import time
 from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS, INTEGRATION_TASK_TEMPLATE
 from Brain.services.template_service import normalize_framework
@@ -197,10 +199,11 @@ def _ensure_integration_task(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return tasks
 
 
-def _fallback_from_architecture(plan: dict, backend_routes: List[str]) -> List[Dict[str, Any]]:
+def _fallback_from_architecture(plan: dict, backend_routes: List[str], scope: str = "all") -> List[Dict[str, Any]]:
     """Deterministic fallback tasks derived from the plan's `architecture`
     (pages -> frontend, tables -> database, api_routes -> backend). Never
-    generic Hero/Features/Contact landing pages."""
+    generic Hero/Features/Contact landing pages. `scope` filters to
+    "build" (database+backend) or "frontend" for the parallel calls."""
     arch = plan.get("architecture") if isinstance(plan, dict) else None
     if not isinstance(arch, dict):
         arch = {}
@@ -297,7 +300,52 @@ def _fallback_from_architecture(plan: dict, backend_routes: List[str]) -> List[D
             "depends_on": parent_dep(),
         })
 
+    if scope == "build":
+        return [t for t in tasks if t.get("category") in ("database", "backend")]
+    if scope == "frontend":
+        return [t for t in tasks if t.get("category") == "frontend"]
     return tasks
+
+
+def _merge_scoped_tasks(build_tasks: List[Dict[str, Any]], fe_tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merge the two parallel scoped LLM outputs into one canonical task list.
+    Build tasks (database/backend) go first, frontend after. All ids are
+    renumbered sequentially; dependencies are remapped across scopes.
+    `@db` / `@backend` placeholders (frontend -> backend deps) resolve to the
+    real merged ids. Any leftovers are cleaned by _validate_dependencies."""
+    merged: List[Dict[str, Any]] = []
+    id_map: Dict[str, str] = {}
+
+    for scope, lst in (("b", build_tasks), ("f", fe_tasks)):
+        for t in lst:
+            if not isinstance(t, dict):
+                continue
+            local = str(t.get("id") or f"{scope}{len(merged) + 1}")
+            new_id = f"t{len(merged) + 1}"
+            id_map[f"{scope}:{local}"] = new_id
+            t["id"] = new_id
+            merged.append(t)
+
+    db_id = next((t["id"] for t in merged if t.get("category") == "database"), None)
+    backend_id = next((t["id"] for t in merged if t.get("category") == "backend"), None)
+
+    for t in merged:
+        deps = t.get("depends_on")
+        if not isinstance(deps, list):
+            continue
+        new_deps = []
+        for d in deps:
+            d = str(d)
+            if d == "@db":
+                new_deps.append(db_id or backend_id)
+            elif d == "@backend" or d.startswith("@"):
+                new_deps.append(backend_id or db_id)
+            elif d in id_map:
+                new_deps.append(id_map[d])
+            else:
+                new_deps.append(d)
+        t["depends_on"] = [x for x in new_deps if x]
+    return merged
 
 
 def _enforce_file_limit(tasks: List[Dict[str, Any]], max_files: int = 5) -> List[Dict[str, Any]]:
@@ -486,19 +534,39 @@ class TodoAgent(BaseAgent):
         - description: OPTIONAL — only a short 1-2 sentence summary if needed.
         """
 
-        messages = [
-            SystemMessage(content=system_prompt),
-        ]
+        base_msgs = []
         if session_context:
-            messages.append(SystemMessage(content=session_context))
+            base_msgs.append(SystemMessage(content=session_context))
         if decisions_context:
-            messages.append(SystemMessage(content=decisions_context))
-        messages.append(HumanMessage(content=f"Approved Plan: {_compact_plan(plan)}"))
+            base_msgs.append(SystemMessage(content=decisions_context))
+        base_msgs.append(HumanMessage(content=f"Approved Plan: {_compact_plan(plan)}"))
 
-        print(f"{LOG} Calling LLM now with {len(messages)} messages, total chars={sum(len(m.content) for m in messages)}", flush=True)
-        response_content = await self.chat(messages, model_id="deepseek-v4-flash", timeout=120, max_tokens=1800)
-        print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
-        tasks = self._format_json_response(response_content)
+        build_prompt = system_prompt + (
+            "\n\nSCOPE: Return ONLY database and backend tasks (Supabase tables + Express API routes/controllers). "
+            "Do NOT create frontend or runner tasks. For dependencies within this list use the ids you assign."
+        )
+        fe_prompt = system_prompt + (
+            "\n\nSCOPE: Return ONLY frontend tasks (pages with their nested components, shared components, and the "
+            "final App.jsx wiring/integration task). Do NOT create database, backend, or runner tasks. "
+            "For dependencies on database/backend work use the placeholder '@db' (tables) or '@backend' (API routes). "
+            "Within this list use the ids you assign."
+        )
+
+        async def _scope_call(sys: str, timeout: float, max_tok: int):
+            msgs = [SystemMessage(content=sys)] + list(base_msgs)
+            return await self.chat(msgs, model_id="deepseek-v4-flash", timeout=timeout, max_tokens=max_tok)
+
+        print(f"{LOG} Calling LLM — 2 scoped calls in parallel (build + frontend), total chars={sum(len(m.content) for m in base_msgs)}", flush=True)
+        _t0 = time.time()
+        build_raw, fe_raw = await asyncio.gather(
+            _scope_call(build_prompt, 90, 900),
+            _scope_call(fe_prompt, 90, 1100),
+        )
+        print(f"{LOG} Both scoped calls done in {time.time() - _t0:.1f}s | build={len(build_raw)} chars | frontend={len(fe_raw)} chars", flush=True)
+        print(f"{LOG} ─ BUILD HEAD: {build_raw[:1500]}", flush=True)
+        print(f"{LOG} ─ FRONTEND HEAD: {fe_raw[:1500]}", flush=True)
+        build_tasks = self._format_json_response(build_raw)
+        fe_tasks = self._format_json_response(fe_raw)
 
         # Deterministic route extraction: architecture.api_routes is the source
         # of truth (no regex over free text). Regex fallback only for legacy
@@ -522,12 +590,17 @@ class TodoAgent(BaseAgent):
         if not backend_routes:
             route_hint = "Use frontend/src/lib/api.js (apiGet/apiPost/apiPut/apiDelete) for any data calls; see backend tasks for exact /api/* routes."
 
-        if isinstance(tasks, list):
-            tasks = [_normalize_task(t) for t in tasks]
+        if not isinstance(build_tasks, list):
+            print(f"{LOG} ⚠ build scope failed ({build_tasks.get('error') if isinstance(build_tasks, dict) else str(build_tasks)[:150]}) — deterministic fallback", flush=True)
+            build_tasks = [t for t in _fallback_from_architecture(plan, backend_routes, "build")
+                           if t.get("category") in ("database", "backend")]
+        if not isinstance(fe_tasks, list):
+            print(f"{LOG} ⚠ frontend scope failed ({fe_tasks.get('error') if isinstance(fe_tasks, dict) else str(fe_tasks)[:150]}) — deterministic fallback", flush=True)
+            fe_tasks = [t for t in _fallback_from_architecture(plan, backend_routes, "frontend")
+                        if t.get("category") == "frontend"]
 
-        if not isinstance(tasks, list):
-            print(f"{LOG} ⚠ LLM output was not a task list — building deterministic tasks from architecture.", flush=True)
-            tasks = [_normalize_task(t) for t in _fallback_from_architecture(plan, backend_routes)]
+        tasks = _merge_scoped_tasks(build_tasks, fe_tasks)
+        tasks = [_normalize_task(t) for t in tasks]
 
         # Shared frontend enrichment (route hints + no-duplicate guard)
         for task in tasks:
