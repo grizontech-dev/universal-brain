@@ -171,6 +171,7 @@ class BuilderAgent(BaseAgent):
         bound_llm = self.llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
+        tool_call_count = 0
 
         # Free-form loop — LLM generates files until it stops or timeout
         consecutive_duplicates = 0
@@ -259,6 +260,8 @@ class BuilderAgent(BaseAgent):
                 tool_name = tc["name"]
                 tool_args = tc["args"]
                 file_path = tool_args.get("file_path", "")
+                code_content = tool_args.get("code", "")
+                code_len = len(code_content)
 
                 if file_path in seen_files:
                     print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
@@ -293,6 +296,7 @@ class BuilderAgent(BaseAgent):
 
                 print(f"{LOG} → [{len(files_saved)+1}] Generating: {file_path} ({code_len} chars)", flush=True)
 
+
                 tool_timeout = 30
                 try:
                     if tool_name == "client_save_code":
@@ -304,52 +308,23 @@ class BuilderAgent(BaseAgent):
                         consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
-                        # Emit file saved
-                        if session_id and not str(session_id).startswith("error:"):
-                            try:
-                                await ws_manager.broadcast_to_sandbox(str(session_id), {
-                                    "type": "workspace_ops",
-                                    "ops": [],
-                                    "activities": [{
-                                        "id": f"act-saved-{int(time.time() * 1000)}",
-                                        "type": "write_file",
-                                        "label": f"Saved {file_path.split('/')[-1]}",
-                                        "path": file_path,
-                                        "taskTitle": task_title,
-                                        "status": "done",
-                                        "detail": f"{code_len} chars",
-                                        "timestamp": int(time.time() * 1000),
-                                    }],
-                                    "progress_msg": json.dumps({
-                                        "type": "file_saved",
-                                        "file": file_path,
-                                        "chars": code_len,
-                                        "files_done": len(files_saved),
-                                        "task_title": task_title,
-                                        "timestamp": str(int(time.time() * 1000))
-                                    }),
-                                })
-                            except Exception:
-                                pass
+                        # Note: edit_file activity already emitted by client_save_code via ws_manager
 
                         # Tell LLM the file was saved
                         messages.append(ToolMessage(
                             content=f"Saved {file_path} ({code_len} chars). Generate the next file.",
                             tool_call_id=tc["id"]
                         ))
-                    elif tool_name in ("supabase_exec_sql", "supabase_create_exec_sql_function"):
-                        # Handle Supabase SQL tools
-                        sql_tool = supabase_exec_sql if tool_name == "supabase_exec_sql" else supabase_create_exec_sql_function
-                        try:
-                            result = await asyncio.wait_for(
-                                sql_tool.ainvoke(tool_args, config={"configurable": {"thread_id": session_id}}),
-                                timeout=60
-                            )
-                            print(f"{LOG} ✓ SQL tool result: {result[:200]}", flush=True)
-                            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-                        except Exception as e:
-                            print(f"{LOG} ✖ SQL tool error: {e}", flush=True)
-                            messages.append(ToolMessage(content=f"SQL execution error: {e}", tool_call_id=tc["id"]))
+                    elif tool_name == "supabase_exec_sql":
+                        result = await asyncio.wait_for(
+                            supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                    elif tool_name == "supabase_create_exec_sql_function":
+                        result = await asyncio.wait_for(
+                            supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
                     else:
                         messages.append(ToolMessage(
                             content=f"Unknown tool: {tool_name}. Use client_save_code.",

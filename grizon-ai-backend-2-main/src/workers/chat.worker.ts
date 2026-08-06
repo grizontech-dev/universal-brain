@@ -544,12 +544,14 @@ export function startChatWorker() {
         if (chatPayload.attachedFileIds.length > 0) {
           const attachedFiles = await fileService.getReadyFiles(chatPayload.userId, chatPayload.attachedFileIds);
           if (attachedFiles.length > 0) {
-            const fileBlocks = attachedFiles
-              .filter((f) => f.extractedText)
-              .map((f) => `<file id="${f.id}" type="${f.mimeType}">\n${f.extractedText}\n</file>`)
-              .join("\n\n");
-            if (fileBlocks) {
-              userContent = `${userContent}\n\n${fileBlocks}`;
+            const blocks: string[] = [];
+            for (const f of attachedFiles) {
+              if (f.extractedText) {
+                blocks.push(`<file id="${f.id}" type="${f.mimeType}">\n${f.extractedText}\n</file>`);
+              }
+            }
+            if (blocks.length > 0) {
+              userContent = `${userContent}\n\n${blocks.join("\n\n")}`;
             }
           }
         }

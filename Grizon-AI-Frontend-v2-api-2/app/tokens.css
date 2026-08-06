@@ -1,0 +1,106 @@
+/* Hallmark · tokens.css — Grizon AI design system (theme colors & variables) */
+
+:root {
+  color-scheme: dark;
+}
+
+@theme {
+  /* ---- Colour · anchor hue ~293 (brand violet #976df8) ---- */
+  --color-paper:       oklch(16%   0.017 295);
+  --color-paper-2:     oklch(18.5% 0.019 295);
+  --color-paper-3:     oklch(21.5% 0.021 295);
+  --color-ink:         oklch(96%   0.010 300);
+  --color-ink-2:       oklch(83%   0.016 300);
+  --color-rule:        oklch(24%   0.018 295);
+  --color-rule-2:      oklch(20.5% 0.015 295);
+  --color-muted:       oklch(66%   0.022 295);
+  --color-accent:      #7423ec;   /* exact rich vibrant purple matching user screenshot */
+  --color-accent-deep: #6219d6;   /* logo deep, solid fills */
+  --color-accent-soft: rgba(116, 35, 236, 0.15);   /* violet wash for chips */
+
+
+  --color-accent-cool: oklch(72%   0.110 250);
+  --color-accent-ink:  oklch(98%   0.006 300);
+  --color-accent-text: oklch(80%   0.160 293);
+  --color-focus:       oklch(74%   0.190 293);
+  --color-success:      oklch(72%   0.140 155);
+  --color-success-soft: oklch(31%   0.055 155);
+  --color-success-ink:  oklch(84%   0.110 155);
+  --color-warning:      oklch(80%   0.150 75);
+  --color-warning-soft: oklch(32%   0.055 75);
+  --color-warning-ink:  oklch(84%   0.140 75);
+  --color-danger:       oklch(68%   0.190 18);
+  --color-danger-soft:  oklch(32%   0.065 18);
+  --color-danger-ink:   oklch(82%   0.130 18);
+  --color-file-pdf:    oklch(62%   0.190 25);
+  --color-scrim:       oklch(0%    0     0 / 0.50);
+
+  /* ---- Radius ---- */
+  --radius-sm:    10px;
+  --radius-input: 14px;
+  --radius-card:  18px;
+  --radius-pill:  999px;
+
+  /* ---- Motion ---- */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-short: 200ms;
+  --duration-mid:   300ms;
+}
+
+/* Base custom variables for direct var() use */
+:root {
+  --glass-fill:        color-mix(in oklch, var(--color-paper) 26%, transparent);
+  --glass-fill-strong: color-mix(in oklch, var(--color-paper) 38%, transparent);
+  --glass-stroke:      color-mix(in oklch, var(--color-paper) 58%, transparent);
+  --glass-edge:        oklch(99% 0.004 300 / 0.92);
+  --glass-blur:        blur(10px) saturate(190%);
+  --glass-blur-strong: blur(32px) saturate(190%);
+  --glass-sheen:       linear-gradient(180deg, color-mix(in oklch, var(--color-paper) 46%, transparent), color-mix(in oklch, var(--color-paper) 24%, transparent));
+  --shadow-glass:      0 14px 36px oklch(30% 0.05 295 / 0.18), inset 0 1px 0.5px var(--glass-edge), inset 0 -10px 22px -12px color-mix(in oklch, var(--color-accent) 16%, transparent);
+  --rule-hair:         1px;
+  --dur-short:         200ms;
+  --dur-mid:           300ms;
+}
+
+/* Light Theme overrides */
+:root[data-theme="light"],
+:root[data-theme="daylight"] {
+  color-scheme: light;
+  --color-paper:       oklch(98.6% 0.006 300);
+  --color-paper-2:     oklch(96.8% 0.009 300);
+  --color-paper-3:     oklch(94.5% 0.012 300);
+  --color-ink:         oklch(23%   0.030 295);
+  --color-ink-2:       oklch(44%   0.025 295);
+  --color-rule:        oklch(90%   0.013 300);
+  --color-rule-2:      oklch(93.5% 0.009 300);
+  --color-muted:       oklch(55%   0.022 295);
+  --color-accent:      oklch(63%   0.190 293);
+  --color-accent-deep: oklch(48%   0.230 292);
+  --color-accent-soft: oklch(95%   0.035 295);
+  --color-accent-cool: oklch(74%   0.120 250);
+  --color-accent-ink:  oklch(98.6% 0.006 300);
+  --color-accent-text: var(--color-accent-deep);
+  --color-focus:       oklch(58%   0.220 293);
+}
+
+/* Dark Theme overrides (default) */
+:root[data-theme="dark"],
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --color-paper:       oklch(16%   0.017 295);
+  --color-paper-2:     oklch(18.5% 0.019 295);
+  --color-paper-3:     oklch(21.5% 0.021 295);
+  --color-ink:         oklch(96%   0.010 300);
+  --color-ink-2:       oklch(83%   0.016 300);
+  --color-muted:       oklch(66%   0.022 295);
+  --color-rule:        oklch(24%   0.018 295);
+  --color-rule-2:      oklch(20.5% 0.015 295);
+  --color-accent:      oklch(63%   0.190 293);
+  --color-accent-deep: oklch(54%   0.225 293);
+  --color-accent-soft: oklch(33%   0.075 295);
+  --color-accent-cool: oklch(72%   0.110 250);
+  --color-accent-ink:  oklch(98%   0.006 300);
+  --color-accent-text: oklch(80%   0.160 293);
+}

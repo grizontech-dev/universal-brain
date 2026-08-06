@@ -68,7 +68,7 @@ function MainChromeInner({ children }: { children: React.ReactNode }) {
 
   return (
     <Suspense fallback={<MainFallback />}>
-      <div className='flex h-[100dvh] w-full bg-chat text-text-primary overflow-hidden relative'>
+      <div className='flex h-[100dvh] w-full bg-app text-text-primary overflow-hidden relative'>
         <IconRail
           activeMode={activeMode}
           onChatClick={handleChatClick}
@@ -79,6 +79,8 @@ function MainChromeInner({ children }: { children: React.ReactNode }) {
       </div>
     </Suspense>
   );
+
+
 }
 
 export default function MainAppShell({

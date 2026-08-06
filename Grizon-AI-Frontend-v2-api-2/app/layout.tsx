@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import {
   Inter,
   JetBrains_Mono,
+  Bricolage_Grotesque,
+  Geist,
   DM_Sans,
   Space_Grotesk,
   Sora,
@@ -10,6 +12,7 @@ import {
   Nunito,
   Outfit,
 } from "next/font/google";
+
 import "./globals.css";
 import { GlobalMetadata } from "./GlobalMetadata";
 import { ThemeProvider } from "../context/ThemeContext";
@@ -32,6 +35,20 @@ const THEME_INIT_SCRIPT = `
   })();
 `;
 
+const bricolageGrotesque = Bricolage_Grotesque({
+  subsets: ["latin"],
+  variable: "--font-bricolage",
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
+});
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+  display: "swap",
+  weight: ["300", "400", "500", "600", "700"],
+});
+
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
@@ -45,6 +62,7 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
   weight: ["400", "500"],
 });
+
 
 const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-dm-sans", display: "swap", weight: ["300", "400", "500", "600", "700"] });
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-space-grotesk", display: "swap", weight: ["300", "400", "500", "600", "700"] });
@@ -69,6 +87,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
       <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
@@ -87,10 +108,12 @@ export default function RootLayout({
           })();
         `}} />
       </head>
+
       <body
-        className={`${inter.variable} ${jetbrainsMono.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${sora.variable} ${plusJakarta.variable} ${ibmPlex.variable} ${nunito.variable} ${outfit.variable} font-sans h-screen min-h-screen bg-app text-text-primary antialiased`}
+        className={`${bricolageGrotesque.variable} ${geist.variable} ${inter.variable} ${jetbrainsMono.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${sora.variable} ${plusJakarta.variable} ${ibmPlex.variable} ${nunito.variable} ${outfit.variable} font-sans h-screen min-h-screen bg-paper text-ink antialiased`}
         suppressHydrationWarning
       >
+
         <ThemeProvider>
           <AuthProvider>
             <ConversationProvider>

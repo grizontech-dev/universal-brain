@@ -900,23 +900,23 @@ export default function BrainEditorCanvas({
     };
 
     const shellClass = embedded
-        ? 'relative flex flex-1 h-full min-h-0 w-full flex-col bg-[#0a0a0a] overflow-hidden font-sans'
-        : `fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-[#0a0a0a] border border-white/10 shadow-2xl overflow-hidden font-sans
+        ? 'relative flex flex-1 h-full min-h-0 w-full flex-col bg-app text-text-primary overflow-hidden font-sans'
+        : `fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-app text-text-primary border border-border-default shadow-2xl overflow-hidden font-sans
             ${isFullScreen ? 'inset-4 rounded-xl' : 'right-4 top-4 bottom-4 w-[calc(100vw-450px)] max-w-[1400px] rounded-xl'}`;
 
     const globalBuildingOverlay = (!buildComplete && !hasLiveFrontendPreview) && (
-        <div className="absolute inset-0 z-[100] flex flex-col bg-[#0a0a0a] overflow-hidden">
+        <div className="absolute inset-0 z-[100] flex flex-col bg-app text-text-primary overflow-hidden">
             {/* Header */}
-            <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 shrink-0">
-                <Loader2 size={20} className="text-[#976df8] animate-spin" />
-                <h2 className="text-[16px] font-bold text-white">Brain Build Mode</h2>
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-border-subtle shrink-0 bg-sidebar">
+                <Loader2 size={20} className="text-accent animate-spin" />
+                <h2 className="text-[16px] font-bold text-text-primary font-display">Brain Build Mode</h2>
                 {activeTodos.length > 0 && (
-                    <div className="ml-auto flex items-center gap-3 text-[13px] font-mono text-white/50">
-                        <span className="text-white">{completedTodoCount} / {activeTodos.length}</span>
+                    <div className="ml-auto flex items-center gap-3 text-[13px] font-sans text-text-muted">
+                        <span className="text-text-primary font-bold">{completedTodoCount} / {activeTodos.length}</span>
                         <span>Tasks Complete</span>
-                        <div className="w-32 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                        <div className="w-32 h-1.5 bg-surface-3 rounded-full overflow-hidden border border-border-subtle">
                             <div
-                                className="h-full bg-[#976df8] transition-all duration-500 ease-out"
+                                className="h-full bg-accent transition-all duration-500 ease-out"
                                 style={{ width: `${(completedTodoCount / activeTodos.length) * 100}%` }}
                             />
                         </div>
@@ -925,7 +925,7 @@ export default function BrainEditorCanvas({
             </div>
 
             {/* Activity Feed */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 bg-app">
                 {activities.length > 0 || activeTodos.length > 0 ? (
                     <BrainBuildActivityFeed
                         activities={activities}
@@ -934,11 +934,11 @@ export default function BrainEditorCanvas({
                     />
                 ) : (
                     <div className="flex flex-col items-center justify-center h-full gap-4">
-                        <p className="text-[15px] text-[#c4b5fd] font-medium">
+                        <p className="text-[15px] text-accent font-medium">
                             {forceBuilding ? 'Syncing project files...' : 'Analyzing your request...'}
                         </p>
-                        <div className="flex items-center gap-3 text-[13px] font-mono text-white/50">
-                            <Loader2 size={14} className="animate-spin" />
+                        <div className="flex items-center gap-3 text-[13px] font-sans text-text-muted">
+                            <Loader2 size={14} className="animate-spin text-accent" />
                             <span>Setting up tasks...</span>
                         </div>
                     </div>
@@ -952,7 +952,8 @@ export default function BrainEditorCanvas({
         <div className={`${shellClass} relative`}>
 
             {/* GRIZON-STYLE HEADER */}
-            <header className="h-[48px] border-b border-white/5 flex items-center justify-between px-3 bg-[#0a0a0a] shrink-0 gap-4">
+            <header className="h-[48px] border-b border-border-subtle flex items-center justify-between px-3 bg-sidebar shrink-0 gap-4">
+
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
                     <button
                         onClick={() => setIsSidebarVisible(!isSidebarVisible)}

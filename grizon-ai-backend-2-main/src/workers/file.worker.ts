@@ -78,6 +78,8 @@ export function startFileWorker() {
           extractedText = await parseWithUnstructured(binary, fileLabel);
         } else if (file.file_type === "text/csv" || file.file_type === "text/plain") {
           extractedText = binary.toString("utf-8");
+        } else if (file.file_type.startsWith("image/")) {
+          extractedText = `[Image Attachment: ${fileLabel}]`;
         } else {
           await pool.query(
             `UPDATE files SET processing_status = 'failed', vectorised = false, error_message = 'unsupported_mime' WHERE id = $1`,

@@ -2,7 +2,11 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Brain, Send, Loader2, Sparkles, Zap, Terminal, Activity, Menu, Plus, Search, User, ArrowRight, Database, Coins, X, Code, Square } from 'lucide-react';
+import { Brain, Send, Loader2, Sparkles, Zap, Terminal, Activity, Menu, Plus, Search, User, ArrowRight, Database, Coins, X, Code, Square, TrendingUp, Users, Cpu, Layers, Mic } from 'lucide-react';
+
+import { Logo } from '@/components/ui/Logo';
+import { AmbientBackground } from '@/components/chat/AmbientBackground';
+
 import { brainApi, conversationsApi } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useConversations } from '@/context/ConversationContext';
@@ -128,12 +132,77 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [brainAttachments, setBrainAttachments] = useState<Array<{ id: string; name: string; status: 'uploading' | 'ready' }>>([]);
     const activeConvIdRef = useRef<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const sendingRef = useRef(false);
     const userScrolledUpRef = useRef(false);
     const pollTaskIndexRef = useRef(-1);
     const maxSeenTaskIndexRef = useRef(-1);
+
+    const handleBrainFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        const fileList = Array.from(files);
+        for (const file of fileList) {
+            const tempId = crypto.randomUUID();
+            setBrainAttachments(prev => [...prev, { id: tempId, name: file.name, status: 'uploading' }]);
+            try {
+                const base64 = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                const token = (typeof getAccessToken === 'function' ? getAccessToken() : null) || 
+                    (typeof window !== 'undefined' ? localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('grizon_access_token') : null);
+
+                const reqHeaders: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                };
+
+                let res = await fetch('/api/v1/files/upload', {
+                    method: 'POST',
+                    headers: reqHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        fileType: file.type || 'application/pdf',
+                        fileSize: file.size,
+                        contentBase64: base64,
+                    }),
+                }).catch(() => null);
+
+                if (!res || !res.ok) {
+                    res = await fetch('http://localhost:4000/api/v1/files/upload', {
+                        method: 'POST',
+                        headers: reqHeaders,
+                        credentials: 'include',
+                        body: JSON.stringify({
+                            fileName: file.name,
+                            fileType: file.type || 'application/pdf',
+                            fileSize: file.size,
+                            contentBase64: base64,
+                        }),
+                    }).catch(() => null);
+                }
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    const uploadedId = data.data?.file?.id || tempId;
+                    setBrainAttachments(prev => prev.map(item => item.id === tempId ? { ...item, id: uploadedId, status: 'ready' } : item));
+                } else {
+                    setBrainAttachments(prev => prev.filter(item => item.id !== tempId));
+                }
+            } catch {
+                setBrainAttachments(prev => prev.filter(item => item.id !== tempId));
+            }
+        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
     // Reset sending lock when conversation changes (prevents stale lock from blocking new conversations)
     useEffect(() => {
@@ -1277,7 +1346,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         pending.temperature,
                         pending.isPlanApproval,
                         pending.approvedPlan,
-                        pending.targetMessageId
+                        pending.targetMessageId,
+                        pending.attachedFileIds
                     );
                     sessionStorage.removeItem('brainPendingMessage');
                 } catch (e) {
@@ -1335,10 +1405,12 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         temperature: number = 0.3,
         isPlanApproval?: boolean,
         approvedPlan?: string,
-        targetMessageId?: string
+        targetMessageId?: string,
+        overrideFileIds?: string[]
     ) => {
         const textValue = typeof overrideText === 'string' ? overrideText : input;
-        console.log('BrainMessages: handleSendMessage called', { textValue, isPlanApproval, targetMessageId });
+        const activeFileIds = overrideFileIds || brainAttachments.map(a => a.id);
+        console.log('BrainMessages: handleSendMessage called', { textValue, isPlanApproval, targetMessageId, activeFileIds });
 
         if (!isAuthenticated) {
             openAuthModal('signin-email');
@@ -1364,6 +1436,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         }
 
         setInput('');
+        setBrainAttachments([]);
         setIsLoading(true);
 
         if (abortControllerRef.current) {
@@ -1424,6 +1497,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         isPlanApproval,
                         approvedPlan,
                         targetMessageId,
+                        attachedFileIds: activeFileIds,
                         modelId: selectedModel?.id || 'gpt-5.4',
                         framework: selectedFramework,
                         questionRounds,
@@ -1536,6 +1610,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 framework: selectedFramework,
                 temperature: temperature,
                 project_id: projectIdRef.current || undefined,
+                attached_file_ids: activeFileIds,
+                attachedFileIds: activeFileIds,
             }, (event) => {
                 const eventKeys = Object.keys(event || {});
                 if (eventKeys.length === 0) return;
@@ -2142,19 +2218,19 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     };
 
     return (
-        <div className="flex flex-col h-full bg-[#0a0a0a] relative overflow-hidden font-sans selection:bg-[#976df8]/30 text-white">
+        <div className="flex flex-col h-full bg-app relative overflow-hidden font-sans text-text-primary">
             {/* High-Fidelity Header */}
-            <header className="h-[52px] shrink-0 border-b border-white/5 flex items-center justify-between px-4 sm:px-6 bg-[#0a0a0a] z-30">
+            <header className="h-[52px] shrink-0 border-b border-border-subtle flex items-center justify-between px-4 sm:px-6 bg-sidebar z-30">
                 <div className="flex items-center gap-4 min-w-0">
                     <button
                         onClick={onToggleSidebarAction || (() => window.dispatchEvent(new CustomEvent('toggleBrainSidebar')))}
-                        className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl text-white/40 hover:text-white hover:bg-white/[0.05] transition-all shrink-0"
+                        className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl text-text-muted hover:text-text-primary hover:bg-surface-2 transition-all shrink-0"
                     >
                         <Menu size={18} />
                     </button>
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-2">
-                            <span className="text-[13px] font-bold text-white tracking-tight truncate max-w-[180px] sm:max-w-[250px]">
+                            <span className="text-[13px] font-bold text-text-primary tracking-tight truncate max-w-[180px] sm:max-w-[250px] font-display">
                                 {activeConversation?.title || 'New Chat'}
                             </span>
                         </div>
@@ -2162,22 +2238,22 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 shadow-inner">
-                        <Coins size={12} className="text-[#976df8]" />
-                        <span className="text-[12px] font-black text-white/90 tabular-nums tracking-tighter">
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-surface-2 border border-border-subtle shadow-sm">
+                        <Coins size={12} className="text-accent" />
+                        <span className="text-[12px] font-black text-text-primary tabular-nums tracking-tighter">
                             {userCredits?.toLocaleString() || '0'}
                         </span>
                     </div>
 
                     <div className="items-center gap-2 ml-1 hidden sm:flex">
                         <div className="flex flex-col items-end leading-none mr-1">
-                            <span className="text-[11px] font-bold text-white/80 lowercase truncate max-w-[100px]">
+                            <span className="text-[11px] font-bold text-text-secondary lowercase truncate max-w-[100px]">
                                 {user?.name || user?.email?.split('@')[0]}
                             </span>
-                            <span className="text-[8px] font-black text-white/20 tracking-widest uppercase">PRO</span>
+                            <span className="text-[8px] font-black text-accent tracking-widest uppercase">PRO</span>
                         </div>
-                        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#976df8] to-[#7c3aed] flex items-center justify-center border border-white/10 shadow-xl shrink-0">
-                            <User size={15} className="text-white" />
+                        <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center border border-accent/30 shadow-md shrink-0 text-white">
+                            <User size={15} />
                         </div>
                     </div>
                 </div>
@@ -2186,7 +2262,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             {/* Content Area - Split View Support */}
             <div className="flex flex-1 min-h-0 w-full overflow-hidden">
                 {/* Left Side: Chat History & Input */}
-                <div className={`${isBuildMode ? 'w-full lg:w-[35%] max-w-[500px] border-r border-white/10 shrink-0 bg-[#0a0a0a]' : 'flex-1'} flex flex-col relative z-1 overflow-hidden`}>
+                <div className={`${isBuildMode ? 'w-full lg:w-[35%] max-w-[500px] border-r border-border-subtle shrink-0 bg-app' : 'flex-1'} flex flex-col relative z-1 overflow-hidden`}>
 
                     {/* Chat Messages */}
                     <div
@@ -2194,112 +2270,185 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         className={`flex-1 flex flex-col overflow-y-auto custom-scrollbar ${(messages.length === 0 && pathname === '/brain' && !isLoading) ? 'items-center justify-center' : 'px-4 py-8 space-y-8'}`}
                     >
                         {(messages.length === 0 && pathname === '/brain' && !isLoading) ? (
-                            <div className="w-full max-w-3xl flex flex-col items-center px-6 animate-in fade-in duration-700">
-                                {/* Logo Style - Responsive Font Size */}
-                                <div className="flex items-center gap-2 sm:gap-3 mb-10">
-                                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-lg sm:rounded-xl flex items-center justify-center shrink-0">
-                                        <div className="w-4 h-3 sm:w-6 sm:h-4 border-[1.5px] sm:border-2 border-black rounded-sm relative">
-                                            <div className="absolute top-0.5 sm:top-1 left-0.5 sm:left-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
-                                            <div className="absolute top-0.5 sm:top-1 right-0.5 sm:right-1 w-0.5 sm:w-1 h-0.5 sm:h-1 bg-black rounded-full" />
+                            <div className="w-full max-w-4xl flex flex-col items-center px-4 sm:px-6 py-10 sm:py-16 animate-in fade-in duration-700 relative z-10">
+
+                                <AmbientBackground />
+
+                                {/* Date Label */}
+                                <p className="mb-2 text-sm font-medium text-text-muted tracking-tight">
+                                    {new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}
+                                </p>
+
+                                {/* Main Greeting & User Name */}
+                                <h1 className="max-w-[20ch] text-[clamp(2rem,3.4vw,2.75rem)] font-semibold leading-[1.08] tracking-[-0.03em] text-text-primary font-display text-center [overflow-wrap:anywhere] mb-3">
+                                    {new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening'},<br />
+                                    {(user?.email || user?.name || 'singhkashish364@gmail.com').replace(/@gmil\.com/i, '@gmail.com')}.
+                                </h1>
+
+
+
+                                {/* Subtitle */}
+                                <p className="text-base sm:text-lg text-text-secondary text-center mb-8 font-sans">
+                                    What should we <span className="font-semibold text-accent">focus on</span> today?
+                                </p>
+
+                                {/* Glassmorphic Pill Input Container */}
+                                <div className="w-full max-w-[760px] relative mb-6 sm:mb-8 px-1 flex flex-col gap-2">
+                                    {brainAttachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 px-2 py-1">
+                                            {brainAttachments.map(att => (
+                                                <div key={att.id} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-3 border border-border-default text-xs text-text-primary">
+                                                    <span className="truncate max-w-[140px]">{att.name}</span>
+                                                    {att.status === 'uploading' ? (
+                                                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                                                    ) : (
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setBrainAttachments(prev => prev.filter(x => x.id !== att.id))} 
+                                                            className="text-text-muted hover:text-red-400 font-bold ml-1"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="group relative rounded-2xl sm:rounded-full border border-border-default bg-surface-2/90 backdrop-blur-xl px-3.5 sm:px-5 py-2.5 sm:py-3 shadow-glass transition-all duration-300 focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 hover:border-border-strong flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+                                        <div className="flex items-center gap-2 flex-1 min-w-[140px]">
+                                            <button 
+                                                type="button" 
+                                                onClick={() => fileInputRef.current?.click()}
+                                                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-3 transition-all shrink-0"
+                                                title="Add Attachment (Image / PDF)"
+                                            >
+                                                <Plus size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                            </button>
+
+                                            <input
+                                                ref={fileInputRef}
+                                                type="file"
+                                                multiple
+                                                onChange={handleBrainFileSelect}
+                                                className="hidden"
+                                            />
+
+                                            <input
+                                                value={input}
+                                                onChange={(e) => setInput(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        handleSendMessage();
+                                                    }
+                                                }}
+                                                placeholder="Ask Grizon"
+                                                className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-sm sm:text-base text-text-primary placeholder:text-text-muted p-0 font-sans"
+                                            />
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
+                                            <BrainFrameworkSelector
+                                                value={selectedFramework}
+                                                onChange={handleFrameworkChange}
+                                                disabled={isLoading}
+                                                compact
+                                            />
+
+                                            <button
+                                                onClick={() => handleSendMessage()}
+                                                disabled={!input.trim() || isLoading}
+                                                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all shadow-md shrink-0 ${input.trim() && !isLoading
+                                                    ? 'bg-accent text-white hover:brightness-110 shadow-lg shadow-accent/30 scale-105'
+                                                    : 'bg-surface-3 text-text-muted border border-border-subtle'
+                                                    }`}
+                                            >
+                                                <Mic size={15} className="sm:w-4 sm:h-4" />
+                                            </button>
                                         </div>
                                     </div>
-                                    <h1 className="text-[24px] sm:text-[32px] font-medium tracking-tight">
-                                        grizon <span className="text-white/60">brain</span>
-                                    </h1>
                                 </div>
 
-                                {/* Perplexity-style Input Bar - Responsive Padding & Font */}
-                                <div className="w-full relative mb-6">
-                                    <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-3 sm:p-4 shadow-2xl transition-all duration-300 focus-within:border-white/20">
-                                        <textarea
-                                            value={input}
-                                            onChange={(e) => setInput(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter' && !e.shiftKey) {
-                                                    e.preventDefault();
-                                                    handleSendMessage();
-                                                }
-                                            }}
-                                            placeholder="What should we work on next?"
-                                            className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-[16px] sm:text-[18px] text-white placeholder:text-white/30 p-0 mb-3 sm:mb-4 resize-none min-h-[40px] custom-scrollbar"
-                                            rows={1}
-                                        />
-
-                                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <BrainFrameworkSelector
-                                                    value={selectedFramework}
-                                                    onChange={handleFrameworkChange}
-                                                    disabled={isLoading}
-                                                    compact
-                                                />
-                                                <span className="text-[10px] text-white/30 hidden sm:inline">
-                                                    + Express & Supabase in canvas
-                                                </span>
-                                            </div>
-
-                                            <div className="flex items-center gap-2 sm:gap-4 overflow-hidden">
-                                                <span className="hidden xs:inline text-[11px] sm:text-[13px] text-white/40 font-medium italic truncate">Orchestrator</span>
-                                                <button
-                                                    onClick={() => handleSendMessage()}
-                                                    disabled={!input.trim() || isLoading}
-                                                    className={`w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full transition-all shrink-0 ${input.trim() && !isLoading
-                                                        ? 'bg-white text-black'
-                                                        : 'bg-white/10 text-white/20'
-                                                        }`}
-                                                >
-                                                    <ArrowRight size={18} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Category Buttons */}
-                                <div className="flex flex-wrap justify-center gap-2 mb-16">
+                                {/* Quick Action Pills */}
+                                <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2.5 mb-6 sm:mb-8 w-full max-w-2xl px-1">
                                     {[
-                                        { icon: Database, text: "Use cases" },
-                                        { icon: User, text: "Lead generation" },
-                                        { icon: Sparkles, text: "Recruiting" },
-                                        { icon: Activity, text: "Monitoring" }
+                                        { icon: Database, label: "Use cases", prompt: "Show me common use cases and project templates" },
+                                        { icon: Users, label: "Lead generation", prompt: "Build a lead generation engine with web scraping" },
+                                        { icon: Sparkles, label: "Recruiting", prompt: "Create an AI candidate screening app" },
+                                        { icon: TrendingUp, label: "Monitoring", prompt: "Set up a real-time system monitoring dashboard" }
                                     ].map((item, i) => (
                                         <button
                                             key={i}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 transition-all text-[13px] font-medium text-white/80"
+                                            onClick={() => setInput(item.prompt)}
+                                            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-surface-2 border border-border-subtle hover:bg-surface-3 hover:border-accent/40 transition-all text-[11px] sm:text-xs font-medium text-text-secondary hover:text-text-primary shadow-sm hover:-translate-y-0.5 font-sans shrink-0"
                                         >
-                                            <item.icon size={14} className="text-white/40" />
-                                            <span>{item.text}</span>
+                                            <item.icon size={12} className="text-accent sm:w-[13px] sm:h-[13px]" />
+                                            <span>{item.label}</span>
                                         </button>
                                     ))}
                                 </div>
 
-                                {/* Visual Task Cards */}
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
+                                {/* Visual Showcase Skill Cards */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full px-1">
                                     {[
-                                        { title: "Lead Generation", color: "from-blue-500/20" },
-                                        { title: "Stock Analysis", color: "from-emerald-500/20" },
-                                        { title: "Market Trends", color: "from-purple-500/20" }
+                                        {
+                                            title: "Lead Generation Engine",
+                                            desc: "Automated scraping & scoring",
+                                            color: "from-purple-500/20 via-indigo-500/10 to-transparent",
+                                            prompt: "Build an automated lead generation engine with score tracking",
+                                            icon: Users
+                                        },
+                                        {
+                                            title: "Stock & Market Analysis",
+                                            desc: "Real-time chart telemetry",
+                                            color: "from-emerald-500/20 via-teal-500/10 to-transparent",
+                                            prompt: "Build a financial stock analysis app with charts",
+                                            icon: TrendingUp
+                                        },
+                                        {
+                                            title: "Market Trend Analyzer",
+                                            desc: "Competitor intelligence data",
+                                            color: "from-amber-500/20 via-purple-500/10 to-transparent",
+                                            prompt: "Build a market trends analytics dashboard",
+                                            icon: Activity
+                                        }
                                     ].map((card, i) => (
-                                        <div key={i} className="group cursor-pointer">
-                                            <div className={`aspect-video w-full rounded-xl bg-gradient-to-br ${card.color} to-transparent border border-white/5 mb-3 relative overflow-hidden group-hover:border-white/20 transition-all`}>
-                                                <div className="absolute inset-0 flex items-center justify-center opacity-20">
-                                                    <Activity size={40} />
+                                        <div
+                                            key={i}
+                                            onClick={() => setInput(card.prompt)}
+                                            className="group cursor-pointer p-3.5 sm:p-4 rounded-2xl border border-border-subtle bg-surface-1/90 backdrop-blur-md hover:border-accent/40 hover:shadow-xl transition-all duration-300 flex flex-col justify-between hover:-translate-y-1"
+                                        >
+                                            <div>
+                                                <div className={`h-20 sm:h-24 w-full rounded-xl bg-gradient-to-br ${card.color} border border-border-subtle relative overflow-hidden flex items-center justify-center mb-3 group-hover:border-accent/30 transition-colors`}>
+                                                    <card.icon size={28} className="text-accent group-hover:scale-110 transition-transform duration-300 sm:w-8 sm:h-8" />
                                                 </div>
+                                                <h3 className="text-xs font-bold text-text-primary group-hover:text-accent transition-colors truncate mb-1 font-display">
+                                                    {card.title}
+                                                </h3>
+                                                <p className="text-[11px] text-text-muted line-clamp-1 font-sans">
+                                                    {card.desc}
+                                                </p>
                                             </div>
-                                            <h3 className="text-[13px] font-medium text-white/60 group-hover:text-white transition-colors">{card.title}</h3>
+                                            <div className="mt-3 pt-2 border-t border-border-subtle flex items-center justify-between text-[10px] font-bold text-accent opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <span>Launch Skill</span>
+                                                <ArrowRight size={12} />
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
+
                         ) : (
                             <div className="max-w-4xl mx-auto w-full relative">
+
                                 {messages.length === 0 && !isLoading ? (
                                     <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center px-6 animate-in fade-in duration-500">
                                         <div className="flex items-center gap-2 mb-4">
                                             <div className="w-6 h-6 bg-white rounded-md flex items-center justify-center shrink-0">
                                                 <div className="w-3 h-2 border-[1.5px] border-black rounded-sm" />
                                             </div>
-                                            <span className="text-lg font-medium text-white/40">grizon <span className="text-white/20">brain</span></span>
+                                            <span className="text-lg font-medium text-white/40">Grizon <span className="text-white/20">brain</span></span>
+
                                         </div>
                                         <p className="text-sm text-white/30 max-w-md">
                                             This conversation has no messages yet. Type something below to get started.
@@ -2404,15 +2553,43 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                     {/* Sticky Bottom Input */}
                     {(messages.length > 0 || pathname.startsWith('/brain/')) && (
-                        <div className={`bg-[#0a0a0a] relative z-10 shrink-0 ${isBuildMode ? 'border-t border-white/5 px-3 py-3' : 'p-6'}`}>
+                        <div className={`bg-app border-t border-border-subtle relative z-10 shrink-0 ${isBuildMode ? 'px-3 py-3' : 'p-4 sm:p-6'}`}>
                             <div className={`${isBuildMode ? 'w-full' : 'max-w-3xl mx-auto'} relative group`}>
-                                <div className="relative flex flex-col gap-2 bg-[#1a1a1a] border border-white/10 rounded-2xl p-2 pr-3 focus-within:border-white/20 transition-all duration-300 shadow-2xl">
+                                <div className="relative flex flex-col gap-2 bg-surface-2/90 border border-border-default rounded-2xl p-2 pr-3 focus-within:border-accent/40 focus-within:ring-2 focus-within:ring-accent/15 transition-all duration-300 shadow-xl">
+                                    {brainAttachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 px-2 pt-1 border-b border-border-subtle pb-2">
+                                            {brainAttachments.map(att => (
+                                                <div key={att.id} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-3 border border-border-default text-xs text-text-primary">
+                                                    <span className="truncate max-w-[140px]">{att.name}</span>
+                                                    {att.status === 'uploading' ? (
+                                                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                                                    ) : (
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setBrainAttachments(prev => prev.filter(x => x.id !== att.id))} 
+                                                            className="text-text-muted hover:text-red-400 font-bold ml-1"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                     <div className="relative flex items-end gap-3 pt-1">
+                                        <button 
+                                            type="button" 
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-3 transition-all shrink-0 mb-1"
+                                            title="Add Attachment (Image / PDF)"
+                                        >
+                                            <Plus size={18} />
+                                        </button>
                                         {tokenEstimate !== null && !isBuildMode && (
-                                            <div className="absolute -top-10 right-0 px-3 py-1.5 rounded-lg bg-[#1a1a1a] border border-white/10 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                            <div className="absolute -top-10 right-0 px-3 py-1.5 rounded-lg bg-surface-2 border border-border-subtle shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300">
                                                 <div className="flex items-center gap-2">
-                                                    <Zap size={12} className="text-[#976df8]" />
-                                                    <span className="text-[11px] font-bold text-white/90">
+                                                    <Zap size={12} className="text-accent" />
+                                                    <span className="text-[11px] font-bold text-text-primary">
                                                         Est. {tokenEstimate.toLocaleString()} tokens
                                                     </span>
                                                 </div>
@@ -2429,9 +2606,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                 }
                                             }}
                                             placeholder={isBuildMode ? "Ask a follow-up..." : "Follow up..."}
-                                            className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder:text-white/20 py-3 px-4 resize-none min-h-[52px] max-h-48 custom-scrollbar text-[15px]"
+                                            className="flex-1 bg-transparent border-none focus:ring-0 text-text-primary placeholder:text-text-muted py-3 px-4 resize-none min-h-[52px] max-h-48 custom-scrollbar text-[15px]"
                                             rows={1}
                                         />
+
                                         {isLoading ? (
                                             <button
                                                 type="button"
