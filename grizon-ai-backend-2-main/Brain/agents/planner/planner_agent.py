@@ -90,18 +90,65 @@ class PlannerAgent(BaseAgent):
         OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences:
         {{
           "project_name": "Short descriptive name of the actual project",
-          "markdown_plan": "A clear, well-structured Markdown plan (concise but complete) with sections for Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Utilities & Helpers, Implementation Steps, Data Storage Strategy, and Future Enhancements. Include bullet points, bold text, and code formatting where appropriate.",
+          "markdown_plan": "A COMPLETE Markdown plan covering ALL sections listed below. Use tight bullet points (one line per point) so it stays efficient, but DO NOT skip or shorten any section — every section below MUST be present and substantive. No filler sentences, no marketing language.",
           "tech_stack": ["React", "Express", "Supabase"],
+          "stack": {{
+            "frontend": "React",
+            "backend": "Express",
+            "db": "Supabase",
+            "auth": "JWT",
+            "styling": "Tailwind"
+          }},
+          "architecture": {{
+            "pages": [
+              {{
+                "name": "Dashboard",
+                "route": "/dashboard",
+                "components": [
+                  {{ "name": "StatsCard", "props": ["title", "value"], "depends_on": [] }},
+                  {{ "name": "Chart", "props": ["data", "type"], "depends_on": ["StatsCard"] }}
+                ]
+              }}
+            ],
+            "components": ["Navbar", "Footer", "Sidebar"],
+            "tables": [
+              {{ "name": "tasks", "columns": [{{ "name": "title", "type": "text", "required": true }}] }}
+            ],
+            "api_routes": [
+              {{ "path": "/api/tasks", "method": "GET", "purpose": "Fetch tasks" }}
+            ],
+            "models": ["Task", "User"],
+            "features": [
+              {{ "name": "Create Task", "page": "Dashboard", "backend": ["/api/tasks"], "database": ["tasks"] }}
+            ],
+            "dependencies": ["react-router-dom"]
+          }},
+          "execution_groups": [
+            {{ "id": 1, "files": ["backend/supabase/schema.sql"] }},
+            {{ "id": 2, "files": ["backend/routes/tasks.js", "backend/controllers/tasks.js"] }}
+          ],
+          "confidence": 0.9,
+          "estimated_tasks": 11,
+          "estimated_files": 47,
+          "estimated_build_minutes": 90,
           "status": "proposed"
         }}
 
         GUIDELINES:
         1. The project_name MUST reflect the user's actual project (not a generic name).
-        2. The markdown_plan MUST be clear and complete (concise, not bloated) based on the user's answers. Break down the components, the data model, and exactly what pages will be built.
-        3. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
-        4. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
-        5. Plan for preview-visible UI — not isolated component files.
-        6. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
+        2. GROUNDING RULE (CRITICAL, ANTI-HALLUCINATION): Include ONLY what the user actually asked for in their request and Q&A answers. Do NOT invent features, pages, data models, or tech-stack items the user never mentioned or clearly implied. If the user's request is small, the plan must be small. If a section has nothing concrete to say, say it briefly rather than fabricating details.
+        3. The markdown_plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature in the plan must trace back to something the user said.
+        4. AUTHORITY: The `markdown_plan` is for humans. The `architecture` object is for downstream agents (Todo/Builder). If they ever differ, the `architecture` object is authoritative. They MUST describe the same app — same pages, same routes, same tables, same API endpoints.
+        5. HIERARCHY: Components that belong to a page go NESTED inside that page's `components` array (with props + depends_on). Only SHARED components (used on multiple pages, e.g. Navbar, Footer) go in the top-level `components` list.
+        6. `api_routes` MUST include the HTTP method and purpose for every endpoint. `tables` MUST include column name, type, and required flag. Every `feature` MUST trace to its page, backend route(s), and database table(s).
+        7. `execution_groups`: propose logical build groups — each group lists the exact file paths that should be built together (e.g. all files for one feature or one layer). The Todo Agent refines these into tasks.
+        8. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies. Both are required.
+        9. `confidence`: estimate how sure you are that the plan matches the user's intent (0.0–1.0). Low (< 0.6) only when the request is genuinely ambiguous.
+        10. `estimated_tasks` / `estimated_files` / `estimated_build_minutes`: realistic estimates based on the actual scope of THIS plan.
+        11. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
+        12. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
+        13. Plan for preview-visible UI — not isolated component files.
+        14. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
         """
 
         messages = [SystemMessage(content=system_prompt)]
@@ -124,7 +171,7 @@ class PlannerAgent(BaseAgent):
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
 
-        response_content = await self.chat(messages, max_tokens=1800)
+        response_content = await self.chat(messages, timeout=90, max_tokens=1800)
         plan = self._format_json_response(response_content)
 
         if not isinstance(plan, dict) or plan.get("error"):
@@ -132,8 +179,47 @@ class PlannerAgent(BaseAgent):
                 "project_name": "New Project",
                 "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
                 "tech_stack": ["React", "Tailwind", "Node", "Express", "Python Proxy", "Supabase"],
+                "stack": {"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind"},
+                "architecture": {
+                    "pages": [
+                        {"name": "Landing Page", "route": "/", "components": [{"name": "Hero", "props": [], "depends_on": []}, {"name": "Features", "props": [], "depends_on": []}, {"name": "Footer", "props": [], "depends_on": []}]},
+                        {"name": "Dashboard", "route": "/dashboard", "components": [{"name": "StatsCard", "props": ["title", "value"], "depends_on": []}, {"name": "Sidebar", "props": [], "depends_on": []}]},
+                    ],
+                    "components": ["Navbar"],
+                    "tables": [],
+                    "api_routes": [],
+                    "models": [],
+                    "features": [],
+                    "dependencies": ["react-router-dom"],
+                },
+                "execution_groups": [
+                    {"id": 1, "files": ["frontend/src/pages/Landing.jsx"]},
+                    {"id": 2, "files": ["frontend/src/pages/Dashboard.jsx"]},
+                ],
+                "confidence": 0.5,
+                "estimated_tasks": 8,
+                "estimated_files": 25,
+                "estimated_build_minutes": 60,
                 "status": "proposed"
             }
+
+        # Ensure structured keys always exist (backend/todo rely on them)
+        if not isinstance(plan.get("architecture"), dict):
+            plan["architecture"] = {}
+        if not isinstance(plan.get("stack"), dict):
+            stack_map = {}
+            for t in (plan.get("tech_stack") or []):
+                tl = str(t).lower()
+                if "react" in tl: stack_map["frontend"] = t
+                elif "vue" in tl: stack_map["frontend"] = t
+                elif "angular" in tl: stack_map["frontend"] = t
+                elif "next" in tl: stack_map["frontend"] = t
+                elif "express" in tl: stack_map["backend"] = t
+                elif "supabase" in tl: stack_map["db"] = t
+                elif "postgres" in tl: stack_map["db"] = t
+                elif "tailwind" in tl: stack_map["styling"] = t
+                elif "jwt" in tl: stack_map["auth"] = t
+            plan["stack"] = stack_map or {"frontend": "React", "backend": "Express", "db": "Supabase", "styling": "Tailwind"}
 
         # Ensure markdown_plan exists
         if not plan.get("markdown_plan"):

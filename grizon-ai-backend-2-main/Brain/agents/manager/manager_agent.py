@@ -107,8 +107,10 @@ class ManagerAgent(BaseAgent):
             print(f"DEBUG: ManagerAgent detected user answered questions (round {current_rounds})")
             user_answers = prompt  # The user's submitted answers IS the current message
 
-            # Force go to planner after 2 rounds of Q&A (prevent infinite loops)
-            if current_rounds >= 2:
+            # Skip LLM re-evaluation after ANY answer round — the QuestionsAgent
+            # already asked targeted questions; re-evaluating adds a full LLM round
+            # trip (~20s) just to decide what we already know.
+            if current_rounds >= 1:
                 rich_thought = (
                     f"The user has provided their requirements across {current_rounds} rounds of questions.\n\n"
                     f"Based on their answers:\n{user_answers}\n\n"

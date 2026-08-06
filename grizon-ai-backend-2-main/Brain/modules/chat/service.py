@@ -537,6 +537,14 @@ class BrainChatService:
                 "css": plan_json.get("css") or plan_json.get("css_framework") or "tailwind",
                 "api_style": "rest",
             }
+            # Prefer the structured stack object when present (planner v2)
+            stack_obj = plan_json.get("stack")
+            if isinstance(stack_obj, dict) and any(stack_obj.values()):
+                if stack_obj.get("frontend"): decisions["frontend"] = stack_obj["frontend"]
+                if stack_obj.get("backend"): decisions["backend"] = stack_obj["backend"]
+                if stack_obj.get("db"): decisions["database"] = stack_obj["db"]
+                if stack_obj.get("auth"): decisions["auth"] = stack_obj["auth"]
+                if stack_obj.get("styling"): decisions["css"] = stack_obj["styling"]
             for t in tech_stack:
                 tl = t.lower()
                 if "react" in tl: decisions["frontend"] = "React"

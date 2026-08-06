@@ -89,6 +89,25 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
     const summaryPoints: { key: string; value: string }[] = parsedPlan?.summary_points || [];
     const structuralDetails: string[] = parsedPlan?.structural_details || [];
 
+    // Structured stack + estimates (planner v2)
+    const stackItems: string[] = (() => {
+        const s = parsedPlan?.stack;
+        if (s && typeof s === 'object') {
+            return Object.entries(s)
+                .filter(([k, v]) => v && typeof v === 'string')
+                .map(([k, v]) => v as string);
+        }
+        const ts = parsedPlan?.tech_stack;
+        return Array.isArray(ts) ? ts.filter((x: unknown): x is string => typeof x === 'string') : [];
+    })();
+    const uniqueStack = Array.from(new Set(stackItems.map(x => String(x).trim()).filter(Boolean)));
+    const estimates: { label: string; value: number | undefined }[] = [
+        { label: 'tasks', value: parsedPlan?.estimated_tasks },
+        { label: 'files', value: parsedPlan?.estimated_files },
+        { label: 'mins', value: parsedPlan?.estimated_build_minutes },
+    ].filter(e => typeof e.value === 'number') as { label: string; value: number }[];
+    const confidence = typeof parsedPlan?.confidence === 'number' ? parsedPlan.confidence : null;
+
     return (
         <div className="w-full mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="bg-[#111111] border border-white/[0.1] rounded-2xl overflow-hidden shadow-2xl">
@@ -116,6 +135,35 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                     </div>
 
                 </div>
+
+                {/* Stack + Estimates meta row */}
+                {(uniqueStack.length > 0 || estimates.length > 0 || confidence !== null) && (
+                    <div className="flex flex-wrap items-center gap-1.5 px-5 pb-3 -mt-1">
+                        {uniqueStack.map((tech, i) => (
+                            <span key={`st-${i}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#976df8]/[0.08] border border-[#976df8]/[0.15] text-[10.5px] font-mono text-[#c4b5fd]">
+                                {tech}
+                            </span>
+                        ))}
+                        {estimates.map((e, i) => (
+                            <span key={`est-${i}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-[10.5px] font-mono text-white/40">
+                                ~{e.value} {e.label}
+                            </span>
+                        ))}
+                        {confidence !== null && (
+                            <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[10.5px] font-mono ${
+                                    confidence >= 0.7
+                                        ? 'bg-emerald-500/[0.08] border-emerald-500/[0.15] text-emerald-400/80'
+                                        : confidence >= 0.5
+                                          ? 'bg-amber-500/[0.08] border-amber-500/[0.15] text-amber-400/80'
+                                          : 'bg-red-500/[0.08] border-red-500/[0.15] text-red-400/80'
+                                }`}
+                            >
+                                {Math.round(confidence * 100)}% confident
+                            </span>
+                        )}
+                    </div>
+                )}
 
                 {/* Markdown Plan (v0 style) */}
                 {(activePlanContent === "" || (!markdownPlan && summaryPoints.length === 0)) ? (

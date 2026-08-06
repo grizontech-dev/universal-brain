@@ -14,12 +14,34 @@ MAX_TODOS = 15
 def _compact_plan(plan: dict) -> str:
     """Return task-relevant sections of the plan. Falls back to a generous
     portion of the full markdown when sections are thin, so context is never
-    lost (prevents hallucinating generic tasks)."""
+    lost (prevents hallucinating generic tasks).
+
+    When the planner provides the structured `architecture` block, it is
+    injected verbatim — the Todo Agent then reads exact pages/components/
+    tables/api_routes instead of parsing markdown."""
     if not isinstance(plan, dict):
         return str(plan)
     name = plan.get("project_name", "Project")
     stack = plan.get("tech_stack", [])
     markdown = str(plan.get("markdown_plan", "") or "")
+
+    out = f"Project: {name}"
+    if stack:
+        out += f"\nTech Stack: {json.dumps(stack)}"
+
+    arch = plan.get("architecture")
+    if isinstance(arch, dict) and arch:
+        arch_trimmed = json.dumps(arch, default=str)[:4000]
+        out += f"\n\nARCHITECTURE SPEC (authoritative source — pages with their components, tables with columns, api_routes with methods, features. Use these EXACT names):\n{arch_trimmed}"
+
+    groups = plan.get("execution_groups")
+    if isinstance(groups, list) and groups:
+        out += f"\n\nSUGGESTED EXECUTION GROUPS (refine these into tasks — you may merge or split, keep file paths):\n{json.dumps(groups, default=str)[:1500]}"
+
+    stack_map = plan.get("stack")
+    if isinstance(stack_map, dict) and stack_map:
+        out += f"\n\nSTACK SPEC: {json.dumps(stack_map, default=str)[:800]}"
+
     keep_headers = (
         "overview", "architecture", "data model", "key pages", "pages",
         "components to build", "components & utilities", "implementation steps",
@@ -44,13 +66,8 @@ def _compact_plan(plan: dict) -> str:
             compact = markdown[:5000]
         else:
             compact = kept_text[:5000]
-    else:
-        compact = ""
-    out = f"Project: {name}"
-    if stack:
-        out += f"\nTech Stack: {json.dumps(stack)}"
-    if compact:
-        out += f"\nPlan Details:\n{compact}"
+        if compact:
+            out += f"\n\nPlan Details:\n{compact}"
     return out
 
 
@@ -245,8 +262,13 @@ class TodoAgent(BaseAgent):
         - Each file generates one LLM call (~30-60s), so 5 files = ~5 minutes per task.
 
         CRITICAL: FOLLOW THE PLAN EXACTLY. Do NOT add generic components (Hero, Features, Contact) unless the plan specifically mentions them.
-        Read the plan's "Key Pages & Components" section and create tasks for EACH component listed there.
-        Read the plan's "Data Models" section and create database tasks for EACH model listed there.
+        If the plan includes an "ARCHITECTURE SPEC" block, it is AUTHORITATIVE — use it as the primary source:
+        - create a database task for EVERY table in `tables` (use its exact column names/types)
+        - create a backend task for EVERY route in `api_routes` (use its exact path + method)
+        - create a frontend task for EVERY page in `pages` (each page's nested components are its own — keep them in that page's task or a focused page task)
+        - shared components (top-level `components`) go with the page that needs them or a shared-components task
+        Use those exact names and routes — do NOT invent or rename anything. Markdown plan is only secondary/descriptive context.
+        The "SUGGESTED EXECUTION GROUPS" block is a starting point — refine, merge, or split into the task list while keeping the file paths.
 
         REQUIRED TASK ORDER:
         1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.
@@ -314,6 +336,20 @@ class TodoAgent(BaseAgent):
                     plan_text += val + " "
                 elif isinstance(val, list):
                     plan_text += json.dumps(val) + " "
+            arch = plan.get("architecture")
+            if isinstance(arch, dict):
+                arch_routes = arch.get("api_routes", [])
+                if isinstance(arch_routes, list):
+                    for r in arch_routes:
+                        if isinstance(r, dict) and r.get("path"):
+                            plan_text += " " + str(r["path"])
+                        else:
+                            plan_text += " " + str(r)
+                arch_pages = arch.get("pages", [])
+                if isinstance(arch_pages, list):
+                    for p in arch_pages:
+                        if isinstance(p, dict) and p.get("route"):
+                            plan_text += " " + str(p["route"])
         elif isinstance(plan, str):
             plan_text = plan
         else:

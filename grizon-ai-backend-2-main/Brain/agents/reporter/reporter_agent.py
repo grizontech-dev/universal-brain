@@ -51,6 +51,11 @@ class ReporterAgent(BaseAgent):
         architecture = project_plan.get("architecture", {})
         milestones = project_plan.get("milestones", [])
         tech_stack = project_plan.get("tech_stack", [])
+        stack_obj = project_plan.get("stack")
+        if isinstance(stack_obj, dict) and any(stack_obj.values()):
+            tech_stack = [v for k, v in stack_obj.items() if v] + [t for t in tech_stack if t.lower() not in " ".join(str(v).lower() for v in stack_obj.values() if v)]
+        elif not tech_stack:
+            tech_stack = [t for t in (stack_obj or {}).values() if t] if isinstance(stack_obj, dict) else []
 
         # Build the LLM prompt
         system_prompt = """You are the Grizon Technical Report Generator.
