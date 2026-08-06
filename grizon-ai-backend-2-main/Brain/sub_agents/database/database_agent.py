@@ -86,6 +86,6 @@ class DatabaseAgent(BaseAgent):
         )
 
         # Generation (review loop disabled to prevent timeout)
-        response_content = await self.chat(messages, timeout=300)
+        response_content = await self.chat(messages, timeout=180, max_tokens=2000)
         generated_json = self._format_json_response(response_content)
         return generated_json

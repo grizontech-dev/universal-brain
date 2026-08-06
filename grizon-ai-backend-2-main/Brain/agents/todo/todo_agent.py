@@ -11,6 +11,41 @@ MIN_TODOS = 3
 MAX_TODOS = 15
 
 
+def _compact_plan(plan: dict) -> str:
+    """Return only task-relevant sections of the plan instead of the full JSON dump."""
+    if not isinstance(plan, dict):
+        return str(plan)
+    name = plan.get("project_name", "Project")
+    stack = plan.get("tech_stack", [])
+    markdown = str(plan.get("markdown_plan", "") or "")
+    keep_headers = (
+        "overview", "architecture", "data model", "key pages",
+        "components to build", "components & utilities", "implementation steps",
+        "utilities & helpers", "frontend stack", "backend stack",
+    )
+    sections = []
+    if markdown:
+        current: List[str] = []
+        for line in markdown.splitlines():
+            if line.startswith("##"):
+                if current:
+                    sections.append(current)
+                    current = []
+            current.append(line)
+        if current:
+            sections.append(current)
+        kept = [s for s in sections if any(h in s[0].lower() for h in keep_headers)]
+        compact = "\n\n".join("\n".join(s) for s in kept) if kept else markdown[:1500]
+    else:
+        compact = ""
+    out = f"Project: {name}"
+    if stack:
+        out += f"\nTech Stack: {json.dumps(stack)}"
+    if compact:
+        out += f"\nPlan Details:\n{compact}"
+    return out
+
+
 def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not isinstance(tasks, list):
         return tasks
@@ -194,10 +229,10 @@ class TodoAgent(BaseAgent):
             messages.append(SystemMessage(content=session_context))
         if decisions_context:
             messages.append(SystemMessage(content=decisions_context))
-        messages.append(HumanMessage(content=f"Approved Plan: {json.dumps(plan)}"))
+        messages.append(HumanMessage(content=f"Approved Plan: {_compact_plan(plan)}"))
 
         print(f"{LOG} Calling LLM now with {len(messages)} messages, total chars={sum(len(m.content) for m in messages)}", flush=True)
-        response_content = await self.chat(messages, model_id="deepseek-v4-flash", timeout=300)
+        response_content = await self.chat(messages, model_id="deepseek-v4-flash", timeout=120, max_tokens=1800)
         print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
         tasks = self._format_json_response(response_content)
 

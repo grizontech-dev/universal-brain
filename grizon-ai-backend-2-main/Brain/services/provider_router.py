@@ -29,9 +29,9 @@ class ProviderRouter:
                 api_key=openai_key,
                 base_url=openai_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=120,
-                request_timeout=120,
+                max_retries=1,
+                timeout=90,
+                request_timeout=90,
                 **({"max_tokens": max_tokens} if max_tokens else {})
             )
 
@@ -46,9 +46,9 @@ class ProviderRouter:
                 api_key=deepseek_key,
                 base_url=deepseek_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=120,
-                request_timeout=120,
+                max_retries=1,
+                timeout=90,
+                request_timeout=90,
                 **({"max_tokens": max_tokens} if max_tokens else {}),
                 **extra
             )
@@ -65,9 +65,9 @@ class ProviderRouter:
                 api_key=deepinfra_key,
                 base_url=deepinfra_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=180,
-                request_timeout=180,
+                max_retries=1,
+                timeout=120,
+                request_timeout=120,
                 **({"max_tokens": max_tokens} if max_tokens else {}),
                 **extra,
             )
@@ -110,9 +110,9 @@ class ProviderRouter:
                     api_key=kimi_key,
                     base_url=kimi_base,
                     temperature=1,
-                    max_retries=2,
-                    timeout=120,
-                    request_timeout=120,
+                    max_retries=1,
+                    timeout=90,
+                    request_timeout=90,
                     **({"max_tokens": max_tokens} if max_tokens else {})
                 )
             return get_fallback_model()
@@ -162,7 +162,7 @@ class ProviderRouter:
                     google_api_key=gemini_key,
                     temperature=temperature,
                     convert_system_message_to_human=True,
-                    max_retries=2,
+                    max_retries=1,
                     timeout=60,
                     request_timeout=60,
                     **({"max_output_tokens": max_tokens} if max_tokens else {})
