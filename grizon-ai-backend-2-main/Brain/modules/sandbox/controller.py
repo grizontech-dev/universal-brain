@@ -89,12 +89,12 @@ async def read_file(
 
     host_path = os.path.join(workspace_path, path.lstrip("/"))
     if not os.path.exists(host_path):
-        return {"error": "File not found"}
+        return {"error": "File not found", "tried": host_path, "workspace": workspace_path}
 
     try:
         with open(host_path, "r", encoding="utf-8") as f:
             content = f.read()
-        return {"content": content}
+        return {"content": content, "path": host_path}
     except Exception as e:
         return {"error": str(e)}
 

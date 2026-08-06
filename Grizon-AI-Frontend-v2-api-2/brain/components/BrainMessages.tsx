@@ -1026,7 +1026,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
         if (force || isAtBottom) {
             userScrolledUpRef.current = false;
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            container.scrollTop = container.scrollHeight;
         }
     };
 
@@ -1219,6 +1219,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     const hasPendingMessage = sessionStorage.getItem('brainPendingMessage');
                     if (mappedMessages.length > 0 || !getNavigatingFlag() || hasPendingMessage) {
                         setMessages(filteredMessages);
+                        userScrolledUpRef.current = false;
+                        requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom(true)));
 
                         // Auto-hydrate active sandbox if found in recent messages
                         const latestSandboxMsg = [...mappedMessages].reverse().find(m => m.sandboxJob);
@@ -1433,6 +1435,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
             setMessages(prev => prev.filter(m => m.role !== 'clarification').concat(userMsg));
+            userScrolledUpRef.current = false;
+            requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom(true)));
         }
 
         setInput('');
@@ -1539,6 +1543,16 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             // Clear the streaming plan ref so old plan doesn't pop back in
             currentPlanContentRef.current = isApproval ? approvedPlanContent : "";
 
+            // For regular follow-ups (not plan approval), clear the previous build's
+            // activities/todos/timeline so the old plan+task UI does NOT attach to the new answer.
+            if (!isApproval) {
+                setBuildActivities([]);
+                setBuildTodos([]);
+                setIsBuildSyncing(false);
+                setBuildFinishedAt(null);
+                useExecutionStore.getState().resetExecution();
+            }
+
             // Initialize/Update the AI message
             setMessages(prev => {
                 const existingIdx = prev.findIndex(m => m.id === finalAiMsgId);
@@ -1563,6 +1577,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     todoList: []
                 }];
             });
+            userScrolledUpRef.current = false;
+            requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom(true)));
 
             // Store actions
             const execStore = useExecutionStore.getState();

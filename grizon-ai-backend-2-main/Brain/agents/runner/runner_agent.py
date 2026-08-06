@@ -65,7 +65,8 @@ class RunnerAgent(BaseAgent):
             return
 
         existing_tunnel = sandbox_mcp.get_tunnel_url(str(session_id))
-        if existing_tunnel:
+        user_id = state.get("user_id")
+        if existing_tunnel and not sandbox_mcp.workspace_changed(str(session_id), user_id=user_id):
             print(f"{LOG} SKIP DEPLOY: tunnel URL already exists from builder: {existing_tunnel}")
             sandbox_job = state.get("sandbox_job") or {}
             sandbox_job["job_id"] = str(session_id)
@@ -91,6 +92,22 @@ class RunnerAgent(BaseAgent):
             })
             yield state
             return
+
+        if existing_tunnel:
+            # Follow-up build: files changed since last deploy → delete old sandbox and redeploy
+            print(f"{LOG} REDEPLOY: workspace changed since last deploy — deleting old sandbox {existing_tunnel}")
+            await ws_manager.broadcast_to_sandbox(str(session_id), {
+                "type": "sandbox_status",
+                "status": "redeploying",
+                "message": "Workspace changed — rebuilding sandbox with latest files…",
+                "url": existing_tunnel,
+            })
+            try:
+                del_result = await sandbox_mcp.delete_sandbox(str(session_id), user_id=user_id)
+                print(f"{LOG} REDEPLOY: old sandbox deleted: {del_result}")
+            except Exception as e:
+                print(f"{LOG} REDEPLOY: delete failed (continuing): {e}")
+            existing_tunnel = None  # force full deploy path below
 
         deploy_act = {
             "id": f"act-deploy-{int(time.time())}",

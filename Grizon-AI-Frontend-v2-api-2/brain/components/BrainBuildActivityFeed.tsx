@@ -116,8 +116,9 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
         setLoading(true);
         try {
             const jobId = (window as any).__brainJobId || '';
+            const userId = (window as any).__brainUserId || '';
             if (!jobId) { setFileContent('// No workspace'); setLoading(false); return; }
-            const uid = typeof window !== 'undefined' && localStorage.getItem('user_id') ? `&user_id=${encodeURIComponent(localStorage.getItem('user_id')!)}` : '';
+            const uid = userId ? `&user_id=${encodeURIComponent(userId)}` : '';
             const url = getBrainApiUrl(`sandbox/read-file?workspace_id=${encodeURIComponent(jobId)}&path=${encodeURIComponent(filePath)}${uid}`);
             const res = await fetch(url, { cache: 'no-store' });
             if (res.ok) {

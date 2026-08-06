@@ -288,6 +288,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
                 print(f"{LOG} TUNNEL URL: {tunnel_url}", flush=True)
                 output_text += f"\nTunnel URL: {tunnel_url}"
                 sandbox_mcp.store_tunnel_url(session_id, tunnel_url)
+                sandbox_mcp.store_deploy_snapshot(session_id, user_id=user_id)
                 # Broadcast dedicated sandbox_ready event so the frontend canvas loads the preview
                 await ws_manager.broadcast_to_sandbox(session_id, {
                     "type": "sandbox_ready",

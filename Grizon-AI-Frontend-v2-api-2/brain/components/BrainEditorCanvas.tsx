@@ -372,6 +372,12 @@ export default function BrainEditorCanvas({
         }
     }, [jobId]);
 
+    useEffect(() => {
+        if (user?.id) {
+            (window as any).__brainUserId = user.id;
+        }
+    }, [user?.id]);
+
     const activeFilePathRef = useRef<string | null>(null);
     useEffect(() => {
         activeFilePathRef.current = activeFile?.path || null;

@@ -30,6 +30,7 @@ class SandboxMCPService:
         self._url: Optional[str] = None
         self._token: Optional[str] = None
         self._tunnel_urls: Dict[str, str] = {}
+        self._deploy_snapshots: Dict[str, str] = {}
 
     async def initialize(self):
         if self._initialized:
@@ -579,6 +580,7 @@ export default defineConfig({
                     print(json.dumps(parsed, indent=2)[:1500])
 
                 self._touch(session_id)
+                self.store_deploy_snapshot(session_id, user_id=user_id)
                 print(f"[SANDBOX_MCP] ===== deploy_workspace END (status={status}) =====\n")
                 return parsed
             except Exception as e:
@@ -611,6 +613,7 @@ export default defineConfig({
             }, user_id))
             self._session_activity.pop(session_id, None)
             self._tunnel_urls.pop(session_id, None)
+            self._deploy_snapshots.pop(self._snapshot_key(session_id, user_id), None)
             # Do NOT delete local workspace — files are needed for re-deploy
             logger.info("[sandbox_mcp] Deleted sandbox '%s'", session_id)
             return self._parse_response(result)
@@ -707,6 +710,49 @@ export default defineConfig({
 
     def get_tunnel_url(self, session_id: str) -> Optional[str]:
         return self._tunnel_urls.get(session_id)
+
+    def _snapshot_key(self, session_id: str, user_id: str = None) -> str:
+        return f"{user_id or 'anon'}:{session_id}"
+
+    def _compute_workspace_snapshot(self, session_id: str, user_id: str = None) -> str:
+        """Hash of workspace file paths + sizes + mtimes. Detects any file change."""
+        import hashlib
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
+        if (not os.path.isdir(workspace_dir) or not os.listdir(workspace_dir)) and user_id:
+            fallback_dir = self.get_workspace_dir(session_id)
+            if os.path.isdir(fallback_dir) and os.listdir(fallback_dir):
+                workspace_dir = fallback_dir
+        h = hashlib.sha256()
+        if not os.path.isdir(workspace_dir):
+            return h.hexdigest()
+        for root, dirs, files in os.walk(workspace_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__")]
+            for name in sorted(files):
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, workspace_dir).replace("\\", "/")
+                try:
+                    st = os.stat(full)
+                    h.update(rel.encode("utf-8"))
+                    h.update(str(st.st_size).encode("utf-8"))
+                    h.update(str(int(st.st_mtime)).encode("utf-8"))
+                except OSError:
+                    continue
+        return h.hexdigest()
+
+    def workspace_changed(self, session_id: str, user_id: str = None) -> bool:
+        """True if workspace files differ from the last successful deploy snapshot."""
+        key = self._snapshot_key(session_id, user_id)
+        current = self._compute_workspace_snapshot(session_id, user_id)
+        last = self._deploy_snapshots.get(key)
+        changed = last is None or last != current
+        if changed:
+            print(f"[SANDBOX_MCP] workspace_changed=True for {session_id} (last={str(last)[:12]} current={current[:12]})")
+        return changed
+
+    def store_deploy_snapshot(self, session_id: str, user_id: str = None):
+        key = self._snapshot_key(session_id, user_id)
+        self._deploy_snapshots[key] = self._compute_workspace_snapshot(session_id, user_id)
+        print(f"[SANDBOX_MCP] Stored deploy snapshot for {key}")
 
 
 _sandbox_mcp_instance: Optional[SandboxMCPService] = None

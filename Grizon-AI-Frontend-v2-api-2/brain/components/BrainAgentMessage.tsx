@@ -50,7 +50,6 @@ export default function BrainAgentMessage({
   planContent,
   planVersions,
   planApproved,
-  planSuperseded,
   sandboxJob,
   todoList,
   onRegenerate,
@@ -138,8 +137,8 @@ export default function BrainAgentMessage({
             <MarkdownRenderer content={content} />
           )}
 
-          {/* Plan Canvas (v0 style) */}
-          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && !planSuperseded && (
+          {/* Plan Canvas (v0 style) — always show the plan so prior plans stay in the chat history */}
+          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && (
             <div className="mt-4 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <BrainPlanCanvas 
                 plan={planContent} 
@@ -152,7 +151,9 @@ export default function BrainAgentMessage({
           )}
 
           {/* Build Activity Feed (Inline v0 style) */}
-          {(buildActivities !== undefined || buildTodos !== undefined) && (
+          {((buildActivities !== undefined && buildActivities.length > 0) ||
+            (buildTodos !== undefined && buildTodos.length > 0) ||
+            isBuildSyncing) && (
              <div className="mt-4 pb-2 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
                  <BrainBuildActivityFeed
                      activities={buildActivities || []}
