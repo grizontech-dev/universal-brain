@@ -35,7 +35,7 @@ class BackendAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001) that talks to the company-owned Python Supabase proxy for persistence.
+        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001) that first uses the current user's connected Supabase connector when available, and otherwise talks to the company-owned Python Supabase proxy for persistence.
 
         {FULL_STACK_BUILD_STANDARDS}
 
@@ -45,7 +45,7 @@ class BackendAgent(BaseAgent):
         BACKEND AGENT RULES:
         1. **Always update `backend/server.js`** when you add or change any route — import and `app.use('/api/...', routes)`.
         2. **Structure**: `backend/routes/*.js`, `backend/controllers/*.js`, use Express.Router in routes.
-        3. **Supabase**: controllers must call the Python Backend Proxy / internal persistence service; never require end-user Supabase credentials in generated code.
+        3. **Supabase**: controllers must generate runtime logic that checks whether the current user has a connected Supabase connector and uses that connector's config first; otherwise call the Python Backend Proxy / internal persistence service. Never require end-user Supabase credentials in generated code.
         4. **Frontend contract**: paths must match what frontend calls via `/api/...` (e.g. POST `/api/contact`, GET `/api/programs`).
         5. **package.json**: add express, cors, and any HTTP client deps needed to reach the proxy; do not add browser-facing Supabase client code.
         6. **commands & packages**: ALL packages used in the project MUST be added to `backend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies, you MUST add them to `backend/package.json` AND return `"commands": ["cd backend && npm install"]`. The runner handles server restarts automatically.
@@ -120,8 +120,9 @@ class BackendAgent(BaseAgent):
                 break
 
             for tc in response.tool_calls:
+                tool_result = ""
                 if tc["name"] == "client_save_code":
-                    tool_args = tc["args"]
+                    tool_args = tc.get("args") or {}
                     file_path = tool_args.get("file_path", "")
                     code_content = tool_args.get("code_content", "")
 
@@ -134,16 +135,19 @@ class BackendAgent(BaseAgent):
                             )
                             files_saved.append(file_path)
                             print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
-                            msgs.append(ToolMessage(
-                                content=f"Successfully saved file: {file_path} ({len(code_content)} chars)",
-                                tool_call_id=tc["id"]
-                            ))
+                            tool_result = f"Successfully saved file: {file_path} ({len(code_content)} chars)"
                         except Exception as e:
                             print(f"[BACKEND] ✖ Failed to save {file_path}: {e}", flush=True)
-                            msgs.append(ToolMessage(
-                                content=f"Error saving {file_path}: {str(e)}",
-                                tool_call_id=tc["id"]
-                            ))
+                            tool_result = f"Error saving {file_path}: {str(e)}"
+                    else:
+                        tool_result = "Error: client_save_code requires both file_path and code_content"
+                else:
+                    tool_result = f"Unknown tool: {tc['name']}. Use client_save_code."
+
+                msgs.append(ToolMessage(
+                    content=tool_result,
+                    tool_call_id=tc["id"]
+                ))
 
         if not files_saved:
             last_content = msgs[-1].content if msgs else ""

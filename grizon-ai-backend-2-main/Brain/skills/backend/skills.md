@@ -21,7 +21,7 @@ app.use('/api/contact', contactRoutes);
 ```
 
 ## Supabase
-- When a feature uses Supabase, it must use the fixed company-owned Supabase project through the Python Backend Proxy API.
+- When a feature uses Supabase, generated backend code must first check whether the current user has a connected Supabase connector. Use that connector when available; otherwise use the fixed company-owned Supabase project through the Python Backend Proxy API.
 - Do not ask end users for Supabase credentials or connection details.
 - The proxy must stamp each request with a validated tenant_id from the server session, never from the frontend.
 - The shared database shape should be a single tenant-scoped vault table with JSONB payload columns, RLS, and GIN indexes for JSONB search.

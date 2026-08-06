@@ -67,12 +67,13 @@ The following will cause the task to FAIL immediately:
 ### Backend (`backend/`)
 - Express on port **3001**. Every new `routes/*.js` MUST be imported and mounted in `backend/server.js`:
   `app.use('/api/contact', contactRoutes);`
-- Controllers must persist through the company-owned Python Supabase proxy; never ask users for their own Supabase credentials or expose database access in the browser.
+- Controllers must check for a connected user Supabase connector first; if one exists, generated code should use that connector's configuration. Only fall back to the company-owned Python Supabase proxy when no connector is connected. Never ask users for their own Supabase credentials or expose database access in the browser.
 - JSON: `{ success: true, data }` or `{ success: false, error: "..." }`.
 - List all new deps in `backend/package.json` (Runner runs npm install).
 
 ### Database / Supabase
 - Use the Shared Table + JSONB Data Matrix Pattern for Supabase-backed features: a shared tenant-scoped table with JSONB payload fields, not one table per user.
+- If a user already has a connected Supabase connector, prefer that connector first; fall back to the company-owned Python Supabase proxy only when no connector is connected.
 - Schema as `backend/supabase/*.sql` files only (no Supabase CLI commands).
 - Tables referenced in controllers must exist in SQL files, and indexes must reflect tenant filters plus JSONB search paths.
 - Keep payloads sparse and prune large blobs to respect the 500 MB free-tier storage constraint.

@@ -31,12 +31,12 @@ export const brainApi = {
         }
         return await response.json();
     },
-    streamChat: async (data: { 
-        user_id: string; 
-        conversation_id?: string; 
-        content: string; 
-        repo_url?: string; 
-        model_id?: string; 
+    streamChat: async (data: {
+        user_id: string;
+        conversation_id?: string;
+        content: string;
+        repo_url?: string;
+        model_id?: string;
         plan_approved?: boolean;
         approved_plan?: string;
         temperature?: number;
@@ -46,12 +46,18 @@ export const brainApi = {
         project_id?: string;
     }, onChunk: (chunk: any) => void, signal?: AbortSignal, retries = 2) => {
         const attemptStream = async (attempt: number): Promise<void> => {
-            const response = await brainApiFetch('chat/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                body: JSON.stringify(data),
-                signal,
-            });
+            let response: Response | null = null;
+            try {
+                response = await brainApiFetch('chat/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                    body: JSON.stringify(data),
+                    signal,
+                });
+            } catch (e: any) {
+                if (e.name === 'AbortError') return;
+                throw e;
+            }
 
             if (!response || !response.ok) {
                 if (!response) {
@@ -65,7 +71,7 @@ export const brainApi = {
                     try {
                         const text = await response.text();
                         if (text) errorMessage = `Brain stream initiation failed: ${text.slice(0, 200)} (${response.status})`;
-                    } catch {}
+                    } catch { }
                 }
                 throw new Error(errorMessage);
             }
@@ -101,10 +107,10 @@ export const brainApi = {
                 }
             } catch (e: any) {
                 const isAbort = e?.name === 'AbortError';
-                const isNetwork = e?.message?.includes('socket hang up') || 
-                                   e?.message?.includes('ECONNRESET') || 
-                                   e?.message?.includes('NetworkError') ||
-                                   e?.message?.includes('fetch');
+                const isNetwork = e?.message?.includes('socket hang up') ||
+                    e?.message?.includes('ECONNRESET') ||
+                    e?.message?.includes('NetworkError') ||
+                    e?.message?.includes('fetch');
                 if (isAbort) return;
                 if (isNetwork && attempt < retries) {
                     const backoff = Math.min(1000 * Math.pow(2, attempt), 5000);

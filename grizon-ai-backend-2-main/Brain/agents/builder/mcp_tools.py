@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from Brain.services.workspace_manager import workspace_manager
 from Brain.services.websocket_manager import ws_manager
 from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
+from Brain.services.mcp_service import MCPServiceError, get_mcp_service
 
 LOG = "[MCP_TOOLS]"
 
@@ -114,6 +115,77 @@ def _resolve_entrypoint(ws_root: str, entry_file: str) -> str:
                 return rel
     print(f"{LOG} WARNING: entrypoint '{entry_file}' not found, using as-is", flush=True)
     return entry_file
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    if hasattr(value, "model_dump"):
+        return _to_jsonable(value.model_dump())
+    if hasattr(value, "__dict__"):
+        return _to_jsonable(vars(value))
+    return str(value)
+
+
+@tool
+async def mcp_list_tools(service: str, config: RunnableConfig) -> str:
+    """
+    List tools from an authenticated MCP provider.
+    Supported services: github, supabase.
+    """
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    if not user_id:
+        return "ERROR: user_id is required in config.configurable.user_id"
+
+    service_name = (service or "").strip().lower()
+    mcp_service = get_mcp_service()
+    try:
+        async with mcp_service.get_session(service=service_name, user_id=user_id) as session:
+            tools_response = await session.list_tools()
+            payload = [_to_jsonable(tool) for tool in tools_response.tools]
+            return json.dumps({"service": service_name, "tools": payload})
+    except MCPServiceError as exc:
+        return json.dumps({"service": service_name, "error": exc.message, "status_code": exc.status_code})
+    except Exception as exc:
+        return json.dumps({"service": service_name, "error": str(exc)})
+
+
+@tool
+async def mcp_call_tool(service: str, tool_name: str, arguments_json: str, config: RunnableConfig) -> str:
+    """
+    Call a tool on an authenticated MCP provider.
+    Use arguments_json as a JSON object string.
+    """
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    if not user_id:
+        return "ERROR: user_id is required in config.configurable.user_id"
+
+    service_name = (service or "").strip().lower()
+    if not tool_name or not tool_name.strip():
+        return "ERROR: tool_name is required"
+
+    try:
+        arguments = json.loads(arguments_json) if arguments_json else {}
+        if not isinstance(arguments, dict):
+            return "ERROR: arguments_json must decode to a JSON object"
+    except json.JSONDecodeError as exc:
+        return f"ERROR: arguments_json must be valid JSON ({exc})"
+
+    mcp_service = get_mcp_service()
+    try:
+        async with mcp_service.get_session(service=service_name, user_id=user_id) as session:
+            result = await session.call_tool(tool_name, arguments)
+            return json.dumps(_to_jsonable(result))
+    except MCPServiceError as exc:
+        return json.dumps({"service": service_name, "tool_name": tool_name, "error": exc.message, "status_code": exc.status_code})
+    except Exception as exc:
+        return json.dumps({"service": service_name, "tool_name": tool_name, "error": str(exc)})
 
 
 @tool

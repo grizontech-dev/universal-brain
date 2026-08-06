@@ -182,7 +182,7 @@ class ConversationService:
             db.close()
 
     @staticmethod
-    def save_message(conversation_id: str, role: str, content: str, todo_list: list = None, sandbox_job: dict = None, metadata: dict = None):
+    def save_message(conversation_id: str, role: str, content: str, todo_list: list = None, sandbox_job: dict = None, metadata: dict = None, credits_deducted: int = 0):
         """Saves a message to the database with optional metadata."""
         db = SessionLocal()
         try:
@@ -197,6 +197,7 @@ class ConversationService:
                 todoList=todo_list,
                 sandboxJob=sandbox_job,
                 extra_metadata=metadata,
+                creditsDeducted=credits_deducted
             )
             try:
                 print(f"DEBUG: Saving message to DB - Conv: {conversation_id}, Role: {role}, Content Snippet: {content[:30]}")
@@ -221,7 +222,8 @@ class ConversationService:
                     "content": m.content or "",
                     "todoList": m.todoList,
                     "sandboxJob": m.sandboxJob,
-                    "metadata": m.extra_metadata
+                    "metadata": m.extra_metadata,
+                    "creditsDeducted": m.creditsDeducted or 0
                 } for m in messages
             ]
         finally:
