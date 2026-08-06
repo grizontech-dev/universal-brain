@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { BuildActivity, BuildActivityType, BuildTodoItem } from '../lib/buildActivity';
 import { isBuildTodosComplete, isNoisyTerminalLine, normalizeTodoStatus } from '../lib/buildActivity';
+import { getBrainApiUrl } from '../lib/brainApiBase';
 
 export type { BuildTodoItem };
 
@@ -41,71 +42,180 @@ function iconForType(type: BuildActivityType) {
 function todoStatusIcon(status?: string) {
     const s = normalizeTodoStatus(status);
     if (s === 'completed') {
-        return <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />;
+        return <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />;
     }
     if (s === 'failed') {
-        return <AlertCircle size={14} className="text-red-400 shrink-0" />;
+        return <AlertCircle size={14} className="text-red-500 shrink-0" />;
     }
     if (s === 'executing') {
-        return <Loader2 size={14} className="text-[#976df8] animate-spin shrink-0" />;
+        return <Loader2 size={14} className="text-accent animate-spin shrink-0" />;
     }
-    return <Circle size={14} className="text-white/20 shrink-0" />;
+    return <Circle size={14} className="text-text-muted shrink-0" />;
+}
+
+function fileBasename(p: string): string {
+    const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+function TodoChips({ todo }: { todo: BuildTodoItem }) {
+    const files = (todo.files || []).filter(Boolean);
+    const apis = (todo.api || []).filter(Boolean);
+    if (files.length === 0 && apis.length === 0) return null;
+
+    const fileChips = files.slice(0, 3).map(fileBasename);
+    const apiChips = apis.slice(0, 2);
+    const extraFiles = files.length - fileChips.length;
+    const extraApis = apis.length - apiChips.length;
+
+    return (
+        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+            {fileChips.map((f, i) => (
+                <span
+                    key={`f-${i}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface-2 border border-border-subtle text-[10px] font-mono text-text-muted"
+                >
+                    <FilePlus size={9} className="shrink-0" />
+                    {f}
+                </span>
+            ))}
+            {extraFiles > 0 && (
+                <span className="text-[10px] text-text-muted/60 font-mono">+{extraFiles}</span>
+            )}
+            {apiChips.map((a, i) => (
+                <span
+                    key={`a-${i}`}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-[10px] font-mono text-accent"
+                >
+                    <Terminal size={9} className="shrink-0" />
+                    {a}
+                </span>
+            ))}
+            {extraApis > 0 && (
+                <span className="text-[10px] text-text-muted/60 font-mono">+{extraApis}</span>
+            )}
+        </div>
+    );
+}
+
+function FileChangeCard({ singleAct }: { singleAct: any }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [fileContent, setFileContent] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const filePath = singleAct.path || singleAct.label || '';
+    const fileName = fileBasename(filePath);
+    const dirPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
+    const isFolder = filePath.endsWith('/');
+    const isNew = singleAct.isNew;
+    const actionLabel = isNew ? 'Created' : 'Edited';
+    const actionColor = isNew ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 border-amber-500/20';
+    const hasLines = (singleAct.linesAdded || 0) > 0 || (singleAct.linesRemoved || 0) > 0;
+
+    const fetchFileContent = async () => {
+        if (fileContent !== null || !filePath) return;
+        setLoading(true);
+        try {
+            const jobId = (window as any).__brainJobId || '';
+            const userId = (window as any).__brainUserId || '';
+            if (!jobId) { setFileContent('// No workspace'); setLoading(false); return; }
+            const uid = userId ? `&user_id=${encodeURIComponent(userId)}` : '';
+            const url = getBrainApiUrl(`sandbox/read-file?workspace_id=${encodeURIComponent(jobId)}&path=${encodeURIComponent(filePath)}${uid}`);
+            const res = await fetch(url, { cache: 'no-store' });
+            if (res.ok) {
+                const data = await res.json();
+                setFileContent(data.content ?? '// Empty file');
+            } else {
+                setFileContent('// Unable to load file');
+            }
+        } catch {
+            setFileContent('// Unable to load file');
+        }
+        setLoading(false);
+    };
+
+    const handleToggle = () => {
+        const next = !isOpen;
+        setIsOpen(next);
+        if (next && fileContent === null) fetchFileContent();
+    };
+
+    const handleFileOpen = () => {
+        if (!isFolder && filePath) {
+            window.dispatchEvent(new CustomEvent('openBrainFile', { detail: { path: filePath } }));
+        }
+    };
+
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const langMap: Record<string, string> = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', sql: 'sql', css: 'css', html: 'html', json: 'json', md: 'markdown' };
+    const lang = langMap[ext] || 'text';
+
+    return (
+        <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
+            <button
+                onClick={() => { handleToggle(); handleFileOpen(); }}
+                className="w-full flex items-center gap-2.5 py-2 px-2.5 rounded-lg hover:bg-surface-2 transition-colors group"
+            >
+                {isFolder
+                    ? <FolderPlus size={14} className="text-text-muted shrink-0" />
+                    : <FilePen size={14} className="text-text-muted shrink-0" />}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${actionColor} shrink-0`}>
+                        {actionLabel}
+                    </span>
+                    <div className="flex flex-col items-start min-w-0">
+                        <span className="text-[13px] font-medium text-text-primary truncate max-w-full">{fileName}</span>
+                        {dirPath && (
+                            <span className="text-[10px] text-text-muted truncate max-w-full">{dirPath}</span>
+                        )}
+                    </div>
+                </div>
+                {hasLines && (
+                    <div className="flex items-center gap-1 text-[11px] font-mono shrink-0">
+                        {singleAct.linesAdded > 0 && <span className="text-emerald-500">+{singleAct.linesAdded}</span>}
+                        {singleAct.linesRemoved > 0 && <span className="text-red-500">-{singleAct.linesRemoved}</span>}
+                    </div>
+                )}
+                <ChevronRight
+                    size={12}
+                    className={`text-text-muted shrink-0 transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`}
+                />
+            </button>
+
+            {isOpen && !isFolder && (
+                <div className="ml-6 mt-1 mb-2 rounded-lg border border-border-subtle bg-[#0d0d0d] overflow-hidden">
+                    {loading ? (
+                        <div className="flex items-center gap-2 px-3 py-2.5 text-[11px] text-text-muted">
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Loading...</span>
+                        </div>
+                    ) : fileContent ? (
+                        <pre className="overflow-x-auto max-h-[300px] overflow-y-auto custom-scrollbar text-[11px] leading-[1.6] font-mono">
+                            <code className="block p-3">
+                                {fileContent.split('\n').map((line, i) => (
+                                    <div key={i} className="flex">
+                                        <span className="inline-block w-7 text-right pr-2 text-text-muted/40 select-none shrink-0">{i + 1}</span>
+                                        <span className={`flex-1 ${line.trim().startsWith('//') || line.trim().startsWith('#') || line.trim().startsWith('/*') ? 'text-text-muted/50 italic' : 'text-text-primary/80'}`}>
+                                            {line || '\u00A0'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </code>
+                        </pre>
+                    ) : (
+                        <div className="px-3 py-2.5 text-[11px] text-text-muted">No content</div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
 }
 
 function CollapsibleActivityGroup({ act, activities }: { act: any, activities: any[] }) {
-    const [isOpen, setIsOpen] = useState(false);
-    const filesCount = activities.length;
-    const totalAdded = act.linesAdded || 0;
-    const totalRemoved = act.linesRemoved || 0;
-
     return (
-        <div className="flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200 py-0.5">
-            {/* Compact v0-style group header */}
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 text-white/40 hover:text-white/60 transition-colors py-1 group"
-            >
-                <div className="flex items-center gap-1.5">
-                    {isOpen ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
-                    {act.status === 'running' && <Loader2 size={11} className="text-[#976df8] animate-spin shrink-0" />}
-                    <span className="text-[12px] font-medium">
-                        {act.status === 'running' ? 'Editing' : 'Modified'} {filesCount} {filesCount === 1 ? 'file' : 'files'}
-                    </span>
-                </div>
-                {(totalAdded > 0 || totalRemoved > 0) && (
-                    <div className="flex items-center gap-1 text-[11px] font-mono">
-                        {totalAdded > 0 && <span className="text-emerald-500">+{totalAdded}</span>}
-                        {totalRemoved > 0 && <span className="text-red-500">-{totalRemoved}</span>}
-                    </div>
-                )}
-            </button>
-
-            {/* Expanded file list */}
-            {isOpen && (
-                <div className="flex flex-col pl-4 border-l border-white/[0.06] mt-0.5 space-y-0.5">
-                    {activities.map((singleAct: any) => {
-                        let filePath = singleAct.path || singleAct.label;
-                        const match = singleAct.label.match(/^(Generated|Created folder|Edited|Modified|Removed|Updated|Fixed|Improved|Added|Created)\s+`?([^`\s]+)`?/);
-                        const fileLabel = singleAct.label || filePath.split('/').pop();
-                        const isFolder = filePath.endsWith('/');
-
-                        return (
-                            <div key={singleAct.id} className="flex items-center gap-2 py-0.5">
-                                {isFolder
-                                    ? <FolderPlus size={11} className="text-white/25 shrink-0" />
-                                    : <FilePen size={11} className="text-white/25 shrink-0" />}
-                                <span className="text-[12px] text-white/40 truncate">{fileLabel}</span>
-                                {(singleAct.linesAdded > 0 || singleAct.linesRemoved > 0) && (
-                                    <div className="flex items-center gap-1 text-[10px] font-mono ml-auto shrink-0">
-                                        {singleAct.linesAdded > 0 && <span className="text-emerald-500/70">+{singleAct.linesAdded}</span>}
-                                        {singleAct.linesRemoved > 0 && <span className="text-red-500/70">-{singleAct.linesRemoved}</span>}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
+        <div className="flex flex-col py-0.5">
+            {activities.map((singleAct: any) => (
+                <FileChangeCard key={singleAct.id} singleAct={singleAct} />
+            ))}
         </div>
     );
 }
@@ -177,16 +287,16 @@ export default function BrainBuildActivityFeed({
     return (
         <div className={`flex flex-col ${className}`}>
             {isSyncing && !isBuildTodosComplete(todos) && (
-                <div className="mx-4 mt-4 flex items-center gap-2 px-3 py-2 rounded-full bg-white/[0.04] border border-white/10 text-[12px] text-white/60">
-                    <Loader2 size={14} className="animate-spin text-white/50" />
+                <div className="mx-4 mt-4 flex items-center gap-2 px-3 py-2 rounded-full bg-surface-2 border border-border-subtle text-[12px] text-text-secondary">
+                    <Loader2 size={14} className="animate-spin text-accent" />
                     <span>Syncing project files…</span>
                 </div>
             )}
 
             {todos.length > 0 && (
-                <div className="px-3 pt-3 pb-2 border-b border-white/5 sticky top-0 z-10 bg-[#0a0a0a]">
-                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">
-                        Tasks <span className="text-white/20 normal-case">({todos.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'success').length}/{todos.length})</span>
+                <div className="px-3 pt-3 pb-2 border-b border-border-subtle sticky top-0 z-10 bg-surface-2">
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">
+                        Tasks <span className="text-text-muted/60 normal-case">({todos.filter(t => t.status === 'completed' || t.status === 'done' || t.status === 'success').length}/{todos.length})</span>
                     </p>
                     <ul className="space-y-1 max-h-[220px] overflow-y-auto custom-scrollbar">
                         {todos.map((t, i) => {
@@ -197,23 +307,28 @@ export default function BrainBuildActivityFeed({
                             <li
                                 key={t.id || i}
                                 ref={isRunning ? tasksEndRef : undefined}
-                                className="flex items-center gap-2 text-[11px]"
+                                className="flex flex-col py-0.5"
                             >
-                                <span className={`shrink-0 ${
-                                    isDone ? 'text-emerald-400'
-                                    : isRunning ? 'text-[#c4b5fd]' : 'text-white/40'
-                                }`}>
-                                    {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
-                                </span>
-                                <span className={`leading-snug truncate ${
-                                    isDone
-                                        ? 'text-white/50'
-                                        : isRunning
-                                          ? 'text-[#c4b5fd] font-medium'
-                                          : 'text-white/70'
-                                }`}>
-                                    {t.title || t.task || 'Task'}
-                                </span>
+                                <div className="flex items-center gap-2 text-[11px]">
+                                    <span className={`shrink-0 ${
+                                        isDone ? 'text-emerald-500'
+                                        : isRunning ? 'text-accent' : 'text-text-muted'
+                                    }`}>
+                                        {isDone ? '✔' : isRunning ? <Loader2 size={11} className="animate-spin" /> : '○'}
+                                    </span>
+                                    <span className={`leading-snug truncate ${
+                                        isDone
+                                            ? 'text-text-muted line-through'
+                                            : isRunning
+                                              ? 'text-accent font-semibold'
+                                              : 'text-text-primary'
+                                    }`}>
+                                        {t.title || t.task || 'Task'}
+                                    </span>
+                                </div>
+                                <div className="pl-[18px]">
+                                    <TodoChips todo={t} />
+                                </div>
                             </li>
                             );
                         })}
@@ -223,7 +338,7 @@ export default function BrainBuildActivityFeed({
 
             <div className="flex-1 px-2 py-3 space-y-2.5">
                 {dedupedStream.length === 0 && !isSyncing && (
-                    <p className="text-[13px] text-white/30 leading-relaxed">
+                    <p className="text-[13px] text-text-muted leading-relaxed">
                         Building your project in Sandbox. Actions will appear here as they run.
                     </p>
                 )}
@@ -234,46 +349,14 @@ export default function BrainBuildActivityFeed({
                     for (const act of dedupedStream) {
                         const isFileOp = ['write_file', 'edit_file', 'mkdir', 'read_file'].includes(act.type);
                         if (isFileOp) {
-                            if (!currentGroup) {
-                                currentGroup = {
-                                    id: `group-${act.id}`,
-                                    isGroup: true,
-                                    label: 'Updated project files',
-                                    type: 'file_group',
-                                    activities: [act],
-                                    linesAdded: act.linesAdded || 0,
-                                    linesRemoved: act.linesRemoved || 0,
-                                    status: act.status,
-                                    lastTimestamp: act.timestamp
-                                };
-                                grouped.push(currentGroup);
-                            } else {
-                                const currentDir = act.label.split('/').slice(0, -1).join('/');
-                                const lastDir = currentGroup.activities[0].label.split('/').slice(0, -1).join('/');
-                                
-                                if (currentDir === lastDir && currentGroup.activities.length < 3) {
-                                    // Same directory and small group, so group them
-                                    currentGroup.activities.push(act);
-                                    currentGroup.linesAdded += (act.linesAdded || 0);
-                                    currentGroup.linesRemoved += (act.linesRemoved || 0);
-                                    currentGroup.lastTimestamp = act.timestamp;
-                                    if (act.status === 'running') currentGroup.status = 'running';
-                                } else {
-                                    // Create new group
-                                    currentGroup = {
-                                        id: `group-${act.id}`,
-                                        isGroup: true,
-                                        label: 'Updated project files',
-                                        type: 'file_group',
-                                        activities: [act],
-                                        linesAdded: act.linesAdded || 0,
-                                        linesRemoved: act.linesRemoved || 0,
-                                        status: act.status,
-                                        lastTimestamp: act.timestamp
-                                    };
-                                    grouped.push(currentGroup);
-                                }
-                            }
+                            // Each file op becomes its own individual card (Lovable style)
+                            currentGroup = null;
+                            grouped.push({
+                                id: act.id,
+                                isGroup: true,
+                                type: 'file_single',
+                                singleAct: act,
+                            });
                         } else {
                             currentGroup = null;
                             grouped.push(act);
@@ -313,20 +396,23 @@ export default function BrainBuildActivityFeed({
                             return (
                                 <div
                                     key={act.id}
-                                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 flex items-center justify-between gap-2 animate-in fade-in duration-300"
+                                    className="rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5 flex items-center justify-between gap-2 animate-in fade-in duration-300"
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
-                                        <Sparkles size={14} className="text-[#976df8] shrink-0" />
-                                        <span className="text-[13px] font-medium text-white truncate">{act.label}</span>
+                                        <Sparkles size={14} className="text-accent shrink-0" />
+                                        <span className="text-[13px] font-bold text-text-primary truncate">{act.label}</span>
                                     </div>
                                     {act.status === 'done' && (
-                                        <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                                        <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
                                     )}
                                 </div>
                             );
                         }
 
                         if (act.isGroup) {
+                            if (act.type === 'file_single') {
+                                return <FileChangeCard key={act.id} singleAct={act.singleAct} />;
+                            }
                             return <CollapsibleActivityGroup key={act.id} act={act} activities={act.activities} />;
                         }
 
@@ -335,14 +421,14 @@ export default function BrainBuildActivityFeed({
                             const labelText = act.label.replace(/^Exploring\s*[-—]\s*/i, 'Moved to ');
                             return (
                                 <div key={act.id} className="flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-1 duration-200 py-2">
-                                    <div className="w-[18px] h-[18px] rounded-full bg-white/[0.05] border border-white/10 flex items-center justify-center shrink-0">
+                                    <div className="w-[18px] h-[18px] rounded-full bg-surface-2 border border-border-subtle flex items-center justify-center shrink-0">
                                         {isRunning ? (
-                                            <Loader2 size={10} className="text-[#976df8] animate-spin" />
+                                            <Loader2 size={10} className="text-accent animate-spin" />
                                         ) : (
-                                            <Check size={10} className="text-emerald-400" />
+                                            <Check size={10} className="text-emerald-500" />
                                         )}
                                     </div>
-                                    <span className={`text-[13px] font-medium truncate ${isRunning ? 'text-white/90' : 'text-white/60'}`}>
+                                    <span className={`text-[13px] font-bold truncate ${isRunning ? 'text-accent' : 'text-text-primary'}`}>
                                         {labelText}
                                     </span>
                                 </div>
@@ -354,10 +440,10 @@ export default function BrainBuildActivityFeed({
                             return (
                                 <div key={act.id} className="flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200 py-2">
                                     <div className="flex items-start gap-3">
-                                        <span className="text-[11px] text-white/30 font-mono shrink-0 mt-0.5">{timeStr}</span>
+                                        <span className="text-[11px] text-text-muted font-mono shrink-0 mt-0.5">{timeStr}</span>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-[13px] text-white/50 italic leading-relaxed">
-                                                <span className="font-semibold text-white/70 not-italic mr-2">💭 Thinking:</span>
+                                            <p className="text-[13px] text-text-secondary italic leading-relaxed">
+                                                <span className="font-semibold text-text-primary not-italic mr-2">💭 Thinking:</span>
                                                 {act.label}
                                             </p>
                                         </div>
@@ -366,13 +452,13 @@ export default function BrainBuildActivityFeed({
                             );
                         }
 
-                        // Normal narration — v0 style: clean paragraph, normal weight
+                        // Normal narration — clean paragraph, visible high-contrast text
                         return (
                             <div key={act.id} className="animate-in fade-in slide-in-from-bottom-1 duration-200 py-1">
-                                <p className="text-[13.5px] text-white/80 leading-[1.7]">{act.label}</p>
+                                <p className="text-[13.5px] font-medium text-text-primary leading-[1.7]">{act.label}</p>
 
                                 {act.detail && act.type === 'run_command' && !act.reason && (
-                                    <p className="text-[11px] text-white/30 mt-1 font-mono truncate">{act.detail}</p>
+                                    <p className="text-[11px] text-text-muted mt-1 font-mono truncate">{act.detail}</p>
                                 )}
                             </div>
                         );
@@ -383,9 +469,9 @@ export default function BrainBuildActivityFeed({
             </div>
 
             {workedSeconds !== undefined && workedSeconds > 0 && (
-                <div className="px-4 py-3 border-t border-white/5 flex items-center justify-between gap-2 text-[11px] text-white/40">
+                <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-between gap-2 text-[11px] text-text-muted">
                     <div className="flex items-center gap-2">
-                        <Clock size={12} className="text-white/20" />
+                        <Clock size={12} className="text-accent" />
                         <span>Worked for {workedSeconds}s</span>
                     </div>
                 </div>
@@ -393,3 +479,4 @@ export default function BrainBuildActivityFeed({
         </div>
     );
 }
+

@@ -61,6 +61,12 @@ export function todosFromMessageList(todoData: unknown): BuildTodoItem[] {
         description: t.description as string | undefined,
         status: (t.status as string) || 'pending',
         category: t.category as string | undefined,
+        skill_required: t.skill_required as string | undefined,
+        files: t.files as string[] | undefined,
+        ui: t.ui as string[] | undefined,
+        api: t.api as string[] | undefined,
+        depends_on: t.depends_on as string[] | undefined,
+        acceptance: t.acceptance as string[] | undefined,
     }));
 }
 

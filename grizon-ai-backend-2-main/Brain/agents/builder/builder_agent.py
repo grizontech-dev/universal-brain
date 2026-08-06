@@ -23,58 +23,7 @@ class BuilderAgent(BaseAgent):
             description="Coordinates sub-agents to execute tasks and build the application.",
             model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-
-    @staticmethod
-    def _sanitize_code(code: str, file_path: str) -> str:
-        """Fix duplicate symbol declarations that cause esbuild errors.
-        Pattern: LLM imports `X` from a file, then declares `export default function X()` in same file.
-        Fix: Remove the re-declaration since the import already provides it.
-        """
-        import re
-
-        if not file_path.endswith(('.jsx', '.tsx')):
-            return code
-
-        # Extract all imported identifiers
-        imported_names = set()
-        for match in re.finditer(r'import\s+(?:\w+\s*,\s*)?\{([^}]+)\}\s+from', code):
-            for name in match.group(1).split(','):
-                name = name.strip()
-                if name and not name.startswith('{') and not name.startswith('}'):
-                    imported_names.add(name)
-
-        # Also check: import DefaultName from '...'
-        for match in re.finditer(r'import\s+(\w+)\s+from\s+["\'][^"\']+["\']', code):
-            imported_names.add(match.group(1))
-
-        # Find duplicate: `export default function X()` where X is already imported
-        lines = code.split('\n')
-        fixed_lines = []
-        skipped = False
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            # Check for `export default function X()` or `function X()` where X is imported
-            func_match = re.match(r'export\s+default\s+function\s+(\w+)\s*\(', stripped)
-            if func_match:
-                func_name = func_match.group(1)
-                if func_name in imported_names:
-                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{func_name}' declaration (already imported)", flush=True)
-                    skipped = True
-                    continue
-            # Also check `const X = () =>` pattern
-            const_match = re.match(r'(?:export\s+)?(?:default\s+)?const\s+(\w+)\s*=\s*(?:\(|function)', stripped)
-            if const_match:
-                const_name = const_match.group(1)
-                if const_name in imported_names:
-                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{const_name}' declaration (already imported)", flush=True)
-                    skipped = True
-                    continue
-            fixed_lines.append(line)
-
-        if skipped:
-            return '\n'.join(fixed_lines)
-        return code
+        self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.0)
 
     def _make_activity(
         self,
@@ -132,6 +81,57 @@ class BuilderAgent(BaseAgent):
             payload["activities"] = activities
         await ws_manager.broadcast_to_sandbox(workspace_id, payload)
 
+    @staticmethod
+    def _sanitize_code(code: str, file_path: str) -> str:
+        """Fix duplicate symbol declarations that cause esbuild errors.
+        Pattern: LLM imports `X` from a file, then declares `export default function X()` in same file.
+        Fix: Remove the re-declaration since the import already provides it.
+        """
+        import re
+
+        if not file_path.endswith(('.jsx', '.tsx')):
+            return code
+
+        # Extract all imported identifiers
+        imported_names = set()
+        for match in re.finditer(r'import\s+(?:\w+\s*,\s*)?\{([^}]+)\}\s+from', code):
+            for name in match.group(1).split(','):
+                name = name.strip()
+                if name and not name.startswith('{') and not name.startswith('}'):
+                    imported_names.add(name)
+
+        # Also check: import DefaultName from '...'
+        for match in re.finditer(r'import\s+(\w+)\s+from\s+["\'][^"\']+["\']', code):
+            imported_names.add(match.group(1))
+
+        # Find duplicate: `export default function X()` where X is already imported
+        lines = code.split('\n')
+        fixed_lines = []
+        skipped = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Check for `export default function X()` or `function X()` where X is imported
+            func_match = re.match(r'export\s+default\s+function\s+(\w+)\s*\(', stripped)
+            if func_match:
+                func_name = func_match.group(1)
+                if func_name in imported_names:
+                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{func_name}' declaration (already imported)", flush=True)
+                    skipped = True
+                    continue
+            # Also check `const X = () =>` pattern
+            const_match = re.match(r'(?:export\s+)?(?:default\s+)?const\s+(\w+)\s*=\s*(?:\(|function)', stripped)
+            if const_match:
+                const_name = const_match.group(1)
+                if const_name in imported_names:
+                    print(f"{LOG} ↻ Sanitizing: removing duplicate '{const_name}' declaration (already imported)", flush=True)
+                    skipped = True
+                    continue
+            fixed_lines.append(line)
+
+        if skipped:
+            return '\n'.join(fixed_lines)
+        return code
+
     async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend", user_id: str = None) -> str:
         """
         One-file-at-a-time agent loop.
@@ -168,6 +168,10 @@ class BuilderAgent(BaseAgent):
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
+        bound_llm = self.llm.bind_tools([client_save_code])
+        start_time = time.time()
+        seen_files = set()
+        tool_call_count = 0
 
         # Free-form loop — LLM generates files until it stops or timeout
         consecutive_duplicates = 0
@@ -237,37 +241,31 @@ class BuilderAgent(BaseAgent):
 
             # Execute each tool call
             stuck = False
-            for tc in response.tool_calls:
+            for i, tc in enumerate(response.tool_calls):
                 if time.time() - start_time > timeout_sec:
+                    for skipped_tc in response.tool_calls[i:]:
+                        messages.append(ToolMessage(
+                            content="Tool call skipped because the builder timed out.",
+                            tool_call_id=skipped_tc["id"]
+                        ))
                     break
                 if len(files_saved) >= max_files:
+                    for skipped_tc in response.tool_calls[i:]:
+                        messages.append(ToolMessage(
+                            content="Tool call skipped because the builder reached the file limit.",
+                            tool_call_id=skipped_tc["id"]
+                        ))
                     break
 
                 tool_name = tc["name"]
                 tool_args = tc["args"]
                 file_path = tool_args.get("file_path", "")
-                code_len = len(tool_args.get("code_content", ""))
+                code_content = tool_args.get("code", "")
+                code_len = len(code_content)
 
-                # PATH CORRECTION: Fix common LLM path mistakes
-                if file_path == "frontend/App.jsx":
-                    file_path = "frontend/src/App.jsx"
-                    tool_args["file_path"] = file_path
-                    print(f"{LOG} ↻ Path corrected: frontend/App.jsx → frontend/src/App.jsx", flush=True)
-                elif file_path.startswith("frontend/") and not file_path.startswith("frontend/src/") and not file_path.startswith("frontend/vite") and not file_path.startswith("frontend/tailwind") and not file_path.startswith("frontend/postcss") and file_path != "frontend/index.html" and file_path != "frontend/package.json":
-                    # Any other file wrongly placed in frontend/ instead of frontend/src/
-                    corrected = file_path.replace("frontend/", "frontend/src/", 1)
-                    tool_args["file_path"] = corrected
-                    file_path = corrected
-                    print(f"{LOG} ↻ Path corrected: {tool_args.get('file_path', '')} → {file_path}", flush=True)
-
-                if file_path in files_saved:
-                    consecutive_duplicates += 1
-                    print(f"{LOG} ⚠ Skip duplicate: {file_path} ({consecutive_duplicates}/{MAX_CONSECUTIVE_DUPLICATES})", flush=True)
-                    messages.append(ToolMessage(content=f"Already saved {file_path}. Generate a DIFFERENT file that does not exist yet.", tool_call_id=tc["id"]))
-                    if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
-                        print(f"{LOG} ✖ BREAKING: {consecutive_duplicates} consecutive duplicates. LLM is stuck.", flush=True)
-                        stuck = True
-                        break
+                if file_path in seen_files:
+                    print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
+                    messages.append(ToolMessage(content=f"Already saved {file_path}. Move on to next file.", tool_call_id=tc["id"]))
                     continue
 
                 # PATH FIX: Redirect stray root-level files to frontend/src/
@@ -289,6 +287,7 @@ class BuilderAgent(BaseAgent):
 
                 # CODE SANITIZATION: Fix duplicate symbol declarations before saving
                 code_content = tool_args.get("code_content", "")
+                code_len = len(code_content)
                 if code_content and file_path.endswith(('.jsx', '.tsx')):
                     sanitized = self._sanitize_code(code_content, file_path)
                     if sanitized != code_content:
@@ -296,6 +295,7 @@ class BuilderAgent(BaseAgent):
                         print(f"{LOG} ↻ Code sanitized for {file_path} (fixed duplicate declarations)", flush=True)
 
                 print(f"{LOG} → [{len(files_saved)+1}] Generating: {file_path} ({code_len} chars)", flush=True)
+
 
                 tool_timeout = 30
                 try:
@@ -308,72 +308,23 @@ class BuilderAgent(BaseAgent):
                         consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
-                        # Emit file saved
-                        if session_id and not str(session_id).startswith("error:"):
-                            try:
-                                await ws_manager.broadcast_to_sandbox(str(session_id), {
-                                    "type": "workspace_ops",
-                                    "ops": [],
-                                    "activities": [{
-                                        "id": f"act-saved-{int(time.time() * 1000)}",
-                                        "type": "write_file",
-                                        "label": f"Saved {file_path.split('/')[-1]}",
-                                        "path": file_path,
-                                        "taskTitle": task_title,
-                                        "status": "done",
-                                        "detail": f"{code_len} chars",
-                                        "timestamp": int(time.time() * 1000),
-                                    }],
-                                    "progress_msg": json.dumps({
-                                        "type": "file_saved",
-                                        "file": file_path,
-                                        "chars": code_len,
-                                        "files_done": len(files_saved),
-                                        "task_title": task_title,
-                                        "timestamp": str(int(time.time() * 1000))
-                                    }),
-                                })
-                            except Exception:
-                                pass
+                        # Note: edit_file activity already emitted by client_save_code via ws_manager
 
                         # Tell LLM the file was saved
                         messages.append(ToolMessage(
                             content=f"Saved {file_path} ({code_len} chars). Generate the next file.",
                             tool_call_id=tc["id"]
                         ))
-                    elif tool_name in ("supabase_exec_sql", "supabase_create_exec_sql_function"):
-                        # Handle Supabase SQL tools
-                        sql_tool = supabase_exec_sql if tool_name == "supabase_exec_sql" else supabase_create_exec_sql_function
-                        try:
-                            result = await asyncio.wait_for(
-                                sql_tool.ainvoke(tool_args, config={"configurable": {"thread_id": session_id}}),
-                                timeout=60
-                            )
-                            print(f"{LOG} ✓ SQL tool result: {result[:200]}", flush=True)
-                            # Track SQL failures — if result contains error patterns, count it
-                            is_sql_error = any(kw in result.lower() for kw in [
-                                '"error"', "into used with a command", "invalid input syntax",
-                                "does not exist", "permission denied", "sql execution error"
-                            ])
-                            if is_sql_error:
-                                sql_failure_count += 1
-                                print(f"{LOG} ⚠ SQL failure #{sql_failure_count}/{MAX_SQL_FAILURES}", flush=True)
-                                if sql_failure_count >= MAX_SQL_FAILURES:
-                                    print(f"{LOG} ✖ BREAKING: {sql_failure_count} consecutive SQL failures. LLM is stuck in SQL loop.", flush=True)
-                                    messages.append(ToolMessage(
-                                        content="SQL keeps failing. STOP calling supabase_exec_sql. You already have the schema. Focus on generating frontend/backend code files using client_save_code instead.",
-                                        tool_call_id=tc["id"]
-                                    ))
-                                    stuck = True
-                                    break
-                                messages.append(ToolMessage(content=f"SQL error: {result[:300]}. Do NOT retry this query. Generate code files instead.", tool_call_id=tc["id"]))
-                            else:
-                                sql_failure_count = 0  # Reset on success
-                                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-                        except Exception as e:
-                            print(f"{LOG} ✖ SQL tool error: {e}", flush=True)
-                            sql_failure_count += 1
-                            messages.append(ToolMessage(content=f"SQL execution error: {e}", tool_call_id=tc["id"]))
+                    elif tool_name == "supabase_exec_sql":
+                        result = await asyncio.wait_for(
+                            supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                    elif tool_name == "supabase_create_exec_sql_function":
+                        result = await asyncio.wait_for(
+                            supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
                     else:
                         messages.append(ToolMessage(
                             content=f"Unknown tool: {tool_name}. Use client_save_code.",
@@ -394,7 +345,7 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         print(f"{LOG} ═══ VALIDATION: Scanning for broken imports ═══", flush=True)
         fixed_files = await self._validate_and_fix_imports(
-            session_id, task_title, files_saved, start_time, timeout_sec, user_id=user_id
+            session_id, task_title, files_saved, start_time, timeout_sec
         )
 
         # ═══════════════════════════════════════════════════════════════
@@ -412,11 +363,11 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
         # ═══════════════════════════════════════════════════════════════
-        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec, user_id=user_id)
+        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
 
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
 
-    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int, user_id: str = None) -> list:
+    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
         """Comprehensive self-healing: validate imports → fix missing files → esbuild syntax check → auto-fix errors."""
         import os as _os
         import re as _re
@@ -425,7 +376,7 @@ class BuilderAgent(BaseAgent):
         import subprocess as _sp
         import time as _time
 
-        workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or _os.path.join(_os.getcwd(), "workspaces", session_id)
+        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
         frontend_dir = _os.path.join(workspace_dir, "frontend")
         frontend_src = _os.path.join(frontend_dir, "src")
 
@@ -433,8 +384,7 @@ class BuilderAgent(BaseAgent):
             return files_saved
 
         start_time = _time.time()
-        _frontend_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = _frontend_llm.bind_tools([client_save_code])
+        bound_llm = self.llm.bind_tools([client_save_code])
 
         # ═══════════════════════════════════════════════════════════════
         # PHASE 1: Import validation — find missing imported files
@@ -505,11 +455,15 @@ class BuilderAgent(BaseAgent):
             print(f"{LOG} → Generating {len(missing_imports)} missing files + fixing App.jsx...", flush=True)
 
             sys_msg = (
-                "Generate missing React component files.\n"
-                "- Dark theme: bg-[#09090b], Tailwind CSS\n"
+                "You are a React frontend engineer. Generate missing component files and fix broken App.jsx.\n"
+                "Rules:\n"
+                "- Dark theme: bg-[#09090b], text-white, Tailwind CSS\n"
+                "- Use lucide-react for icons\n"
                 "- Real functional content, NOT placeholders\n"
-                "- Export default each component\n"
-                "- Do NOT call supabase_exec_sql — only use client_save_code\n"
+                "- Each component: export default, 50-150 lines\n"
+                "- For App.jsx: use BrowserRouter, Route, Routes from react-router-dom\n"
+                "- Import ALL components that exist in the project\n"
+                "- CRITICAL: Do NOT output placeholder/stub code. Every component must be fully functional.\n"
             )
 
             gen_messages = [SystemMessage(content=sys_msg)]
@@ -554,7 +508,7 @@ class BuilderAgent(BaseAgent):
                                 fp = tool_args.get("file_path", "")
                                 try:
                                     await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)", "user_id": user_id}}),
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)"}}),
                                         timeout=30
                                     )
                                     if fp and fp not in files_saved:
@@ -581,11 +535,14 @@ class BuilderAgent(BaseAgent):
 
                 fix_messages = [
                     SystemMessage(content=(
-                        "Replace placeholder App.jsx with a real implementation.\n"
+                        "You are a React frontend engineer. Replace the placeholder App.jsx with a real implementation.\n"
+                        "Rules:\n"
                         "- Use BrowserRouter, Route, Routes from react-router-dom\n"
-                        "- Import ALL existing components listed below\n"
-                        "- Dark theme, Tailwind CSS\n"
-                        "- Do NOT call supabase_exec_sql\n"
+                        "- Import and render ALL existing components listed below\n"
+                        "- Dark theme: bg-[#09090b], text-white\n"
+                        "- Tailwind CSS layout\n"
+                        "- CRITICAL: This must be a COMPLETE, WORKING App.jsx — no placeholders.\n"
+                        "- Use client_save_code to save to: frontend/src/App.jsx\n"
                     )),
                     HumanMessage(content=(
                         f"Existing components to import:\n{component_list}\n\n"
@@ -602,7 +559,7 @@ class BuilderAgent(BaseAgent):
                                 fp = tool_args.get("file_path", "")
                                 try:
                                     await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)", "user_id": user_id}}),
+                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)"}}),
                                         timeout=30
                                     )
                                     if fp and fp not in files_saved:
@@ -726,7 +683,7 @@ class BuilderAgent(BaseAgent):
                         pass
 
                 messages = [
-                    SystemMessage(content="Fix ONLY the specific build errors listed below. Do NOT regenerate files. Use client_save_code to save fixes."),
+                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch."),
                     HumanMessage(content=prompt)
                 ]
 
@@ -739,27 +696,9 @@ class BuilderAgent(BaseAgent):
                         if tc["name"] == "client_save_code":
                             tool_args = tc["args"]
                             file_path = tool_args.get("file_path", "")
-
-                            # PATH FIX for self-healing saves
-                            if file_path.startswith("src/") and not file_path.startswith("frontend/src/"):
-                                corrected = file_path.replace("src/", "frontend/src/", 1)
-                                tool_args["file_path"] = corrected
-                                file_path = corrected
-                            elif file_path.startswith("pages/") and not file_path.startswith("frontend/"):
-                                corrected = file_path.replace("pages/", "frontend/src/pages/", 1)
-                                tool_args["file_path"] = corrected
-                                file_path = corrected
-
-                            # CODE SANITIZATION
-                            code_content = tool_args.get("code_content", "")
-                            if code_content and file_path.endswith(('.jsx', '.tsx')):
-                                sanitized = self._sanitize_code(code_content, file_path)
-                                if sanitized != code_content:
-                                    tool_args["code_content"] = sanitized
-
                             try:
                                 await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)", "user_id": user_id}}),
+                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
                                     timeout=30
                                 )
                                 if file_path and file_path not in files_saved:
@@ -781,7 +720,7 @@ class BuilderAgent(BaseAgent):
 
         return files_saved
 
-    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec, user_id=None):
+    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec):
         """Scan ALL .jsx/.js files for imports, check if imported files exist, generate missing ones."""
         import re as _re
         import os as _os
@@ -791,7 +730,7 @@ class BuilderAgent(BaseAgent):
         if not files_saved:
             return fixed
 
-        workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or _os.path.join(_os.getcwd(), "workspaces", session_id)
+        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
         frontend_src = _os.path.join(workspace_dir, "frontend", "src")
 
         if not _os.path.isdir(frontend_src):
@@ -893,15 +832,17 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
 
         # Generate each missing file
-        _frontend_llm2 = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = _frontend_llm2.bind_tools([client_save_code])
+        bound_llm = self.llm.bind_tools([client_save_code])
         messages = [
             SystemMessage(content=(
-                "Generate missing React component files.\n"
-                "- Dark theme: bg-[#09090b], Tailwind CSS\n"
+                "You are a React frontend engineer. Generate missing component files.\n"
+                "Rules:\n"
+                "- Dark theme: bg-[#09090b], white text\n"
+                "- Tailwind CSS on every element\n"
+                "- Use lucide-react for icons\n"
                 "- Real content, not placeholders\n"
-                "- Export default each component\n"
-                "- Do NOT call supabase_exec_sql — only use client_save_code\n"
+                "- Each component 50-150 lines\n"
+                "- Export default the component\n"
             ))
         ]
 
@@ -933,17 +874,9 @@ class BuilderAgent(BaseAgent):
                         if tc["name"] == "client_save_code":
                             tool_args = tc["args"]
                             tool_args["file_path"] = rel_path
-
-                            # CODE SANITIZATION
-                            code_content = tool_args.get("code_content", "")
-                            if code_content and rel_path.endswith(('.jsx', '.tsx')):
-                                sanitized = self._sanitize_code(code_content, rel_path)
-                                if sanitized != code_content:
-                                    tool_args["code_content"] = sanitized
-
                             try:
                                 result = await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
+                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                                     timeout=30
                                 )
                                 fixed.append(rel_path)
@@ -1034,8 +967,7 @@ class BuilderAgent(BaseAgent):
         max_tool_calls = 20
         tool_call_count = 0
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        _fallback_llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = _fallback_llm.bind_tools([client_save_code])
+        bound_llm = self.llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
         files_saved = []
@@ -1070,7 +1002,7 @@ class BuilderAgent(BaseAgent):
                 try:
                     if tc["name"] == "client_save_code":
                         result = await asyncio.wait_for(
-                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
+                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=30
                         )
                         files_saved.append(file_path)
@@ -1228,37 +1160,22 @@ class BuilderAgent(BaseAgent):
         system_prompt = ""
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
         
-        # Gather EXISTING codebase context — ONLY relevant files per category
+        # Gather existing codebase memory for follow-ups
         existing_code_context = ""
         try:
             ws_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or os.path.join(os.getcwd(), "workspaces", session_id)
             if os.path.exists(ws_dir):
                 files_to_read = []
-                # Only include files relevant to the current task category
-                category_dirs = {
-                    "frontend": ["frontend/src"],
-                    "backend": ["backend"],
-                    "database": ["backend/supabase"],
-                }
-                search_dirs = category_dirs.get(category, ["frontend/src", "backend"])
-
-                for search_dir in search_dirs:
-                    full_dir = os.path.join(ws_dir, search_dir)
-                    if not os.path.exists(full_dir):
+                for root, _, files in os.walk(ws_dir):
+                    if "node_modules" in root or ".git" in root or "dist" in root:
                         continue
-                    for root, _, files in os.walk(full_dir):
-                        if "node_modules" in root or ".git" in root or "dist" in root:
-                            continue
-                        for f in files:
-                            if f.endswith(('.js', '.jsx', '.ts', '.tsx')):
-                                full_path = os.path.join(root, f)
-                                rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
-                                if "package-lock.json" not in rel_path:
-                                    files_to_read.append((rel_path, full_path))
-
-                # Limit to 15 most recent files to avoid token explosion
-                files_to_read = files_to_read[-15:]
-
+                    for f in files:
+                        if f.endswith(('.js', '.jsx', '.ts', '.tsx', '.css', '.json', '.html')):
+                            full_path = os.path.join(root, f)
+                            rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
+                            if "package-lock.json" not in rel_path:
+                                files_to_read.append((rel_path, full_path))
+                
                 if files_to_read:
                     existing_code_context = "\n\n═══ EXISTING FILES (read-only reference) ═══\n"
                     for rel_path, full_path in files_to_read:
@@ -1422,48 +1339,44 @@ class BuilderAgent(BaseAgent):
             )
         elif category == "database":
             system_prompt = (
-                "You are a Database Engineer. Supabase PostgreSQL.\n\n"
-                "═══ DO NOT ═══\n"
-                "- Do NOT use SELECT ... INTO (it doesn't work with JSON returns)\n"
-                "- Do NOT retry failing SQL queries — switch to generating code files instead\n"
-                "- Do NOT call supabase_exec_sql more than 3 times — if it fails, stop\n\n"
-                "═══ DO ═══\n"
-                "- Write SQL in backend/supabase/schema.sql\n"
-                "- Enable RLS on every table\n"
-                "- Add constraints, indexes, foreign keys\n"
-                "- After writing SQL file, execute it via supabase_exec_sql\n"
-                "- After every CREATE/ALTER TABLE, append: NOTIFY pgrst, 'reload schema';\n"
-                "- Use client_save_code for the SQL file, supabase_exec_sql for execution\n\n"
-                "Generate files one at a time. After all files, respond with a short summary."
+                "You are a Database Engineer. Supabase PostgreSQL in `backend/supabase/`.\n\n"
+                f"SKILL REFERENCE (follow these patterns):\n{skill_content}\n\n"
+                "RULES:\n"
+                "1. Write SQL migration files in backend/supabase/.\n"
+                "2. Use Supabase CLI patterns for schema changes.\n"
+                "3. Always enable RLS on new tables.\n"
+                "4. Use proper constraints, indexes, and foreign keys.\n"
+                "5. Use client_save_code for EVERY file.\n"
+                "6. CRITICAL: After writing the SQL file, you MUST ALSO execute it against Supabase using supabase_exec_sql.\n"
+                "   - First try: supabase_create_exec_sql_function (one-time setup, only if exec_sql function doesn't exist)\n"
+                "   Then: supabase_exec_sql with your CREATE TABLE / ALTER TABLE queries.\n"
+                "   IMPORTANT: After every CREATE TABLE or ALTER TABLE, always include: NOTIFY pgrst, 'reload schema';\n"
+                "   This refreshes Supabase's API cache so the frontend can see new columns immediately.\n"
+                "   This ensures tables are created in the actual database, not just as files.\n"
+                "7. After saving ALL files and executing SQL, respond with ONLY a short summary."
             )
         else:
             system_prompt = (
-                "You are a Backend Engineer. Express API in `backend/`.\n\n"
-                "CRITICAL RULES:\n"
-                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
-                "2. ALWAYS write server.js LAST with ALL routes mounted.\n"
-                "3. Use client_save_code for EVERY file.\n"
-                "4. After saving ALL files, respond with ONLY a short summary."
+                "You are the Backend Agent. Express API in `backend/`.\n\n"
+                "RULES:\n"
+                "1. Always update `backend/server.js` when adding routes.\n"
+                "2. Structure: `backend/routes/*.js`, `backend/controllers/*.js`.\n"
+                "3. Use client_save_code for EVERY file. Do NOT call client_execute_in_sandbox.\n"
+                "4. Every route MUST be imported and mounted in server.js.\n"
+                "5. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
             )
 
-        # SAFETY: Ensure system_prompt is always defined
-        if not system_prompt:
-            system_prompt = (
-                "You are a Backend Engineer. Express API in `backend/`.\n\n"
-                "CRITICAL RULES:\n"
-                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
-                "2. ALWAYS write server.js LAST with ALL routes mounted.\n"
-                "3. Use client_save_code for EVERY file.\n"
-                "4. After saving ALL files, respond with ONLY a short summary."
-            )
-            
         if existing_code_context:
             system_prompt += existing_code_context
+
+        from Brain.shared.structured_spec import format_structured_spec
+        structured_hint = format_structured_spec(current_task)
 
         instruction = (
             f"Task Title: {task_title}\n"
             f"Description: {current_task.get('description', '')}\n\n"
-            "REMINDER: This is a PRODUCTION application. Every component must be visually stunning "
+            + (f"STRUCTURED SPEC (follow exactly):\n{structured_hint}\n\n" if structured_hint else "")
+            + "REMINDER: This is a PRODUCTION application. Every component must be visually stunning "
             "with dark theme, gradients, animations, real content, and responsive design. "
             "Do NOT create minimal/placeholder components. Build complete, beautiful UI.\n\n"
             "BEFORE WRITING App.jsx: List ALL component files you created and ONLY import those. "
@@ -1473,7 +1386,6 @@ class BuilderAgent(BaseAgent):
         )
         overall_timeout = 1200
         print(f"{LOG} Starting agent loop with {overall_timeout}s overall timeout...", flush=True)
-
         try:
             output_content = await asyncio.wait_for(
                 self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id),

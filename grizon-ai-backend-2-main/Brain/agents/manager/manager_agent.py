@@ -83,6 +83,33 @@ class ManagerAgent(BaseAgent):
         current_rounds = state.get("question_rounds", 0)
         is_post_answers = self._is_answering_questions(history)
 
+        # Check for PDF or Image attachments in state or prompt
+        has_attachments = (
+            bool(state.get("attached_files")) or
+            bool(state.get("attachedFileIds")) or
+            "[File:" in prompt or
+            "[Image Attachment:" in prompt or
+            "[Document Attachment:" in prompt or
+            "[PDF" in prompt or
+            "pdf" in prompt.lower()
+        )
+
+        if has_attachments:
+            print(f"{LOG} Attached PDF/Image detected! Automatically analyzing document and proceeding to Planner.", flush=True)
+            rich_thought = "Attached document/image analyzed successfully. Extracting requirements and creating technical plan & todo list directly."
+            analysis = {
+                "analysis": rich_thought,
+                "is_context_missing": False,
+                "missing_details": [],
+                "next_agent": "planner",
+                "confidence": 0.95
+            }
+            state["leader_analysis"] = analysis
+            state["intent_confidence"] = 0.95
+            state["next_agent"] = "planner"
+            state["status"] = "ready_to_plan"
+            return state
+
         # Extract session state for context injection
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
@@ -107,8 +134,10 @@ class ManagerAgent(BaseAgent):
             print(f"DEBUG: ManagerAgent detected user answered questions (round {current_rounds})")
             user_answers = prompt  # The user's submitted answers IS the current message
 
-            # Force go to planner after 2 rounds of Q&A (prevent infinite loops)
-            if current_rounds >= 2:
+            # Skip LLM re-evaluation after ANY answer round — the QuestionsAgent
+            # already asked targeted questions; re-evaluating adds a full LLM round
+            # trip (~20s) just to decide what we already know.
+            if current_rounds >= 1:
                 rich_thought = (
                     f"The user has provided their requirements across {current_rounds} rounds of questions.\n\n"
                     f"Based on their answers:\n{user_answers}\n\n"
@@ -317,7 +346,10 @@ class ManagerAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current User Input: {prompt}"))
 
         print(f"DEBUG: ManagerAgent requesting chat with model {self.model_id}")
+        import time as _t
+        _t0 = _t.time()
         response_content = await self.chat(messages, model_id="deepseek-v4-flash", max_tokens=600)
+        print(f"DEBUG: ManagerAgent LLM call took {_t.time()-_t0:.1f}s", flush=True)
         print(f"DEBUG: ManagerAgent raw response: {response_content[:200]}...")
         analysis = self._format_json_response(response_content)
         print(f"DEBUG: ManagerAgent parsed analysis: {json.dumps(analysis)[:200]}...")
@@ -338,13 +370,9 @@ class ManagerAgent(BaseAgent):
         state["leader_analysis"] = analysis
         state["intent_confidence"] = analysis.get("confidence", 0.5)
 
-        # Force planner if we've been in questions for too long
-        if current_rounds >= 2:
-            state["next_agent"] = "planner"
-            state["status"] = "ready_to_plan"
-        else:
-            state["next_agent"] = analysis.get("next_agent", "questions")
-            state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
+        # FORCED AUTO-MODE: Never ask clarification questions. Always proceed to planner to generate todo list and build.
+        state["next_agent"] = "planner"
+        state["status"] = "ready_to_plan"
 
         print(f"{LOG} → next_agent='{state['next_agent']}' | status='{state['status']}' | confidence={state.get('intent_confidence', 'N/A')}", flush=True)
         return state

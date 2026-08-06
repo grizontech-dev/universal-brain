@@ -50,7 +50,6 @@ export default function BrainAgentMessage({
   planContent,
   planVersions,
   planApproved,
-  planSuperseded,
   sandboxJob,
   todoList,
   onRegenerate,
@@ -96,14 +95,14 @@ export default function BrainAgentMessage({
     <div className="w-full max-w-full min-w-0 overflow-hidden flex flex-col items-start gap-2 pb-6 animate-in fade-in slide-in-from-bottom-2 duration-300 text-left">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2 w-full">
-        <div className="w-8 h-8 shrink-0 flex items-center justify-center">
-            <Brain className="text-white/20" size={16} />
+        <div className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg bg-surface-2 border border-border-subtle">
+            <Brain className="text-accent" size={16} />
         </div>
         <div className="flex items-center gap-2">
-            <span className="text-[12px] font-medium text-white/20 uppercase tracking-[0.1em]">
+            <span className="text-[11px] font-bold text-accent uppercase tracking-[0.1em]">
                 Grizon Brain
             </span>
-            <span className="text-[11px] text-white/10 font-medium lowercase">
+            <span className="text-[11px] text-text-muted font-medium lowercase">
               {dateTime || 'analyzing...'}
             </span>
         </div>
@@ -111,7 +110,7 @@ export default function BrainAgentMessage({
 
       {/* Content */}
       <div className="w-full max-w-full">
-        <div className="text-white/80 leading-relaxed text-[15px] font-light markdown-content pl-11 relative">
+        <div className="text-text-primary leading-relaxed text-[15px] font-normal markdown-content pl-11 relative">
           
           {/* Active Status & Thoughts (V0 style) */}
           {(thoughts || (timeline && timeline.length > 0) || (agentStep && agentStep !== 'idle')) && (
@@ -138,8 +137,8 @@ export default function BrainAgentMessage({
             <MarkdownRenderer content={content} />
           )}
 
-          {/* Plan Canvas (v0 style) */}
-          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && !planSuperseded && (
+          {/* Plan Canvas (v0 style) — always show the plan so prior plans stay in the chat history */}
+          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && (
             <div className="mt-4 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <BrainPlanCanvas 
                 plan={planContent} 
@@ -152,19 +151,18 @@ export default function BrainAgentMessage({
           )}
 
           {/* Build Activity Feed (Inline v0 style) */}
-          {(buildActivities !== undefined || buildTodos !== undefined) && (
+          {((buildActivities !== undefined && buildActivities.length > 0) ||
+            (buildTodos !== undefined && buildTodos.length > 0) ||
+            isBuildSyncing) && (
              <div className="mt-4 pb-2 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
                  <BrainBuildActivityFeed
                      activities={buildActivities || []}
                      todos={buildTodos || []}
                      isSyncing={isBuildSyncing}
-                     className="bg-transparent border border-white/[0.05] rounded-xl overflow-hidden"
+                     className="bg-transparent border border-border-subtle rounded-xl overflow-hidden"
                  />
              </div>
           )}
-
-
-
 
           {/* Clarification Questions */}
           {clarificationData && clarificationData.length > 0 && onClarifySelect && (
@@ -178,7 +176,7 @@ export default function BrainAgentMessage({
           )}
 
           {isLoading && !agentStep && (
-              <div className="mt-2 w-8 h-1 bg-white/10 animate-pulse rounded-full" />
+              <div className="mt-2 w-8 h-1 bg-accent/30 animate-pulse rounded-full" />
           )}
         </div>
       </div>
@@ -192,30 +190,30 @@ export default function BrainAgentMessage({
             <button
               onClick={() => setShowMenu(!showMenu)}
               disabled={isLoading && !showMenu}
-              className={`p-1.5 transition-all rounded-md text-white/40 hover:text-white hover:bg-white/[0.05] ${showMenu ? 'bg-white/[0.05] text-white' : ''}`}
+              className={`p-1.5 transition-all rounded-md text-text-muted hover:text-text-primary hover:bg-surface-2 ${showMenu ? 'bg-surface-2 text-text-primary' : ''}`}
             >
               <MoreHorizontal size={16} />
             </button>
 
             {showMenu && (
-              <div className="absolute right-0 bottom-full mb-2 w-40 bg-[#141414] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col p-1.5 text-[13px]">
+              <div className="absolute right-0 bottom-full mb-2 w-40 bg-surface-2 border border-border-default rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col p-1.5 text-[13px] text-text-primary">
                   <button 
                     onClick={() => { onRegenerate?.(); setShowMenu(false); }}
-                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-white/60 hover:bg-white/5 hover:text-white rounded-md transition-colors"
+                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-text-secondary hover:bg-surface-3 hover:text-text-primary rounded-md transition-colors"
                   >
                     <RotateCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     Retry
                   </button>
                   <button 
                     onClick={() => { handleCopy(); setShowMenu(false); }}
-                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-white/60 hover:bg-white/5 hover:text-white rounded-md transition-colors"
+                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-text-secondary hover:bg-surface-3 hover:text-text-primary rounded-md transition-colors"
                   >
                     {isCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                     {isCopied ? 'Copied' : 'Copy'}
                   </button>
                   <button 
                     onClick={() => { setShowMenu(false); }}
-                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-white/60 hover:bg-white/5 hover:text-white rounded-md transition-colors"
+                    className="flex items-center gap-3 px-3 py-2 w-full text-left text-text-secondary hover:bg-surface-3 hover:text-text-primary rounded-md transition-colors"
                   >
                     <Link size={14} />
                     Copy Link
@@ -225,6 +223,7 @@ export default function BrainAgentMessage({
           </div>
         </div>
       </div>
+
     </div>
   );
 }

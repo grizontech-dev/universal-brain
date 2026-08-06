@@ -5,6 +5,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.shared.skills.resolver import SkillResolver
+from Brain.shared.structured_spec import format_structured_spec
 
 class DatabaseAgent(BaseAgent):
     def __init__(self):
@@ -20,6 +21,7 @@ class DatabaseAgent(BaseAgent):
         plan = state.get("project_plan", {})
 
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
+        structured_spec = format_structured_spec(task)
         
         skills_content = "{}"
         try:
@@ -29,7 +31,7 @@ class DatabaseAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Database Agent for Grizon Brain. When the task uses Supabase, it must use the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
+        You are the Database Agent for Grizon Brain. When the task uses Supabase, first check whether the current user already has a connected Supabase connector. If a connector is connected, use that user's Supabase configuration and schema. If no connector is connected, fall back to the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
 
         {FULL_STACK_BUILD_STANDARDS}
 
@@ -48,6 +50,7 @@ class DatabaseAgent(BaseAgent):
         TASK:
         Title: {task.get('title')}
         Description: {task.get('description')}
+        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
 
         Respond ONLY in JSON:
         {{
@@ -86,6 +89,6 @@ class DatabaseAgent(BaseAgent):
         )
 
         # Generation (review loop disabled to prevent timeout)
-        response_content = await self.chat(messages, timeout=300)
+        response_content = await self.chat(messages, timeout=180, max_tokens=2000)
         generated_json = self._format_json_response(response_content)
         return generated_json

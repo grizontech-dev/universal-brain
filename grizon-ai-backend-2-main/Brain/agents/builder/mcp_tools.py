@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from Brain.services.workspace_manager import workspace_manager
 from Brain.services.websocket_manager import ws_manager
 from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
+from Brain.services.mcp_service import MCPServiceError, get_mcp_service
 
 LOG = "[MCP_TOOLS]"
 
@@ -71,14 +72,36 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
         print(f"{LOG} ✖ ERROR: Invalid file path (path traversal attempt): {actual_path}", flush=True)
         return "ERROR: Invalid file path."
 
+    # Read old content for diff info
+    old_content = ""
+    is_new_file = not os.path.exists(abs_path)
+    if not is_new_file:
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                old_content = f.read()
+        except Exception:
+            old_content = ""
+
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(code_content)
 
     print(f"{LOG} ✓ Saved: {actual_path} → {abs_path} ({len(code_content)} chars)", flush=True)
 
+    # Compute diff stats
+    old_lines = old_content.splitlines() if old_content else []
+    new_lines = code_content.splitlines() if code_content else []
+    old_set = set(old_lines)
+    new_set = set(new_lines)
+    lines_added = max(0, len(new_lines) - len([l for l in old_lines if l in new_set]))
+    lines_removed = max(0, len(old_lines) - len([l for l in new_lines if l in old_set]))
+    action = "Created" if is_new_file else "Edited"
+
     # Emit WebSocket event
-    act = _make_activity("edit_file", f"Saved {actual_path}", path=actual_path, task_title=task_title)
+    act = _make_activity("edit_file", f"{action} {actual_path}", path=actual_path, task_title=task_title)
+    act["linesAdded"] = lines_added
+    act["linesRemoved"] = lines_removed
+    act["isNew"] = is_new_file
     progress_msg = json.dumps({
         "type": "file_updated",
         "file": actual_path,
@@ -114,6 +137,77 @@ def _resolve_entrypoint(ws_root: str, entry_file: str) -> str:
                 return rel
     print(f"{LOG} WARNING: entrypoint '{entry_file}' not found, using as-is", flush=True)
     return entry_file
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    if hasattr(value, "model_dump"):
+        return _to_jsonable(value.model_dump())
+    if hasattr(value, "__dict__"):
+        return _to_jsonable(vars(value))
+    return str(value)
+
+
+@tool
+async def mcp_list_tools(service: str, config: RunnableConfig) -> str:
+    """
+    List tools from an authenticated MCP provider.
+    Supported services: github, supabase.
+    """
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    if not user_id:
+        return "ERROR: user_id is required in config.configurable.user_id"
+
+    service_name = (service or "").strip().lower()
+    mcp_service = get_mcp_service()
+    try:
+        async with mcp_service.get_session(service=service_name, user_id=user_id) as session:
+            tools_response = await session.list_tools()
+            payload = [_to_jsonable(tool) for tool in tools_response.tools]
+            return json.dumps({"service": service_name, "tools": payload})
+    except MCPServiceError as exc:
+        return json.dumps({"service": service_name, "error": exc.message, "status_code": exc.status_code})
+    except Exception as exc:
+        return json.dumps({"service": service_name, "error": str(exc)})
+
+
+@tool
+async def mcp_call_tool(service: str, tool_name: str, arguments_json: str, config: RunnableConfig) -> str:
+    """
+    Call a tool on an authenticated MCP provider.
+    Use arguments_json as a JSON object string.
+    """
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    if not user_id:
+        return "ERROR: user_id is required in config.configurable.user_id"
+
+    service_name = (service or "").strip().lower()
+    if not tool_name or not tool_name.strip():
+        return "ERROR: tool_name is required"
+
+    try:
+        arguments = json.loads(arguments_json) if arguments_json else {}
+        if not isinstance(arguments, dict):
+            return "ERROR: arguments_json must decode to a JSON object"
+    except json.JSONDecodeError as exc:
+        return f"ERROR: arguments_json must be valid JSON ({exc})"
+
+    mcp_service = get_mcp_service()
+    try:
+        async with mcp_service.get_session(service=service_name, user_id=user_id) as session:
+            result = await session.call_tool(tool_name, arguments)
+            return json.dumps(_to_jsonable(result))
+    except MCPServiceError as exc:
+        return json.dumps({"service": service_name, "tool_name": tool_name, "error": exc.message, "status_code": exc.status_code})
+    except Exception as exc:
+        return json.dumps({"service": service_name, "tool_name": tool_name, "error": str(exc)})
 
 
 @tool
@@ -194,6 +288,7 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
                 print(f"{LOG} TUNNEL URL: {tunnel_url}", flush=True)
                 output_text += f"\nTunnel URL: {tunnel_url}"
                 sandbox_mcp.store_tunnel_url(session_id, tunnel_url)
+                sandbox_mcp.store_deploy_snapshot(session_id, user_id=user_id)
                 # Broadcast dedicated sandbox_ready event so the frontend canvas loads the preview
                 await ws_manager.broadcast_to_sandbox(session_id, {
                     "type": "sandbox_ready",

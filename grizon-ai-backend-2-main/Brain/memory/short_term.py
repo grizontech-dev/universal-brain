@@ -19,7 +19,7 @@ class ShortTermMemory:
             await asyncio.wait_for(redis_client.lpush(self.key, entry), timeout=5.0)
             await asyncio.wait_for(redis_client.expire(self.key, self.ttl), timeout=5.0)
         except Exception as e:
-            print(f"[ShortTermMemory] Redis error on append: {e}", flush=True)
+            print(f"[ShortTermMemory] Redis error on append: {type(e).__name__}: {e}", flush=True)
 
     async def get_recent(self, limit: int = 20) -> list:
         try:

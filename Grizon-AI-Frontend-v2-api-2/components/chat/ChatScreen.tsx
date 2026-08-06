@@ -143,6 +143,8 @@ export default function ChatScreen() {
         />
       )}
 
+
+
       {/* 3. Main Content Area */}
       <div className='flex flex-1 min-w-0 relative h-full'>
         {isSettingsOpen ? (

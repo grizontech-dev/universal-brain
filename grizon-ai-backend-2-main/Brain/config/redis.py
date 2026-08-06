@@ -16,9 +16,14 @@ class ResilientRedisClient:
         self._url = url
         self._client = None
         self._healthy = False
+        self._last_fail_ts = 0.0
+        self._fail_backoff = 30
 
     async def _get_client(self):
         if self._client is None:
+            import time as _t
+            if self._last_fail_ts and (_t.time() - self._last_fail_ts) < self._fail_backoff:
+                return None
             try:
                 self._client = aioredis.from_url(
                     self._url,
@@ -33,7 +38,8 @@ class ResilientRedisClient:
                 logger.info("Redis connected at %s", self._url)
             except Exception as e:
                 self._healthy = False
-                logger.warning("Redis unavailable (%s) — memory features disabled", e)
+                self._last_fail_ts = _t.time()
+                logger.warning("Redis unavailable (%s) — memory features disabled (retrying in %ss)", e, self._fail_backoff)
                 return None
         return self._client
 

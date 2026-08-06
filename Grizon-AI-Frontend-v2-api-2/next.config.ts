@@ -11,7 +11,12 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
   async rewrites() {
+    const backendTarget = process.env.BACKEND_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:4000";
     return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${backendTarget}/api/v1/:path*`,
+      },
       {
         source: "/api/brain/:path*",
         destination: `${brainApiTarget}/brain/:path*`,

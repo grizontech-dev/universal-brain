@@ -29,9 +29,9 @@ class ProviderRouter:
                 api_key=openai_key,
                 base_url=openai_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=120,
-                request_timeout=120,
+                max_retries=1,
+                timeout=90,
+                request_timeout=90,
                 **({"max_tokens": max_tokens} if max_tokens else {})
             )
 
@@ -46,9 +46,9 @@ class ProviderRouter:
                 api_key=deepseek_key,
                 base_url=deepseek_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=120,
-                request_timeout=120,
+                max_retries=1,
+                timeout=90,
+                request_timeout=90,
                 **({"max_tokens": max_tokens} if max_tokens else {}),
                 **extra
             )
@@ -65,9 +65,9 @@ class ProviderRouter:
                 api_key=deepinfra_key,
                 base_url=deepinfra_base,
                 temperature=temperature,
-                max_retries=2,
-                timeout=180,
-                request_timeout=180,
+                max_retries=1,
+                timeout=120,
+                request_timeout=120,
                 **({"max_tokens": max_tokens} if max_tokens else {}),
                 **extra,
             )
@@ -110,9 +110,9 @@ class ProviderRouter:
                     api_key=kimi_key,
                     base_url=kimi_base,
                     temperature=1,
-                    max_retries=2,
-                    timeout=120,
-                    request_timeout=120,
+                    max_retries=1,
+                    timeout=90,
+                    request_timeout=90,
                     **({"max_tokens": max_tokens} if max_tokens else {})
                 )
             return get_fallback_model()
@@ -120,14 +120,15 @@ class ProviderRouter:
         # Claude Models or Unknown IDs - Fallback
         elif "claude" in model_id.lower() or not is_known_id:
             print(f"{LOG} → Claude/Unknown '{model_id}' → fallback", flush=True)
-            return get_fallback_model()
+            model = get_fallback_model()
 
         # GPT Models
         elif "gpt" in model_id.lower():
             if openai_key:
                 print(f"{LOG} → OpenAI '{model_id}' (base={openai_base or 'default'})", flush=True)
-                return _make_openai(model_id)
-            return get_fallback_model()
+                model = _make_openai(model_id)
+            else:
+                model = get_fallback_model()
 
         # Gemini Models
         elif "gemini" in model_id or "gemma" in model_id:
@@ -155,26 +156,31 @@ class ProviderRouter:
                 elif "pro" in model_id:
                     actual_model = "gemini-2.5-pro"
                 else:
-                    actual_model = "gemini-2.5-flash-lite"
+                    actual_model = "gemini-3-flash-preview"
                 print(f"{LOG} → Gemini '{actual_model}'", flush=True)
-                return ChatGoogleGenerativeAI(
+                model = ChatGoogleGenerativeAI(
                     model=actual_model,
                     google_api_key=gemini_key,
                     temperature=temperature,
                     convert_system_message_to_human=True,
-                    max_retries=2,
+                    max_retries=1,
                     timeout=60,
                     request_timeout=60,
                     **({"max_output_tokens": max_tokens} if max_tokens else {})
                 )
-            return get_fallback_model()
+            else:
+                model = get_fallback_model()
 
         # xAI Models - Redirected to fallback
         elif "grok" in model_id or "xai" in model_id:
             print(f"{LOG} → Grok/xAI '{model_id}' → fallback", flush=True)
-            return get_fallback_model()
+            model = get_fallback_model()
 
         # Default fallback
         else:
             print(f"{LOG} → Default fallback for '{model_id}'", flush=True)
-            return get_fallback_model()
+            model = get_fallback_model()
+
+        from Brain.utils.token_counter import TokenCounterCallbackHandler
+        model.callbacks = (model.callbacks or []) + [TokenCounterCallbackHandler()]
+        return model

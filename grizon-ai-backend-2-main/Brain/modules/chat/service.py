@@ -92,7 +92,7 @@ class BrainChatService:
         graph.add_node("strategic_plan", self.node_planner)
         graph.add_node("create_tasks", self.node_todo)
         graph.add_node("init_sandbox", self.node_init_sandbox)
-        
+
         # 2. Entry Point
         graph.set_entry_point("analyze_ingress")
 
@@ -107,12 +107,12 @@ class BrainChatService:
                 "resume": "init_sandbox",
             }
         )
-        
+
         graph.add_edge("recursive_clarify", END)
         graph.add_edge("strategic_plan", END)
         graph.add_edge("create_tasks", "init_sandbox")
         graph.add_edge("init_sandbox", END)
-        
+
         return graph.compile()
 
     # --- Routing Logic ---
@@ -121,7 +121,7 @@ class BrainChatService:
         status = state.get("status")
         index = state.get("current_task_index", 0)
         print(f"DEBUG: Router - Status: {status}, Task Index: {index}")
-        
+
         if status == "error":
             return "END"
         if status == "building_complete":
@@ -144,7 +144,7 @@ class BrainChatService:
         tasks = state.get("plan", [])
         index = state.get("current_task_index", 0)
         print(f"DEBUG: Router check - Task Index: {index}/{len(tasks)}")
-        
+
         if index < len(tasks):
             return "continue"
         return "complete"
@@ -159,7 +159,7 @@ class BrainChatService:
         content = state.get("content", "").lower()
         if "approve" in content or "✅ plan approved" in content:
             return {"status": "plan_approved", "plan_approved": True}
-        
+
         # If there's an existing plan and it hasn't been approved, treat this input as feedback
         pp = state.get("project_plan")
         if isinstance(pp, str):
@@ -177,16 +177,16 @@ class BrainChatService:
                 if metadata.get("planApproved") or metadata.get("plan_approved") or m.get("sandboxJob") or m.get("sandbox_job"):
                     was_ever_approved = True
                     break
-                    
+
         if isinstance(pp, dict) and pp and state.get("plan_approved") is False and not was_ever_approved:
             thoughts = f"The user provided feedback on the plan: '{state.get('content', '')}'. Updating the requirements and calling the **Planner Agent** to revise the technical roadmap."
             return {
-                "status": "ready_to_plan", 
+                "status": "ready_to_plan",
                 "plan_feedback": state["content"],
                 "leader_analysis": {"analysis": thoughts},
                 "thoughts": thoughts
             }
-        
+
         # If this is a follow-up (i.e. plan was previously approved), auto-approve new tasks
         if was_ever_approved:
             state["plan_approved"] = True
@@ -220,7 +220,7 @@ class BrainChatService:
         agent = PlannerAgent()
         state = await agent.execute(state)
         state["report"] = state.get("project_report")
-        
+
         # Safety: ensure project_plan is always a dict
         pp = state.get("project_plan")
         if isinstance(pp, str):
@@ -230,18 +230,18 @@ class BrainChatService:
                 state["project_plan"] = _json.loads(pp)
             except Exception:
                 state["project_plan"] = {"markdown_plan": pp, "project_name": "Project"}
-        
+
         plan = state.get("project_plan", {})
         if not isinstance(plan, dict):
             plan = {"project_name": "Project"}
             state["project_plan"] = plan
-            
+
         print(f"DEBUG: NODE [strategic_plan] complete | plan_name='{plan.get('project_name', 'N/A')}' | has_markdown={bool(plan.get('markdown_plan'))}", flush=True)
         return state
 
     async def node_todo(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [create_tasks] started", flush=True)
-        
+
         # Safety: ensure project_plan is a dict, not a string
         pp = state.get("project_plan")
         if isinstance(pp, str):
@@ -252,7 +252,7 @@ class BrainChatService:
             except Exception:
                 state["project_plan"] = {"markdown_plan": pp, "project_name": "Project"}
             print(f"[CHAT-SERVICE] Fixed project_plan to dict: {type(state['project_plan']).__name__}", flush=True)
-        
+
         agent = TodoAgent()
         state = await agent.execute(state)
         # TodoAgent returns tasks in state['tasks'], but Builder expects state['plan']
@@ -367,13 +367,13 @@ class BrainChatService:
         tasks = state.get("plan", [])
         index = state.get("current_task_index", 0)
         sandbox_job = state.get("sandbox_job")
-        
+
         if index >= len(tasks):
             return {"status": "building_complete"}
 
         agent = BuilderAgent()
         print(f"DEBUG: Starting agent.execute for Task {index+1}/{len(tasks)}")
-        
+
         last_event = {}
         accumulated_ops: List[Dict[str, Any]] = []
         accumulated_activities: List[Dict[str, Any]] = []
@@ -394,7 +394,7 @@ class BrainChatService:
         # Final state after one task execution
         tasks = state.get("plan", [])
         index = state.get("current_task_index", 0)
-        
+
         # index = next task to run (builder increments after each task)
         for i, task in enumerate(tasks):
             if task.get("status") == "failed":
@@ -410,7 +410,7 @@ class BrainChatService:
                 task["status"] = "executing"
             else:
                 task["status"] = "pending"
-            
+
         exe_payload = last_event.get("execute_sandbox", {})
         if sandbox_job:
             exe_payload["sandbox_job"] = sandbox_job
@@ -437,7 +437,7 @@ class BrainChatService:
             if isinstance(ev, dict):
                 state = ev
         print(f"DEBUG: NODE [runner] complete | status={state.get('status')}", flush=True)
-        
+
         sandbox_job = state.get("sandbox_job")
         runner_exe = state.get("execute_sandbox") or {}
 
@@ -473,7 +473,7 @@ class BrainChatService:
         }
         return mapping.get(node_name, (state.get("status", "unknown"), node_name))
 
-    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str):
+    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str, credits_deducted: int = 0):
         """Save a phase message to the conversation DB."""
         report = state.get("report") or state.get("progress_msg") or ""
         leader_analysis = state.get("leader_analysis") or {}
@@ -492,7 +492,8 @@ class BrainChatService:
             conv_id, "ASSISTANT", report,
             todo_list=todo_list if isinstance(todo_list, list) else None,
             sandbox_job=sandbox_job,
-            metadata=metadata
+            metadata=metadata,
+            credits_deducted=credits_deducted
         )
 
         mg: MemoryGateway = state.get("memory_gateway")
@@ -548,6 +549,14 @@ class BrainChatService:
                 "css": plan_json.get("css") or plan_json.get("css_framework") or "tailwind",
                 "api_style": "rest",
             }
+            # Prefer the structured stack object when present (planner v2)
+            stack_obj = plan_json.get("stack")
+            if isinstance(stack_obj, dict) and any(stack_obj.values()):
+                if stack_obj.get("frontend"): decisions["frontend"] = stack_obj["frontend"]
+                if stack_obj.get("backend"): decisions["backend"] = stack_obj["backend"]
+                if stack_obj.get("db"): decisions["database"] = stack_obj["db"]
+                if stack_obj.get("auth"): decisions["auth"] = stack_obj["auth"]
+                if stack_obj.get("styling"): decisions["css"] = stack_obj["styling"]
             for t in tech_stack:
                 tl = t.lower()
                 if "react" in tl: decisions["frontend"] = "React"
@@ -570,9 +579,14 @@ class BrainChatService:
 
     async def process_chat_stream(self, request: Dict[str, Any]) -> AsyncGenerator[str, None]:
         import asyncio
+        import time as _t
+        _t_begin = _t.time()
+        from Brain.utils.token_counter import token_counter_context, calculate_credits
+        from Brain.modules.conversations.service import conversation_service
         initial_state = self._prepare_initial_state(request)
-        
+
         conv_id, _ = conversation_service.ensure_brain_persistence(initial_state)
+        print(f"[CHAT-SERVICE] TIMING: persistence done in {_t.time()-_t_begin:.1f}s", flush=True)
         initial_state["conversation_id"] = conv_id
         if conv_id in self.STOP_REGISTRY:
             self.STOP_REGISTRY.remove(conv_id)
@@ -592,12 +606,19 @@ class BrainChatService:
                         print(f"DEBUG: Generated title for new conversation {conv_id}: {title}")
                 except Exception as e:
                     print(f"ERROR: Failed to generate title for new conversation: {e}")
-            
+
             asyncio.create_task(_bg_title_gen())
 
         mg: MemoryGateway = initial_state.get("memory_gateway")
         if mg:
             initial_state["memory_context"] = await mg.build_agent_context("Leader")
+            print(f"[CHAT-SERVICE] TIMING: memory_context built in {_t.time()-_t_begin:.1f}s", flush=True)
+            # Release pooled DB connections immediately — sessions are reusable after close(),
+            # and holding ~9 connections for the whole build exhausts the pool on hosted.
+            try:
+                mg.close_all()
+            except Exception as _close_err:
+                print(f"[CHAT-SERVICE] WARN: memory close_all failed: {_close_err}", flush=True)
 
         # Initialize session on start
         if mg:
@@ -614,6 +635,10 @@ class BrainChatService:
                 )
             except RuntimeError:
                 pass
+
+        ctx = token_counter_context()
+        tokens_data = ctx.__enter__()
+        deducted_credits = 0
 
         state = initial_state
         # SAVE plan before Phase 1 — LangGraph may overwrite it during state updates
@@ -632,6 +657,8 @@ class BrainChatService:
                             if not _done:
                                 yield ": keep-alive\n\n"
                         event = _task.result()
+                        _event_elapsed = _t.time() - _t_begin
+                        print(f"[CHAT-SERVICE] TIMING: workflow event at +{_event_elapsed:.1f}s", flush=True)
                     except StopAsyncIteration:
                         break
                     if initial_state["conversation_id"] in self.STOP_REGISTRY:
@@ -646,6 +673,20 @@ class BrainChatService:
                     yield f"data: {json.dumps(_sanitize_for_json(event))}\n\n"
 
                     for node_name, node_data in event.items():
+                        # Progressive credit deduction check
+                        current_tokens = tokens_data["total_tokens"]
+                        target_credits = calculate_credits(current_tokens)
+                        if target_credits > deducted_credits:
+                            credits_to_deduct = target_credits - deducted_credits
+                            user_id = initial_state.get("user_id")
+                            success = conversation_service.deduct_credits(
+                                user_id=user_id,
+                                amount=credits_to_deduct,
+                                reason=f"Brain multi-step workflow phase: {node_name}",
+                                reference_id=conv_id
+                            )
+                            if success:
+                                deducted_credits = target_credits
                         if isinstance(node_data, str):
                             print(f"[CHAT-SERVICE] WARN: node_data is str for '{node_name}': {node_data[:200]}", flush=True)
                             initial_state["report"] = node_data
@@ -653,6 +694,7 @@ class BrainChatService:
                         elif not isinstance(node_data, dict):
                             print(f"[CHAT-SERVICE] WARN: unexpected node_data type for '{node_name}': {type(node_data).__name__}", flush=True)
                             node_data = {}
+                        print(f"[CHAT-SERVICE] TIMING: node '{node_name}' completed at +{_t.time()-_t_begin:.1f}s", flush=True)
                         initial_state.update(node_data)
                         # SAVE plan after every node update — plan is created by create_tasks node
                         if initial_state.get("plan"):
@@ -660,7 +702,7 @@ class BrainChatService:
                             _saved_plan_approved = initial_state.get("plan_approved", False)
                         report = node_data.get("report") or node_data.get("progress_msg")
                         if node_name == "init_sandbox":
-                            self._save_phase_message(conv_id, initial_state, node_name)
+                            self._save_phase_message(conv_id, initial_state, node_name, deducted_credits)
 
                         if report or node_name in ("recursive_clarify", "strategic_plan"):
                             if node_name == "strategic_plan":
@@ -691,7 +733,8 @@ class BrainChatService:
                                 conv_id, "ASSISTANT", report or "",
                                 todo_list=todo_list if isinstance(todo_list, list) else None,
                                 sandbox_job=sandbox_job,
-                                metadata=metadata
+                                metadata=metadata,
+                                credits_deducted=deducted_credits
                             )
                             if mg:
                                 import asyncio
@@ -707,8 +750,11 @@ class BrainChatService:
                 import traceback
                 traceback.print_exc()
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+<<<<<<< HEAD
                 # CRITICAL FIX: Send error event to frontend so UI doesn't stay blank
                 yield f"data: {json.dumps({'error': f'Phase 1 error: {type(phase1_err).__name__}: {str(phase1_err)[:300]}'})}\n\n"
+=======
+>>>>>>> 8e45e8bcc5908d2a29e7bdc00253cdb9f5c7049d
                 if mg:
                     try:
                         import asyncio as _asyncio_ph1
@@ -774,7 +820,7 @@ class BrainChatService:
                     except RuntimeError:
                         pass
                 agent = BuilderAgent()
-                
+
                 last_completed_index = -1
                 retry_count = {}
                 MAX_RETRIES_PER_TASK = 1
@@ -817,7 +863,7 @@ class BrainChatService:
                         else:
                             retry_count[index] = retries + 1
                             print(f"WARNING: Task {index} did not advance. Retry {retries + 1}/{MAX_RETRIES_PER_TASK}.", flush=True)
-                    
+
                     # Start execution log for this task
                     if mg and index not in task_log_ids:
                         task = plan[index]
@@ -828,12 +874,12 @@ class BrainChatService:
                             todo_id=task.get("id")
                         )
                         task_log_ids[index] = log.id
- 
+
                     # Emit task_started so UI shows live progress
                     current_task = plan[index] if index < len(plan) else {}
                     print(f"[CHAT-SERVICE] ▶ Executing task {index+1}/{len(plan)}: {current_task.get('title', 'N/A')} ({current_task.get('category', '?')})", flush=True)
                     yield f"data: {json.dumps({'task_started': _sanitize_for_json({'current_task_index': index, 'total_tasks': len(plan), 'task_label': current_task.get('label', ''), 'plan': plan})})}\n\n"
-                    
+
                     # Run builder for one task — stream each event
                     try:
                         _agent_iterator = agent.execute(state).__aiter__()
@@ -919,12 +965,12 @@ class BrainChatService:
                     # Complete execution log
                     if mg and index in task_log_ids:
                         mg.execution.complete_task(task_log_ids[index])
-                    
+
                     # Log task completion
                     completed_task = plan[index] if index < len(plan) else {}
                     new_index = state.get("current_task_index", index + 1)
                     print(f"[CHAT-SERVICE] ✓ Task {index+1} done: {completed_task.get('title', 'N/A')} → next_index={new_index}/{len(plan)}", flush=True)
-                    
+
                     # Save message with updated plan after each task
                     sandbox_job = state.get("sandbox_job")
                     report = state.get("report") or ""
@@ -937,11 +983,27 @@ class BrainChatService:
                         "thoughts": thoughts,
                         "current_task_index": state.get("current_task_index", index + 1),
                     }
+                    # Progressive credit deduction check
+                    current_tokens = tokens_data["total_tokens"]
+                    target_credits = calculate_credits(current_tokens)
+                    if target_credits > deducted_credits:
+                        credits_to_deduct = target_credits - deducted_credits
+                        user_id = state.get("user_id")
+                        success = conversation_service.deduct_credits(
+                            user_id=user_id,
+                            amount=credits_to_deduct,
+                            reason=f"Brain task execution: {plan[index].get('label', f'Task {index}')}",
+                            reference_id=conv_id
+                        )
+                        if success:
+                            deducted_credits = target_credits
+
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", report,
                         todo_list=list(plan),
                         sandbox_job=sandbox_job,
-                        metadata=metadata
+                        metadata=metadata,
+                        credits_deducted=deducted_credits
                     )
                     if mg:
                         import asyncio
@@ -952,6 +1014,21 @@ class BrainChatService:
                         except RuntimeError:
                             pass
                 if stopped or conv_id in self.STOP_REGISTRY:
+                    # Final deduction check on stop
+                    current_tokens = tokens_data["total_tokens"]
+                    target_credits = calculate_credits(current_tokens)
+                    if target_credits > deducted_credits:
+                        credits_to_deduct = target_credits - deducted_credits
+                        user_id = state.get("user_id")
+                        success = conversation_service.deduct_credits(
+                            user_id=user_id,
+                            amount=credits_to_deduct,
+                            reason="Brain execution stopped",
+                            reference_id=conv_id
+                        )
+                        if success:
+                            deducted_credits = target_credits
+
                     print(f"[Brain] Execution stopped by user. Bypassing Phase 3 (Runner). Index: {state.get('current_task_index', 0)}")
                     conversation_service.save_message(
                         conv_id, "ASSISTANT", state.get("report") or "Build execution stopped.",
@@ -962,14 +1039,15 @@ class BrainChatService:
                             "agentStep": "execute_sandbox",
                             "planApproved": True,
                             "current_task_index": state.get("current_task_index", 0),
-                        }
+                        },
+                        credits_deducted=deducted_credits
                     )
                     return
 
                 # Phase 3: Runner — deploy runs as detached background task
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
                 print(f"[CHAT-SERVICE] Phase 3: Runner - deploying to sandbox", flush=True)
-                
+
                 try:
                     from Brain.services.template_service import inject_company_supabase_to_workspace
                     inject_company_supabase_to_workspace(conv_id)
@@ -1000,7 +1078,7 @@ class BrainChatService:
                     if t.get("status") == "failed":
                         continue
                     t["status"] = "completed"
-                
+
                 # Log runner execution
                 if mg:
                     runner_log = mg.execution.start_task(
@@ -1032,7 +1110,22 @@ class BrainChatService:
                     "report": runner_state.get("run_report"),
                 }
                 yield f"data: {json.dumps({'final_report': _sanitize_for_json(final_payload)})}\n\n"
-                
+
+                # Final deduction check on runner completion
+                current_tokens = tokens_data["total_tokens"]
+                target_credits = calculate_credits(current_tokens)
+                if target_credits > deducted_credits:
+                    credits_to_deduct = target_credits - deducted_credits
+                    user_id = state.get("user_id")
+                    success = conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain workflow completion",
+                        reference_id=conv_id
+                    )
+                    if success:
+                        deducted_credits = target_credits
+
                 report = runner_state.get("run_report") or ""
                 metadata = {
                     "planContent": state.get("project_plan"),
@@ -1044,7 +1137,8 @@ class BrainChatService:
                     conv_id, "ASSISTANT", report,
                     todo_list=list(tasks),
                     sandbox_job=sandbox_job,
-                    metadata=metadata
+                    metadata=metadata,
+                    credits_deducted=deducted_credits
                 )
                 if mg:
                     import asyncio
@@ -1054,8 +1148,25 @@ class BrainChatService:
                         )
                     except RuntimeError:
                         pass
-                    
+
         except Exception as e:
+            # Final deduction check on error
+            try:
+                current_tokens = tokens_data["total_tokens"]
+                target_credits = calculate_credits(current_tokens)
+                if target_credits > deducted_credits:
+                    credits_to_deduct = target_credits - deducted_credits
+                    user_id = state.get("user_id") if state else initial_state.get("user_id")
+                    conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain execution error final deduction",
+                        reference_id=conv_id
+                    )
+            except Exception as deduct_err:
+                print(f"ERROR: Failed to deduct credits on exception: {deduct_err}")
+
+            print(f"ERROR in stream: {e}")
             import traceback
             print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
             print(f"[CHAT-SERVICE] ✖ STREAM ERROR: {type(e).__name__}: {e}", flush=True)
@@ -1076,6 +1187,7 @@ class BrainChatService:
             traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
+            ctx.__exit__(None, None, None)
             if mg:
                 mg.close_all()
             yield "event: end\ndata: {}\n\n"
@@ -1106,9 +1218,13 @@ class BrainChatService:
         if conv_id and conv_id != "new":
             try:
                 uuid.UUID(conv_id)
-                bp = SessionLocal().query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
-                if bp:
-                    return str(bp.id)
+                _db = SessionLocal()
+                try:
+                    bp = _db.query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
+                    if bp:
+                        return str(bp.id)
+                finally:
+                    _db.close()
             except (ValueError, AttributeError):
                 pass
         return str(uuid.uuid4())
@@ -1160,9 +1276,27 @@ class BrainChatService:
         mg: MemoryGateway = initial_state.get("memory_gateway")
         if mg:
             initial_state["memory_context"] = await mg.build_agent_context("Leader")
+
+        from Brain.utils.token_counter import token_counter_context, calculate_credits
+        from Brain.modules.conversations.service import conversation_service
+
         try:
-            result = await self.workflow.ainvoke(initial_state)
-            return result
+            with token_counter_context() as tokens_data:
+                result = await self.workflow.ainvoke(initial_state)
+
+                # Deduct credits spent during sync chat execution
+                current_tokens = tokens_data["total_tokens"]
+                credits_to_deduct = calculate_credits(current_tokens)
+                if credits_to_deduct > 0:
+                    user_id = initial_state.get("user_id")
+                    conv_id = result.get("conversation_id")
+                    conversation_service.deduct_credits(
+                        user_id=user_id,
+                        amount=credits_to_deduct,
+                        reason="Brain chat execution",
+                        reference_id=conv_id
+                    )
+                return result
         finally:
             if mg:
                 mg.close_all()
@@ -1312,11 +1446,11 @@ class BrainChatService:
             return []
         sandbox_path = host_path
         print(f"DEBUG: get_sandbox_files searching in: {sandbox_path}")
-        
+
         if not os.path.exists(sandbox_path):
             print(f"DEBUG: get_sandbox_files - path NOT FOUND: {sandbox_path}")
             return []
-            
+
         def build_tree(current_path, rel_path="", depth=0):
             if depth > 10: return []
             tree = []
@@ -1324,12 +1458,12 @@ class BrainChatService:
                 for item in os.listdir(current_path):
                     if item in ["node_modules", ".git", "__pycache__", ".next", "dist", "build"]:
                         continue
-                        
+
                     full_path = os.path.join(current_path, item)
                     if os.path.islink(full_path): continue
-                    
+
                     item_rel_path = os.path.join(rel_path, item).replace("\\", "/")
-                    
+
                     if os.path.isdir(full_path):
                         tree.append({
                             "name": item,
@@ -1346,7 +1480,7 @@ class BrainChatService:
             except Exception as e:
                 print(f"Error building tree for {current_path}: {e}")
             return tree
-            
+
         return build_tree(sandbox_path)
 
 _brain_chat_service = None

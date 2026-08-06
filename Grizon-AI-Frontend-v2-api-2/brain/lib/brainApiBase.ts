@@ -19,7 +19,10 @@ export async function brainApiFetch(path: string, init?: RequestInit): Promise<R
             signal: init?.signal,
         });
         return res;
-    } catch (err) {
+    } catch (err: any) {
+        if (err?.name === 'AbortError') {
+            throw err;
+        }
         console.error(`[brainApiFetch] ${path} failed:`, err?.constructor?.name, err);
         return null;
     }

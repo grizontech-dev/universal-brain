@@ -412,6 +412,12 @@ export type BuildTodoItem = {
     description?: string;
     status?: string;
     category?: string;
+    skill_required?: string;
+    files?: string[];
+    ui?: string[];
+    api?: string[];
+    depends_on?: string[];
+    acceptance?: string[];
 };
 
 export function normalizeTodoStatus(raw?: string): string {
