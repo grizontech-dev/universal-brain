@@ -2289,7 +2289,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 </p>
 
                                 {/* Main Greeting & User Name */}
-                                <h1 className="max-w-[20ch] text-[clamp(2rem,3.4vw,2.75rem)] font-semibold leading-[1.08] tracking-[-0.03em] text-text-primary font-display text-center [overflow-wrap:anywhere] mb-3">
+                                <h1 className="w-full max-w-full text-[clamp(1.75rem,3.4vw,2.75rem)] font-semibold leading-[1.08] tracking-[-0.03em] text-text-primary font-display text-center break-words mb-3">
                                     {new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening'},<br />
                                     {(user?.email || user?.name || 'singhkashish364@gmail.com').replace(/@gmil\.com/i, '@gmail.com')}.
                                 </h1>
