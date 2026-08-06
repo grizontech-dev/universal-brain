@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { BuildActivity, BuildActivityType, BuildTodoItem } from '../lib/buildActivity';
 import { isBuildTodosComplete, isNoisyTerminalLine, normalizeTodoStatus } from '../lib/buildActivity';
+import { getBrainApiUrl } from '../lib/brainApiBase';
 
 export type { BuildTodoItem };
 
@@ -99,6 +100,8 @@ function TodoChips({ todo }: { todo: BuildTodoItem }) {
 
 function FileChangeCard({ singleAct }: { singleAct: any }) {
     const [isOpen, setIsOpen] = useState(false);
+    const [fileContent, setFileContent] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
     const filePath = singleAct.path || singleAct.label || '';
     const fileName = fileBasename(filePath);
     const dirPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
@@ -108,16 +111,47 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
     const actionColor = isNew ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 border-amber-500/20';
     const hasLines = (singleAct.linesAdded || 0) > 0 || (singleAct.linesRemoved || 0) > 0;
 
+    const fetchFileContent = async () => {
+        if (fileContent !== null || !filePath) return;
+        setLoading(true);
+        try {
+            const jobId = (window as any).__brainJobId || '';
+            if (!jobId) { setFileContent('// No workspace'); setLoading(false); return; }
+            const uid = typeof window !== 'undefined' && localStorage.getItem('user_id') ? `&user_id=${encodeURIComponent(localStorage.getItem('user_id')!)}` : '';
+            const url = getBrainApiUrl(`sandbox/read-file?workspace_id=${encodeURIComponent(jobId)}&path=${encodeURIComponent(filePath)}${uid}`);
+            const res = await fetch(url, { cache: 'no-store' });
+            if (res.ok) {
+                const data = await res.json();
+                setFileContent(data.content ?? '// Empty file');
+            } else {
+                setFileContent('// Unable to load file');
+            }
+        } catch {
+            setFileContent('// Unable to load file');
+        }
+        setLoading(false);
+    };
+
+    const handleToggle = () => {
+        const next = !isOpen;
+        setIsOpen(next);
+        if (next && fileContent === null) fetchFileContent();
+    };
+
     const handleFileOpen = () => {
         if (!isFolder && filePath) {
             window.dispatchEvent(new CustomEvent('openBrainFile', { detail: { path: filePath } }));
         }
     };
 
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const langMap: Record<string, string> = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', sql: 'sql', css: 'css', html: 'html', json: 'json', md: 'markdown' };
+    const lang = langMap[ext] || 'text';
+
     return (
         <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
             <button
-                onClick={() => { setIsOpen(!isOpen); handleFileOpen(); }}
+                onClick={() => { handleToggle(); handleFileOpen(); }}
                 className="w-full flex items-center gap-2.5 py-2 px-2.5 rounded-lg hover:bg-surface-2 transition-colors group"
             >
                 {isFolder
@@ -145,6 +179,32 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
                     className={`text-text-muted shrink-0 transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`}
                 />
             </button>
+
+            {isOpen && !isFolder && (
+                <div className="ml-6 mt-1 mb-2 rounded-lg border border-border-subtle bg-[#0d0d0d] overflow-hidden">
+                    {loading ? (
+                        <div className="flex items-center gap-2 px-3 py-2.5 text-[11px] text-text-muted">
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Loading...</span>
+                        </div>
+                    ) : fileContent ? (
+                        <pre className="overflow-x-auto max-h-[300px] overflow-y-auto custom-scrollbar text-[11px] leading-[1.6] font-mono">
+                            <code className="block p-3">
+                                {fileContent.split('\n').map((line, i) => (
+                                    <div key={i} className="flex">
+                                        <span className="inline-block w-7 text-right pr-2 text-text-muted/40 select-none shrink-0">{i + 1}</span>
+                                        <span className={`flex-1 ${line.trim().startsWith('//') || line.trim().startsWith('#') || line.trim().startsWith('/*') ? 'text-text-muted/50 italic' : 'text-text-primary/80'}`}>
+                                            {line || '\u00A0'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </code>
+                        </pre>
+                    ) : (
+                        <div className="px-3 py-2.5 text-[11px] text-text-muted">No content</div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

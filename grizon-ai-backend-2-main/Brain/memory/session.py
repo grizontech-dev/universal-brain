@@ -13,7 +13,7 @@ class SessionMemory:
             await asyncio.wait_for(redis_client.hset(self.key, field, json.dumps(value)), timeout=5.0)
             await asyncio.wait_for(redis_client.expire(self.key, self.ttl), timeout=5.0)
         except Exception as e:
-            print(f"[SessionMemory] Redis error on set: {e}", flush=True)
+            print(f"[SessionMemory] Redis error on set: {type(e).__name__}: {e}", flush=True)
 
     async def get(self, field: str):
         try:
