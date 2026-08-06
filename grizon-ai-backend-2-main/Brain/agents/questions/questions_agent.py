@@ -95,7 +95,10 @@ class QuestionsAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current Task: {prompt}\nRemaining Missing Context to Address: {', '.join(missing)}"))
 
         print(f"DEBUG: QuestionsAgent requesting chat with model {self.model_id}")
+        import time as _t
+        _t0 = _t.time()
         response_content = await self.chat(messages)
+        print(f"DEBUG: QuestionsAgent LLM call took {_t.time()-_t0:.1f}s", flush=True)
         print(f"DEBUG: QuestionsAgent raw response: {response_content[:200]}...")
         questions_data = self._format_json_response(response_content)
         print(f"DEBUG: QuestionsAgent parsed data: {json.dumps(questions_data)[:200]}...")

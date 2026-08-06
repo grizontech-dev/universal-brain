@@ -317,7 +317,10 @@ class ManagerAgent(BaseAgent):
         messages.append(HumanMessage(content=f"Current User Input: {prompt}"))
 
         print(f"DEBUG: ManagerAgent requesting chat with model {self.model_id}")
+        import time as _t
+        _t0 = _t.time()
         response_content = await self.chat(messages, model_id="deepseek-v4-flash", max_tokens=600)
+        print(f"DEBUG: ManagerAgent LLM call took {_t.time()-_t0:.1f}s", flush=True)
         print(f"DEBUG: ManagerAgent raw response: {response_content[:200]}...")
         analysis = self._format_json_response(response_content)
         print(f"DEBUG: ManagerAgent parsed analysis: {json.dumps(analysis)[:200]}...")

@@ -48,6 +48,27 @@ class MemoryGateway:
         recent = await self.short_term.get_recent(10)
         active_decisions = self.decisions.get_active_decisions(self.project_id)
         project_info = self.project.get_by_id(self.project_id)
+
+        # New project (no record yet): skip all queries that require project data.
+        # Running 8+ sequential remote-DB queries here before the workflow starts
+        # is what makes the first prompt hang for 60-70s on hosted.
+        if not project_info:
+            return {
+                "conversation": recent,
+                "decisions": active_decisions,
+                "project": None,
+                "known_errors": [],
+                "execution_status": None,
+                "session_state": await self.session.get_all(),
+                "artifact_components": [],
+                "registered_artifacts": [],
+                "recent_reviews": [],
+                "best_skills": [],
+                "architecture_patterns": [],
+                "recent_changes": [],
+                "similar_projects": [],
+            }
+
         recent_errors = (
             self.errors.find_fix("recent", project_info.frontend)
             if project_info and project_info.frontend

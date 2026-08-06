@@ -559,9 +559,12 @@ class BrainChatService:
 
     async def process_chat_stream(self, request: Dict[str, Any]) -> AsyncGenerator[str, None]:
         import asyncio
+        import time as _t
+        _t_begin = _t.time()
         initial_state = self._prepare_initial_state(request)
         
         conv_id, _ = conversation_service.ensure_brain_persistence(initial_state)
+        print(f"[CHAT-SERVICE] TIMING: persistence done in {_t.time()-_t_begin:.1f}s", flush=True)
         initial_state["conversation_id"] = conv_id
         if conv_id in self.STOP_REGISTRY:
             self.STOP_REGISTRY.remove(conv_id)
@@ -587,6 +590,13 @@ class BrainChatService:
         mg: MemoryGateway = initial_state.get("memory_gateway")
         if mg:
             initial_state["memory_context"] = await mg.build_agent_context("Leader")
+            print(f"[CHAT-SERVICE] TIMING: memory_context built in {_t.time()-_t_begin:.1f}s", flush=True)
+            # Release pooled DB connections immediately — sessions are reusable after close(),
+            # and holding ~9 connections for the whole build exhausts the pool on hosted.
+            try:
+                mg.close_all()
+            except Exception as _close_err:
+                print(f"[CHAT-SERVICE] WARN: memory close_all failed: {_close_err}", flush=True)
 
         # Initialize session on start
         if mg:
@@ -621,6 +631,8 @@ class BrainChatService:
                             if not _done:
                                 yield ": keep-alive\n\n"
                         event = _task.result()
+                        _event_elapsed = _t.time() - _t_begin
+                        print(f"[CHAT-SERVICE] TIMING: workflow event at +{_event_elapsed:.1f}s", flush=True)
                     except StopAsyncIteration:
                         break
                     if initial_state["conversation_id"] in self.STOP_REGISTRY:
@@ -642,6 +654,7 @@ class BrainChatService:
                         elif not isinstance(node_data, dict):
                             print(f"[CHAT-SERVICE] WARN: unexpected node_data type for '{node_name}': {type(node_data).__name__}", flush=True)
                             node_data = {}
+                        print(f"[CHAT-SERVICE] TIMING: node '{node_name}' completed at +{_t.time()-_t_begin:.1f}s", flush=True)
                         initial_state.update(node_data)
                         # SAVE plan after every node update — plan is created by create_tasks node
                         if initial_state.get("plan"):
@@ -1088,9 +1101,13 @@ class BrainChatService:
         if conv_id and conv_id != "new":
             try:
                 uuid.UUID(conv_id)
-                bp = SessionLocal().query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
-                if bp:
-                    return str(bp.id)
+                _db = SessionLocal()
+                try:
+                    bp = _db.query(BrainProject).filter(BrainProject.conversationId == conv_id).first()
+                    if bp:
+                        return str(bp.id)
+                finally:
+                    _db.close()
             except (ValueError, AttributeError):
                 pass
         return str(uuid.uuid4())
