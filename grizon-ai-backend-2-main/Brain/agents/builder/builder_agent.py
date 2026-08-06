@@ -240,10 +240,20 @@ class BuilderAgent(BaseAgent):
 
             # Execute each tool call
             stuck = False
-            for tc in response.tool_calls:
+            for i, tc in enumerate(response.tool_calls):
                 if time.time() - start_time > timeout_sec:
+                    for skipped_tc in response.tool_calls[i:]:
+                        messages.append(ToolMessage(
+                            content="Tool call skipped because the builder timed out.",
+                            tool_call_id=skipped_tc["id"]
+                        ))
                     break
                 if len(files_saved) >= max_files:
+                    for skipped_tc in response.tool_calls[i:]:
+                        messages.append(ToolMessage(
+                            content="Tool call skipped because the builder reached the file limit.",
+                            tool_call_id=skipped_tc["id"]
+                        ))
                     break
 
                 tool_name = tc["name"]

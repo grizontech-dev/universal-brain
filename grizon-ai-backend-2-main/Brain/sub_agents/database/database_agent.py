@@ -29,7 +29,7 @@ class DatabaseAgent(BaseAgent):
             skills_content = "{}"
         
         system_prompt = f"""
-        You are the Database Agent for Grizon Brain. When the task uses Supabase, it must use the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
+        You are the Database Agent for Grizon Brain. When the task uses Supabase, first check whether the current user already has a connected Supabase connector. If a connector is connected, use that user's Supabase configuration and schema. If no connector is connected, fall back to the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
 
         {FULL_STACK_BUILD_STANDARDS}
 

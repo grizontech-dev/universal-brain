@@ -3,6 +3,7 @@ import json
 import os
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage
+from Brain.modules.connectors.supabase.service import SupabaseOAuthService
 
 LOG = "[PLANNER]"
 
@@ -13,6 +14,27 @@ class PlannerAgent(BaseAgent):
             description="Creates the technical architecture and project plan.",
             model_id="deepseek-v4-flash"
         )
+        self.supabase_service = SupabaseOAuthService()
+
+    def _resolve_supabase_source(self, state: Dict[str, Any], prompt: str) -> str:
+        request_text = f"{prompt} {state.get('content', '')} {json.dumps(state.get('project_plan', {}), default=str)}".lower()
+        if "supabase" not in request_text and "database" not in request_text:
+            return "not_requested"
+
+        user_id = state.get("user_id")
+        if not user_id:
+            return "company_fallback"
+
+        try:
+            connector = self.supabase_service.get_connection(user_id)
+        except Exception:
+            connector = None
+
+        if connector and connector.config and connector.isActive:
+            config = connector.config or {}
+            if config.get("access_token") or config.get("url") or config.get("anon_key"):
+                return "user_connector"
+        return "company_fallback"
 
     def _build_context_summary(self, history: List[dict], prompt: str) -> str:
         """Extracts a clean summary of what the user wants from conversation history."""
@@ -38,6 +60,15 @@ class PlannerAgent(BaseAgent):
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
         current_plan = state.get("project_plan", {})
+
+        supabase_source = self._resolve_supabase_source(state, prompt)
+        if supabase_source != "not_requested":
+            memory_context = state.setdefault("memory_context", {})
+            decisions = memory_context.setdefault("decisions", {})
+            decisions["supabase_source"] = supabase_source
+            decisions["supabase_mode"] = "connected-user" if supabase_source == "user_connector" else "company-fallback"
+            state.setdefault("active_decisions", {})["supabase_source"] = supabase_source
+            state["active_decisions"]["supabase_mode"] = "connected-user" if supabase_source == "user_connector" else "company-fallback"
 
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
@@ -101,7 +132,7 @@ class PlannerAgent(BaseAgent):
         3. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
         4. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
         5. Plan for preview-visible UI — not isolated component files.
-        6. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
+        6. If the request includes Supabase, first check whether the user already has a connected Supabase connector and plan to use that user's Supabase configuration. If no connector is connected, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
         """
 
         messages = [SystemMessage(content=system_prompt)]
@@ -130,7 +161,7 @@ class PlannerAgent(BaseAgent):
         if not isinstance(plan, dict) or plan.get("error"):
             plan = {
                 "project_name": "New Project",
-                "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
+                "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Connected user Supabase first, company-owned Supabase via Python Backend Proxy as fallback\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
                 "tech_stack": ["React", "Tailwind", "Node", "Express", "Python Proxy", "Supabase"],
                 "status": "proposed"
             }

@@ -23,10 +23,10 @@ export function BrainWebContainerProvider({ children }: { children: React.ReactN
     const setWorkspace = useCallback((id: string, sync?: string | null) => {
         const key = `${id}|${sync ?? ''}`;
         const unchanged = workspaceKeyRef.current === key;
+        if (unchanged) return;
         workspaceKeyRef.current = key;
         setJobId(id);
         if (sync !== undefined) setSyncUrl(sync);
-        if (unchanged) return;
     }, []);
 
     const applyOps = useCallback(
