@@ -517,6 +517,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     window.dispatchEvent(
                         new CustomEvent('applyBrainWorkspaceOps', { detail: { ops } })
                     );
+                    window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
                 }
 
                 const sandboxJob = (inner.sandbox_job || nodeData.sandbox_job) as
@@ -1735,6 +1736,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             window.dispatchEvent(new CustomEvent('applyBrainWorkspaceOps', {
                                 detail: { ops },
                             }));
+                            window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
                         }
 
                         const sandboxJob = (inner.sandbox_job || nodeData.sandbox_job) as Record<string, unknown> | undefined;
