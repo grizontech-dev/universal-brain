@@ -99,6 +99,30 @@ const normalizeClarificationQuestions = (raw: any) => {
     }).filter((q: any) => q.text);
 };
 
+// Safe storage wrapper to prevent Tracking Prevention / privacy mode DOMExceptions in Edge/Brave/Safari
+const safeStorage = {
+    getItem: (key: string): string | null => {
+        try {
+            if (typeof window === 'undefined') return null;
+            return sessionStorage.getItem(key);
+        } catch {
+            return null;
+        }
+    },
+    setItem: (key: string, value: string): void => {
+        try {
+            if (typeof window === 'undefined') return;
+            sessionStorage.setItem(key, value);
+        } catch {}
+    },
+    removeItem: (key: string): void => {
+        try {
+            if (typeof window === 'undefined') return;
+            sessionStorage.removeItem(key);
+        } catch {}
+    }
+};
+
 export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesProps) {
     const router = useRouter();
     const pathname = usePathname();
@@ -134,11 +158,14 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const pollTaskIndexRef = useRef(-1);
     const maxSeenTaskIndexRef = useRef(-1);
 
-    // Reset sending lock when conversation changes (prevents stale lock from blocking new conversations)
     useEffect(() => {
         sendingRef.current = false;
         pollTaskIndexRef.current = -1;
         maxSeenTaskIndexRef.current = -1;
+        // CRITICAL FIX: Reset pendingMessageHandledRef when conversation changes
+        // Without this, client-side navigation (no remount) keeps the ref as 'true'
+        // from the previous conversation, causing pending messages to be silently skipped
+        pendingMessageHandledRef.current = false;
     }, [currentConversationId]);
 
     // Sync ref with URL param
@@ -151,13 +178,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     // Use sessionStorage to track navigation state across component instances
     const isNavigatingToNewRef = useRef(false);
     const getNavigatingFlag = () => {
-        if (typeof window === 'undefined') return false;
-        return sessionStorage.getItem('brainNavigatingToNew') === 'true';
+        return safeStorage.getItem('brainNavigatingToNew') === 'true';
     };
     const setNavigatingFlag = (value: boolean) => {
-        if (typeof window === 'undefined') return;
-        if (value) sessionStorage.setItem('brainNavigatingToNew', 'true');
-        else sessionStorage.removeItem('brainNavigatingToNew');
+        if (value) safeStorage.setItem('brainNavigatingToNew', 'true');
+        else safeStorage.removeItem('brainNavigatingToNew');
         isNavigatingToNewRef.current = value;
     };
     const pendingMessageHandledRef = useRef(false);
@@ -755,6 +780,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     );
 
     useEffect(() => {
+        // If we are currently sending or streaming a prompt, do NOT wipe messages or reset loading state!
+        if (sendingRef.current || isLoading) return;
+
         resumeAfterReloadRef.current = false;
 
         // Reset conversation and build specific states immediately to avoid stale closures and visual leaks
@@ -979,7 +1007,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     // Load initial messages if we have a conversation ID
     useEffect(() => {
         const navigating = getNavigatingFlag();
-        if (pathname === '/brain' && !navigating) {
+        const hasPendingMessage = !!safeStorage.getItem('brainPendingMessage');
+        if (pathname === '/brain' && !navigating && !hasPendingMessage && !sendingRef.current && !isLoading) {
             // Auto-stop any running tasks only when landing on the New Chat screen
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
@@ -1016,16 +1045,15 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
-            // If we are currently loading, don't fetch history to avoid interrupting the active stream/state.
-            if (isLoading) {
+            // If we are currently loading or sending, don't fetch history to avoid interrupting the active stream/state.
+            if (isLoading || sendingRef.current) {
                 return;
             }
 
             // If there's a pending message, the new component instance will handle it via the pending message effect.
             // Skip history fetch to avoid overwriting the user message that handleSendMessage will add.
-            const pendingMsg = sessionStorage.getItem('brainPendingMessage');
+            const pendingMsg = safeStorage.getItem('brainPendingMessage');
             if (pendingMsg) {
-                setNavigatingFlag(false);
                 return;
             }
 
@@ -1232,8 +1260,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             // After fetching history, check if there's a pending message to send
             // This handles the case where we navigated from /brain with a new message
             if (!pendingMessageHandledRef.current) {
-                const pendingStr = sessionStorage.getItem('brainPendingMessage');
+                const pendingStr = safeStorage.getItem('brainPendingMessage');
                 if (!pendingStr) {
+                    console.log('[Brain] No pending message found in sessionStorage');
                     pendingMessageHandledRef.current = true;
                     return;
                 }
@@ -1241,7 +1270,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 // Check if we already have assistant messages (stream already ran)
                 const hasAssistantMessages = messages.some(m => m.role === 'agent' || m.role === 'clarification');
                 if (hasAssistantMessages) {
-                    sessionStorage.removeItem('brainPendingMessage');
+                    console.log('[Brain] Already has assistant messages, skipping pending message');
+                    safeStorage.removeItem('brainPendingMessage');
                     pendingMessageHandledRef.current = true;
                     return;
                 }
@@ -1258,17 +1288,23 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     return;
                 }
 
-                // Also check if we're still loading - if so, wait
-                if (isLoading) return;
-
                 const pending = JSON.parse(pendingStr);
-                console.log('[Brain] New component picked up pending message:', pending);
+                console.log('[Brain] New component picked up pending message:', pending.userText?.substring(0, 50));
                 if (pending.projectId) {
                     projectIdRef.current = pending.projectId;
                 }
 
                 // Small delay to ensure component is fully settled
-                await new Promise(r => setTimeout(r, 100));
+                await new Promise(r => setTimeout(r, 150));
+
+                // CONSUME IMMEDIATELY BEFORE SENDING to prevent duplicate dispatch on Fast Refresh / re-renders
+                pendingMessageHandledRef.current = true;
+                safeStorage.removeItem('brainPendingMessage');
+                setNavigatingFlag(false);
+
+                // Force-clear stale loading/sending state from previous handleSendMessage call
+                setIsLoading(false);
+                sendingRef.current = false;
                 try {
                     await handleSendMessage(
                         pending.userText,
@@ -1277,14 +1313,22 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         pending.approvedPlan,
                         pending.targetMessageId
                     );
-                    sessionStorage.removeItem('brainPendingMessage');
+                    console.log('[Brain] Pending message sent successfully');
                 } catch (e) {
                     console.error('[Brain] Pending message send failed:', e);
-                    // Don't remove pending message — it will be retried on next effect run
+                    // On error, restore pending state so it can retry
+                    safeStorage.setItem('brainPendingMessage', pendingStr);
                     pendingMessageHandledRef.current = false;
                     return;
                 }
-                pendingMessageHandledRef.current = true;
+            } else {
+                // CRITICAL FIX: If ref is already true but there's still a pending message,
+                // it means the ref wasn't properly reset. Force retry.
+                const staleCheck = safeStorage.getItem('brainPendingMessage');
+                if (staleCheck && currentConversationId) {
+                    console.warn('[Brain] pendingMessageHandledRef was true but pending message exists — resetting ref');
+                    pendingMessageHandledRef.current = false;
+                }
             }
         })();
     }, [currentConversationId, pathname, resumeBrainAfterReload, selectedFramework, isAuthenticated, isAuthLoading, openAuthModal]);
@@ -1397,9 +1441,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 activeId = newConv.data?.conversation?.id || newConv.data?.id || (newConv as any).id;
                 console.log('[Brain] New conversation created:', activeId);
 
-                // CRITICAL: Update the ref immediately so follow-up logic knows we have an ID
                 if (activeId) {
                     activeConvIdRef.current = activeId;
+                    setConversationId(activeId);
 
                     addConversation({
                         id: activeId,
@@ -1410,31 +1454,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         updatedAt: new Date().toISOString()
                     });
 
-                    setConversationId(activeId);
+                    // Fire project creation in background without blocking stream initiation
+                    void ensureProjectForConversation(activeId, title);
 
-                    // Create project memory for this conversation
-                    await ensureProjectForConversation(activeId, title);
-
-                    // Store the pending message for the new component to pick up
-                    sessionStorage.setItem('brainPendingMessage', JSON.stringify({
-                        userText,
-                        temperature,
-                        isPlanApproval,
-                        approvedPlan,
-                        targetMessageId,
-                        modelId: selectedModel?.id || 'gpt-5.4',
-                        framework: selectedFramework,
-                        questionRounds,
-                        userId: user?.id || 'anonymous',
-                        projectId: projectIdRef.current,
-                    }));
-                    // router.replace returns a Promise that resolves when navigation completes
-                    await router.replace(`/brain/${activeId}`);
+                    // Update browser address bar URL seamlessly without forcing page unmount/remount
+                    if (typeof window !== 'undefined' && window.history) {
+                        window.history.replaceState(null, '', `/brain/${activeId}`);
+                    }
+                    void fetchConversations();
+                    setNavigatingFlag(false);
+                    safeStorage.removeItem('brainPendingMessage');
                 }
-                await fetchConversations();
-                // Return early - the new component will handle the stream
-                sendingRef.current = false;
-                return;
+                // DO NOT RETURN EARLY! Continue straight to streaming the AI response in-place!
             }
 
             const aiMsgId = (typeof targetMessageId === 'string' && targetMessageId) ? targetMessageId : `brain_${Date.now()}`;
@@ -1942,9 +1973,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         }
                     }
 
-                    // Handle generic error
+                    // Handle generic error from backend
                     if (event.error) {
-                        chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + "Error: " + event.error;
+                        const errorMsg = typeof event.error === 'string' ? event.error : JSON.stringify(event.error);
+                        chunkUpdate = (currentContent ? (currentContent + "\n\n") : "") + "⚠️ " + errorMsg;
+                        // Clear the execution store thinking state so UI doesn't stay in loading
+                        execStore.setPhase('ERROR');
+                        execStore.setStreamingMessage(`Error: ${errorMsg}`);
                         if (isBuildMode && !buildFinishedAt) {
                             completeRunnerBuild();
                         }
@@ -2025,6 +2060,20 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 }
             }, abortControllerRef.current?.signal);
 
+            // CRITICAL FIX: After stream completes, check if we actually received any content
+            // If not, the backend silently failed — show a meaningful error to the user
+            setMessages(prev => {
+                const aiMsg = prev.find(m => m.id === aiMsgId);
+                if (aiMsg && !aiMsg.content && !aiMsg.planContent && !aiMsg.clarificationData && !aiMsg.todoList?.length) {
+                    // Stream completed but no content was received — backend error
+                    return prev.map(m => m.id === aiMsgId
+                        ? { ...m, content: '⚠️ Brain could not process this request. The AI service may be temporarily unavailable. Please try again.' }
+                        : m
+                    );
+                }
+                return prev;
+            });
+
             setAgentStep('idle');
             setIsLoading(false);
             if (isBuildMode && !buildFinishedAt) {
@@ -2043,10 +2092,15 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         } catch (err: any) {
             if (err.name !== 'AbortError') {
                 console.error('Brain chat error:', err);
+                const errorDetail = err?.message || 'Unknown error';
+                const isNetworkError = errorDetail.includes('network') || errorDetail.includes('unreachable') || errorDetail.includes('fetch') || errorDetail.includes('Failed to fetch');
+                const userMessage = isNetworkError
+                    ? '⚠️ Could not connect to Brain service. Please check if the backend is running and try again.'
+                    : `⚠️ ${errorDetail.includes('Brain') ? errorDetail : 'Connection interrupted: ' + errorDetail}. Please try again.`;
                 setMessages(prev => [...prev, {
                     id: `error_${Date.now()}`,
                     role: 'agent',
-                    content: 'Connection interrupted. Please try again.',
+                    content: userMessage,
                     timestamp: new Date().toLocaleTimeString()
                 }]);
             }
