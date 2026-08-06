@@ -165,8 +165,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const pollTaskIndexRef = useRef(-1);
     const maxSeenTaskIndexRef = useRef(-1);
 
-<<<<<<< HEAD
-=======
     const handleBrainFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
@@ -231,7 +229,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     };
 
     // Reset sending lock when conversation changes (prevents stale lock from blocking new conversations)
->>>>>>> 8e45e8bcc5908d2a29e7bdc00253cdb9f5c7049d
     useEffect(() => {
         sendingRef.current = false;
         pollTaskIndexRef.current = -1;
@@ -1540,7 +1537,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     // Fire project creation in background without blocking stream initiation
                     void ensureProjectForConversation(activeId, title);
 
-<<<<<<< HEAD
                     // Update browser address bar URL seamlessly without forcing page unmount/remount
                     if (typeof window !== 'undefined' && window.history) {
                         window.history.replaceState(null, '', `/brain/${activeId}`);
@@ -1548,27 +1544,6 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     void fetchConversations();
                     setNavigatingFlag(false);
                     safeStorage.removeItem('brainPendingMessage');
-=======
-                    // Create project memory for this conversation
-                    await ensureProjectForConversation(activeId, title);
-
-                    // Store the pending message for the new component to pick up
-                    sessionStorage.setItem('brainPendingMessage', JSON.stringify({
-                        userText,
-                        temperature,
-                        isPlanApproval,
-                        approvedPlan,
-                        targetMessageId,
-                        attachedFileIds: activeFileIds,
-                        modelId: selectedModel?.id || 'gpt-5.4',
-                        framework: selectedFramework,
-                        questionRounds,
-                        userId: user?.id || 'anonymous',
-                        projectId: projectIdRef.current,
-                    }));
-                    // router.replace returns a Promise that resolves when navigation completes
-                    await router.replace(`/brain/${activeId}`);
->>>>>>> 8e45e8bcc5908d2a29e7bdc00253cdb9f5c7049d
                 }
                 // DO NOT RETURN EARLY! Continue straight to streaming the AI response in-place!
             }
