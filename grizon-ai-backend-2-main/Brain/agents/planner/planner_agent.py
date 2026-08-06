@@ -6,6 +6,52 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 LOG = "[PLANNER]"
 
+_STOPWORDS = {
+    "make", "build", "create", "develop", "design", "app", "application",
+    "website", "web", "platform", "please", "want", "need", "would", "like",
+    "i", "me", "my", "we", "our", "a", "an", "the", "for", "with", "using",
+    "tool", "simple", "basic", "project", "software", "system", "new", "from",
+    "that", "this", "should", "can", "will", "have", "has", "one", "also",
+    "about", "and", "are", "your", "you", "their", "help", "start", "get",
+}
+
+def _topic_fallback(prompt: str, current_plan: dict) -> dict:
+    """Deterministic CRUD-based fallback built from the prompt's subject — no LLM call.
+    Generic by design: extracts the main subject from the request and derives
+    standard CRUD pages, so it scales to any domain without a keyword map."""
+    raw = (str(prompt or "") + " " + str(current_plan.get("project_name", ""))).lower()
+    name = current_plan.get("project_name") if isinstance(current_plan, dict) else None
+    if not name or name in ("New Project", "Project"):
+        words = [w for w in raw.split() if len(w) > 3 and w.isalnum() and w not in _STOPWORDS]
+        subject = " ".join(words[:3]).title() if words else "App"
+        name = f"{subject} App"
+    else:
+        subject = name
+
+    slug = name.lower().replace(" ", "-")
+    pages = [
+        (f"{subject} Dashboard", f"/{slug}/dashboard", ["StatsCard", "QuickActions", "OverviewChart"]),
+        (f"{subject} List", f"/{slug}/list", ["DataTable", "SearchBar", "FilterBar"]),
+        (f"{subject} Manage", f"/{slug}/manage", ["ItemForm", "ItemList"]),
+        ("Settings", "/settings", ["ProfileForm", "PreferencesForm"]),
+    ]
+    arch_pages = [{"name": p[0], "route": p[1], "components": p[2]} for p in pages]
+    lines = [
+        f"## Overview\nPlan for **{name}** created with default assumptions based on your request.",
+        "\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern",
+        "\n## Key Pages & Components\n" + "\n".join(f"- {p[0]} (`{p[1]}`): {', '.join(p[2])}" for p in pages),
+        "\n## Implementation Steps\n- Build database schema\n- Build backend API routes for CRUD operations\n- Build frontend pages and wire into App.jsx\n- Runner: install dependencies and start servers",
+    ]
+    return {
+        "project_name": name,
+        "markdown_plan": "\n".join(lines),
+        "tech_stack": ["React", "Tailwind", "Node", "Express", "Python Proxy", "Supabase"],
+        "stack": {"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind"},
+        "architecture": {"pages": arch_pages, "components": ["Navbar", "Footer"],
+                         "tables": [], "api_routes": [], "dependencies": ["react-router-dom"]},
+        "status": "proposed",
+    }
+
 class PlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -66,17 +112,27 @@ class PlannerAgent(BaseAgent):
             arch_lines = [f"  {p['pattern']}: used {p['uses']}x, {p['success_rate']*100:.0f}% success" for p in architecture_patterns]
             arch_context = "[Proven Architecture Patterns]\n" + "\n".join(arch_lines)
 
-        # SkillMemory — best performing agents
+        # SkillMemory — best performing agents (only when genuinely relevant)
         skills_context = ""
         if best_skills:
-            skills_lines = [f"  {s['name']}: {s['uses']} uses, avg score {s['score']:.0f}" for s in best_skills]
-            skills_context = "[Best Performing Agents]\n" + "\n".join(skills_lines)
+            skills_lines = [
+                f"  {s['name']}: {s['uses']} uses, avg score {s['score']:.0f}"
+                for s in best_skills[:3]
+                if s.get('uses', 0) > 0
+            ]
+            if skills_lines:
+                skills_context = "[Best Performing Agents]\n" + "\n".join(skills_lines)
 
-        # LongTermMemory — similar past projects
+        # LongTermMemory — similar past projects (only above similarity threshold)
         similar_context = ""
         if similar_projects:
-            similar_lines = [f"  {s.get('content', '')[:100]}... (similarity: {s.get('similarity', 0):.2f})" for s in similar_projects]
-            similar_context = "[Similar Past Projects]\n" + "\n".join(similar_lines)
+            similar_lines = [
+                f"  {s.get('content', '')[:100]}... (similarity: {s.get('similarity', 0):.2f})"
+                for s in similar_projects
+                if s.get('similarity', 0) >= 0.5
+            ][:3]
+            if similar_lines:
+                similar_context = "[Similar Past Projects]\n" + "\n".join(similar_lines)
 
         # Build a clean context summary from history
         context_summary = self._build_context_summary(history, prompt)
@@ -87,68 +143,33 @@ class PlannerAgent(BaseAgent):
         CRITICAL: You MUST base your plan STRICTLY on the user's actual request and their Q&A answers provided in the conversation context below.
         Do NOT create a generic plan. Read every user message and answer carefully.
 
-        OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences:
+        OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences. Keep the ENTIRE JSON under ~450 words:
         {{
           "project_name": "Short descriptive name of the actual project",
-          "markdown_plan": "A COMPLETE Markdown plan covering ALL sections listed below. Use tight bullet points (one line per point) so it stays efficient, but DO NOT skip or shorten any section — every section below MUST be present and substantive. No filler sentences, no marketing language.",
+          "markdown_plan": "COMPLETE but TIGHT Markdown plan. Every section below MUST be present with 2-5 short bullets each: Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Implementation Steps, Data Storage. One line per bullet — NO paragraphs, NO filler.",
           "tech_stack": ["React", "Express", "Supabase"],
-          "stack": {{
-            "frontend": "React",
-            "backend": "Express",
-            "db": "Supabase",
-            "auth": "JWT",
-            "styling": "Tailwind"
-          }},
+          "stack": {{ "frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind" }},
           "architecture": {{
-            "pages": [
-              {{
-                "name": "Dashboard",
-                "route": "/dashboard",
-                "components": [
-                  {{ "name": "StatsCard", "props": ["title", "value"], "depends_on": [] }},
-                  {{ "name": "Chart", "props": ["data", "type"], "depends_on": ["StatsCard"] }}
-                ]
-              }}
-            ],
-            "components": ["Navbar", "Footer", "Sidebar"],
-            "tables": [
-              {{ "name": "tasks", "columns": [{{ "name": "title", "type": "text", "required": true }}] }}
-            ],
-            "api_routes": [
-              {{ "path": "/api/tasks", "method": "GET", "purpose": "Fetch tasks" }}
-            ],
-            "models": ["Task", "User"],
-            "features": [
-              {{ "name": "Create Task", "page": "Dashboard", "backend": ["/api/tasks"], "database": ["tasks"] }}
-            ],
+            "pages": [{{ "name": "Dashboard", "route": "/dashboard", "components": ["StatsCard", "Chart"] }}],
+            "components": ["Navbar", "Footer"],
+            "tables": [{{ "name": "tasks", "columns": ["title", "status"] }}],
+            "api_routes": [{{ "path": "/api/tasks", "method": "GET" }}],
             "dependencies": ["react-router-dom"]
           }},
-          "execution_groups": [
-            {{ "id": 1, "files": ["backend/supabase/schema.sql"] }},
-            {{ "id": 2, "files": ["backend/routes/tasks.js", "backend/controllers/tasks.js"] }}
-          ],
-          "confidence": 0.9,
-          "estimated_tasks": 11,
-          "estimated_files": 47,
-          "estimated_build_minutes": 90,
           "status": "proposed"
         }}
 
         GUIDELINES:
         1. The project_name MUST reflect the user's actual project (not a generic name).
-        2. GROUNDING RULE (CRITICAL, ANTI-HALLUCINATION): Include ONLY what the user actually asked for in their request and Q&A answers. Do NOT invent features, pages, data models, or tech-stack items the user never mentioned or clearly implied. If the user's request is small, the plan must be small. If a section has nothing concrete to say, say it briefly rather than fabricating details.
-        3. The markdown_plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature in the plan must trace back to something the user said.
-        4. AUTHORITY: The `markdown_plan` is for humans. The `architecture` object is for downstream agents (Todo/Builder). If they ever differ, the `architecture` object is authoritative. They MUST describe the same app — same pages, same routes, same tables, same API endpoints.
-        5. HIERARCHY: Components that belong to a page go NESTED inside that page's `components` array (with props + depends_on). Only SHARED components (used on multiple pages, e.g. Navbar, Footer) go in the top-level `components` list.
-        6. `api_routes` MUST include the HTTP method and purpose for every endpoint. `tables` MUST include column name, type, and required flag. Every `feature` MUST trace to its page, backend route(s), and database table(s).
-        7. `execution_groups`: propose logical build groups — each group lists the exact file paths that should be built together (e.g. all files for one feature or one layer). The Todo Agent refines these into tasks.
-        8. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies. Both are required.
-        9. `confidence`: estimate how sure you are that the plan matches the user's intent (0.0–1.0). Low (< 0.6) only when the request is genuinely ambiguous.
-        10. `estimated_tasks` / `estimated_files` / `estimated_build_minutes`: realistic estimates based on the actual scope of THIS plan.
-        11. CRITICAL: You MUST use actual Markdown headers (e.g., `## Overview`, `## Architecture`, `### Frontend Stack`) for all sections. DO NOT just use bold text (`**Overview**`) for section titles.
-        12. Use bullet points (`- `) for lists and ensure there is proper spacing (empty lines) between paragraphs and sections.
-        13. Plan for preview-visible UI — not isolated component files.
-        14. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
+        2. GROUNDING RULE (CRITICAL, ANTI-HALLUCINATION): Include ONLY what the user actually asked for in their request and Q&A answers. Do NOT invent features, pages, data models, or tech-stack items the user never mentioned or clearly implied. If the user's request is small, the plan must be small.
+        3. The plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature must trace back to something the user said.
+        4. AUTHORITY: The `architecture` object is for downstream agents (Todo/Builder) and is authoritative — it MUST match the markdown_plan exactly.
+        5. SPEED: Output must be SHORT and DENSE. Small request = very small output. Every word must carry information.
+        6. `api_routes` MUST include method for every endpoint. `tables` MUST list real column names.
+        7. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies. Both required.
+        8. Use actual Markdown headers (e.g. `## Overview`) — not bold text. Bullet points with proper spacing.
+        9. Plan for preview-visible UI — not isolated component files.
+        10. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
         """
 
         messages = [SystemMessage(content=system_prompt)]
@@ -171,37 +192,60 @@ class PlannerAgent(BaseAgent):
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
 
-        response_content = await self.chat(messages, timeout=90, max_tokens=1800)
+        response_content = await self.chat(messages, timeout=60, max_tokens=1400)
+        print(f"{LOG} 📄 Planner raw response length: {len(response_content)}", flush=True)
+        print(f"{LOG} ─ HEAD: {response_content[:2000]}", flush=True)
+        print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)
         plan = self._format_json_response(response_content)
 
+        # Accept only complete plans — if required fields are missing, treat as
+        # failure so the light retry path runs instead of using partial output.
+        if isinstance(plan, dict) and not plan.get("error"):
+            required = ["project_name", "markdown_plan", "tech_stack", "stack", "architecture", "status"]
+            missing = [k for k in required if k not in plan]
+            if missing:
+                print(f"{LOG} ⚠ Full structured call returned JSON but missing fields: {missing}. Retrying with light prompt...", flush=True)
+                plan = {"error": f"missing required fields: {missing}"}
+
+        # If the full structured call failed/timed out, retry once with a lighter
+        # prompt (markdown only) so the user ALWAYS gets a real plan instead of
+        # the generic fallback.
         if not isinstance(plan, dict) or plan.get("error"):
-            plan = {
-                "project_name": "New Project",
-                "markdown_plan": "## Overview\nHigh-level plan created with default assumptions.\n\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern\n\n## Key Pages\n- Landing Page\n- Dashboard\n- Settings",
-                "tech_stack": ["React", "Tailwind", "Node", "Express", "Python Proxy", "Supabase"],
-                "stack": {"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind"},
-                "architecture": {
-                    "pages": [
-                        {"name": "Landing Page", "route": "/", "components": [{"name": "Hero", "props": [], "depends_on": []}, {"name": "Features", "props": [], "depends_on": []}, {"name": "Footer", "props": [], "depends_on": []}]},
-                        {"name": "Dashboard", "route": "/dashboard", "components": [{"name": "StatsCard", "props": ["title", "value"], "depends_on": []}, {"name": "Sidebar", "props": [], "depends_on": []}]},
-                    ],
-                    "components": ["Navbar"],
-                    "tables": [],
-                    "api_routes": [],
-                    "models": [],
-                    "features": [],
-                    "dependencies": ["react-router-dom"],
-                },
-                "execution_groups": [
-                    {"id": 1, "files": ["frontend/src/pages/Landing.jsx"]},
-                    {"id": 2, "files": ["frontend/src/pages/Dashboard.jsx"]},
-                ],
-                "confidence": 0.5,
-                "estimated_tasks": 8,
-                "estimated_files": 25,
-                "estimated_build_minutes": 60,
-                "status": "proposed"
+            fail_reason = plan.get("error") if isinstance(plan, dict) else f"not a dict ({str(plan)[:200]})"
+            print(f"{LOG} ⚠ Full structured call failed. Reason: {fail_reason}. Retrying with light prompt...", flush=True)
+            light_prompt = """
+            You are the Strategic Planner Agent for Grizon AI.
+
+            Create a complete implementation plan based STRICTLY on the user's request and Q&A answers.
+            Do NOT invent features the user never mentioned. Small request = small plan.
+
+            Return ONLY valid JSON:
+            {
+              "project_name": "Name of the actual project",
+              "markdown_plan": "COMPLETE Markdown plan with sections: Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Implementation Steps. Use ## headers and tight bullet points.",
+              "tech_stack": ["React", "Express", "Supabase"],
+              "status": "proposed"
             }
+            """
+            light_messages = [
+                SystemMessage(content=light_prompt),
+                HumanMessage(content=f"Project Context (including Q&A answers):\n{context_summary}"),
+            ]
+            if current_plan:
+                light_messages.append(SystemMessage(content=f"Current Plan to Update: {json.dumps(current_plan)[:1000]}"))
+                if feedback:
+                    light_messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
+            print(f"{LOG} Retrying planner with light prompt...", flush=True)
+            response_content = await self.chat(light_messages, timeout=45, max_tokens=1000)
+            print(f"{LOG} 📄 Planner LIGHT retry raw response length: {len(response_content)}", flush=True)
+            print(f"{LOG} ─ HEAD: {response_content[:2000]}", flush=True)
+            print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)
+            plan = self._format_json_response(response_content)
+
+        if not isinstance(plan, dict) or plan.get("error"):
+            light_reason = plan.get("error") if isinstance(plan, dict) else f"not a dict ({str(plan)[:200]})"
+            print(f"{LOG} ⚠ Light retry also failed ({light_reason}). Using topic-based fallback.", flush=True)
+            plan = _topic_fallback(prompt, current_plan)
 
         # Ensure structured keys always exist (backend/todo rely on them)
         if not isinstance(plan.get("architecture"), dict):

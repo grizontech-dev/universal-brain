@@ -32,11 +32,7 @@ def _compact_plan(plan: dict) -> str:
     arch = plan.get("architecture")
     if isinstance(arch, dict) and arch:
         arch_trimmed = json.dumps(arch, default=str)[:4000]
-        out += f"\n\nARCHITECTURE SPEC (authoritative source — pages with their components, tables with columns, api_routes with methods, features. Use these EXACT names):\n{arch_trimmed}"
-
-    groups = plan.get("execution_groups")
-    if isinstance(groups, list) and groups:
-        out += f"\n\nSUGGESTED EXECUTION GROUPS (refine these into tasks — you may merge or split, keep file paths):\n{json.dumps(groups, default=str)[:1500]}"
+        out += f"\n\nARCHITECTURE SPEC (authoritative source — pages with their components, tables with columns, api_routes with methods. Use these EXACT names):\n{arch_trimmed}"
 
     stack_map = plan.get("stack")
     if isinstance(stack_map, dict) and stack_map:
@@ -201,6 +197,183 @@ def _ensure_integration_task(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return tasks
 
 
+def _fallback_from_architecture(plan: dict, backend_routes: List[str]) -> List[Dict[str, Any]]:
+    """Deterministic fallback tasks derived from the plan's `architecture`
+    (pages -> frontend, tables -> database, api_routes -> backend). Never
+    generic Hero/Features/Contact landing pages."""
+    arch = plan.get("architecture") if isinstance(plan, dict) else None
+    if not isinstance(arch, dict):
+        arch = {}
+    tasks: List[Dict[str, Any]] = []
+    n = 0
+
+    def next_id() -> str:
+        nonlocal n
+        n += 1
+        return f"t{n}"
+
+    def parent_dep() -> List[str]:
+        for t in reversed(tasks):
+            if t["category"] != "frontend":
+                return [t["id"]]
+        return []
+
+    tables = arch.get("tables", [])
+    table_names = []
+    if isinstance(tables, list):
+        for tb in tables:
+            if isinstance(tb, dict) and tb.get("name"):
+                table_names.append(str(tb["name"]))
+            elif isinstance(tb, str):
+                table_names.append(tb)
+    if table_names:
+        tasks.append({
+            "id": next_id(),
+            "title": f"Supabase schema: {', '.join(table_names[:5])}",
+            "description": f"Create tables {', '.join(table_names)} in backend/supabase/schema.sql using the Shared Table + JSONB Data Matrix Pattern. Run via supabase_exec_sql.",
+            "category": "database",
+            "skill_required": "database",
+            "files": ["backend/supabase/schema.sql"],
+            "ui": [],
+            "api": [],
+            "acceptance": [f"Tables {', '.join(table_names[:3])} created with correct columns", "Tenant data stays isolated"],
+            "depends_on": [],
+        })
+
+    if backend_routes:
+        tasks.append({
+            "id": next_id(),
+            "title": "Backend API routes",
+            "description": f"Implement {', '.join(backend_routes[:6])} in backend/routes/ and mount in backend/server.js.",
+            "category": "backend",
+            "skill_required": "backend",
+            "files": ["backend/routes/api.js", "backend/server.js"],
+            "ui": [],
+            "api": list(backend_routes),
+            "acceptance": [f"All {len(backend_routes)} routes mounted in server.js", "Persistence flows through the Python proxy"],
+            "depends_on": [tasks[0]["id"]] if tasks else [],
+        })
+
+    pages = arch.get("pages", [])
+    if isinstance(pages, list):
+        for p in pages:
+            if not isinstance(p, dict):
+                continue
+            pname = str(p.get("name") or "Page")
+            route = str(p.get("route") or f"/{pname.lower().replace(' ', '-')}")
+            comps = p.get("components")
+            if not isinstance(comps, list):
+                comps = []
+            comps = [str(c) for c in comps]
+            slug = pname.replace(" ", "")
+            files = [f"frontend/src/pages/{slug}.jsx"]
+            files += [f"frontend/src/components/{c.replace(' ', '')}.jsx" for c in comps[:4]]
+            tasks.append({
+                "id": next_id(),
+                "title": f"Build {pname} page",
+                "description": f"Page at route {route} with Tailwind UI.",
+                "category": "frontend",
+                "skill_required": "frontend",
+                "files": files,
+                "ui": comps or [pname],
+                "api": list(backend_routes),
+                "acceptance": [f"{pname} renders real data at {route}", "Components imported in App.jsx"],
+                "depends_on": parent_dep(),
+            })
+
+    shared_components = arch.get("components", [])
+    if isinstance(shared_components, list) and shared_components:
+        comps = [str(c) for c in shared_components]
+        tasks.append({
+            "id": next_id(),
+            "title": "Shared components",
+            "description": f"Build shared components {', '.join(comps[:8])} with Tailwind.",
+            "category": "frontend",
+            "skill_required": "frontend",
+            "files": [f"frontend/src/components/{c.replace(' ', '')}.jsx" for c in comps[:5]],
+            "ui": comps,
+            "api": [],
+            "acceptance": ["Shared components render in preview"],
+            "depends_on": parent_dep(),
+        })
+
+    return tasks
+
+
+def _enforce_file_limit(tasks: List[Dict[str, Any]], max_files: int = 5) -> List[Dict[str, Any]]:
+    """Split tasks with more than max_files files into chained tasks so the
+    Builder never receives an oversized task. If the list is already at
+    MAX_TODOS, truncate files instead (log it)."""
+    if not isinstance(tasks, list):
+        return tasks
+    out: List[Dict[str, Any]] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            out.append(t)
+            continue
+        files = t.get("files")
+        if not isinstance(files, list) or len(files) <= max_files:
+            out.append(t)
+            continue
+        if len(out) >= MAX_TODOS:
+            dropped = len(files) - max_files
+            print(f"{LOG} ⚠ {t.get('id')}: task budget full — truncated {dropped} files to {max_files}", flush=True)
+            t["files"] = files[:max_files]
+            out.append(t)
+            continue
+        chunks = [files[i:i + max_files] for i in range(0, len(files), max_files)]
+        base_id = str(t.get("id") or f"t{len(out) + 1}")
+        prev_id = base_id
+        for ci, chunk in enumerate(chunks):
+            if ci == 0:
+                t["files"] = chunk
+                out.append(t)
+                continue
+            nt = {k: v for k, v in t.items() if k != "id"}
+            nt["id"] = f"{base_id}-f{ci + 1}"
+            nt["files"] = chunk
+            nt["depends_on"] = [prev_id]
+            out.append(nt)
+            prev_id = nt["id"]
+        print(f"{LOG} ℹ {base_id}: split {len(files)} files into {len(chunks)} tasks", flush=True)
+    return out
+
+
+def _validate_dependencies(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Guarantee a valid DAG: list order is build order, so depends_on may only
+    reference tasks that exist and appear earlier in the list (no self/forward/
+    cyclic refs). Drops invalid refs with a log line."""
+    if not isinstance(tasks, list):
+        return tasks
+    index: Dict[str, int] = {}
+    for i, t in enumerate(tasks):
+        if isinstance(t, dict) and t.get("id"):
+            index[str(t["id"])] = i
+    for i, t in enumerate(tasks):
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or f"t{i + 1}")
+        if not t.get("id"):
+            t["id"] = tid
+        deps = t.get("depends_on")
+        if not isinstance(deps, list):
+            t["depends_on"] = []
+            continue
+        kept = []
+        for d in deps:
+            d = str(d)
+            if d == tid:
+                print(f"{LOG} ⚠ {tid}: dropped self-dependency {d}", flush=True)
+            elif d not in index:
+                print(f"{LOG} ⚠ {tid}: dropped unknown dependency {d}", flush=True)
+            elif index[d] >= i:
+                print(f"{LOG} ⚠ {tid}: dropped forward/cyclic dependency {d} (must come earlier in build order)", flush=True)
+            else:
+                kept.append(d)
+        t["depends_on"] = kept
+    return tasks
+
+
 class TodoAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -267,8 +440,8 @@ class TodoAgent(BaseAgent):
         - create a backend task for EVERY route in `api_routes` (use its exact path + method)
         - create a frontend task for EVERY page in `pages` (each page's nested components are its own — keep them in that page's task or a focused page task)
         - shared components (top-level `components`) go with the page that needs them or a shared-components task
-        Use those exact names and routes — do NOT invent or rename anything. Markdown plan is only secondary/descriptive context.
-        The "SUGGESTED EXECUTION GROUPS" block is a starting point — refine, merge, or split into the task list while keeping the file paths.
+        Use those exact names and routes — do NOT invent or rename anything. The `architecture` object is your PRIMARY input. `markdown_plan` is ONLY secondary/descriptive context — when they conflict, follow the ARCHITECTURE SPEC.
+        Execution grouping, file grouping, task count, and build order are YOUR responsibility — derive them from the architecture.
 
         REQUIRED TASK ORDER:
         1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.
@@ -327,129 +500,51 @@ class TodoAgent(BaseAgent):
         print(f"{LOG} LLM returned {len(response_content)} chars", flush=True)
         tasks = self._format_json_response(response_content)
 
-        import re
-        plan_text = ""
-        if isinstance(plan, dict):
-            for key in ("tasks", "steps", "description", "summary", "content"):
-                val = plan.get(key)
-                if isinstance(val, str):
-                    plan_text += val + " "
-                elif isinstance(val, list):
-                    plan_text += json.dumps(val) + " "
-            arch = plan.get("architecture")
-            if isinstance(arch, dict):
-                arch_routes = arch.get("api_routes", [])
-                if isinstance(arch_routes, list):
-                    for r in arch_routes:
-                        if isinstance(r, dict) and r.get("path"):
-                            plan_text += " " + str(r["path"])
-                        else:
-                            plan_text += " " + str(r)
-                arch_pages = arch.get("pages", [])
-                if isinstance(arch_pages, list):
-                    for p in arch_pages:
-                        if isinstance(p, dict) and p.get("route"):
-                            plan_text += " " + str(p["route"])
-        elif isinstance(plan, str):
-            plan_text = plan
-        else:
-            plan_text = json.dumps(plan)
-        route_pattern = re.compile(r"/api/[A-Za-z][A-Za-z0-9_/]*", re.IGNORECASE)
-        backend_routes = sorted(set(route_pattern.findall(plan_text)))
-        route_hint = ""
-        if backend_routes:
-            route_hint = "Available backend routes: " + ", ".join(backend_routes) + "."
-        else:
+        # Deterministic route extraction: architecture.api_routes is the source
+        # of truth (no regex over free text). Regex fallback only for legacy
+        # plans that predate the structured architecture.
+        backend_routes = []
+        arch = plan.get("architecture") if isinstance(plan, dict) else None
+        if isinstance(arch, dict):
+            arch_routes = arch.get("api_routes", [])
+            if isinstance(arch_routes, list):
+                for r in arch_routes:
+                    if isinstance(r, dict) and r.get("path"):
+                        backend_routes.append(str(r["path"]))
+                    elif isinstance(r, str):
+                        backend_routes.append(r)
+        if not backend_routes:
+            markdown_only = plan.get("markdown_plan") if isinstance(plan, dict) else ""
+            if isinstance(markdown_only, str):
+                backend_routes = re.findall(r"/api/[A-Za-z][A-Za-z0-9_/]*", markdown_only)
+        backend_routes = sorted(set(backend_routes))
+        route_hint = "Available backend routes: " + ", ".join(backend_routes) + "."
+        if not backend_routes:
             route_hint = "Use frontend/src/lib/api.js (apiGet/apiPost/apiPut/apiDelete) for any data calls; see backend tasks for exact /api/* routes."
 
         if isinstance(tasks, list):
             tasks = [_normalize_task(t) for t in tasks]
-            for task in tasks:
-                if task.get("category") == "frontend":
-                    desc = task.get("description", "") or ""
-                    desc = desc.rstrip()
-                    if desc and not desc.endswith((".", "!", "?")):
-                        desc += "."
-                    desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
-                    desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
-                    task["description"] = desc
-                    if not task.get("api") and backend_routes:
-                        task["api"] = list(backend_routes)
 
         if not isinstance(tasks, list):
-            tasks = [
-                {
-                    "id": "t1",
-                    "title": "Shared Supabase schema",
-                    "description": "SQL tables in backend/supabase/ using the Shared Table + JSONB Data Matrix Pattern.",
-                    "category": "database",
-                    "skill_required": "database",
-                    "files": ["backend/supabase/schema.sql"],
-                    "ui": [],
-                    "api": [],
-                    "acceptance": ["Schema file matches API needs and keeps tenant data isolated"],
-                    "acceptance_criteria": "Schema file matches API needs and keeps tenant data isolated",
-                },
-                {
-                    "id": "t2",
-                    "title": "Express API routes + Python proxy",
-                    "description": "Routes, controllers, and the Python Backend Proxy integration mounted in backend/server.js.",
-                    "category": "backend",
-                    "skill_required": "backend",
-                    "files": ["backend/server.js"],
-                    "ui": [],
-                    "api": [],
-                    "acceptance": ["All /api/* routes mounted in server.js and persistence flows through the proxy"],
-                    "acceptance_criteria": "All /api/* routes mounted in server.js and persistence flows through the proxy",
-                },
-                {
-                    "id": "t3",
-                    "title": "Landing UI components",
-                    "description": "Navbar, Hero, Features, Contact with Tailwind in frontend/src/components/.",
-                    "category": "frontend",
-                    "skill_required": "frontend",
-                    "files": ["frontend/src/components/"],
-                    "ui": ["Navbar", "Hero", "Features", "Contact"],
-                    "api": [],
-                    "acceptance": ["Components created under frontend/src/components/"],
-                    "acceptance_criteria": "Components created under frontend/src/components/",
-                },
-                {
-                    "id": "t4",
-                    "title": "Wire App, Router, Backend Proxy & Company Supabase",
-                    "description": "Rewrite App.jsx, react-router-dom, api.js forms, and backend proxy wiring.",
-                    "category": "frontend",
-                    "skill_required": "integration",
-                    "files": ["frontend/src/App.jsx"],
-                    "ui": [],
-                    "api": [],
-                    "acceptance": ["Preview shows full site, not template demo"],
-                    "acceptance_criteria": "Preview shows full site, not template demo",
-                },
-                {
-                    "id": "t5",
-                    "title": "Runner: Install & Start Servers",
-                    "description": "Runner starts backend and frontend dev servers.",
-                    "category": "runner",
-                    "skill_required": "runner",
-                    "files": [],
-                    "ui": [],
-                    "api": [],
-                    "acceptance": ["Preview loads on port 9999"],
-                    "acceptance_criteria": "Preview loads on port 9999",
-                },
-            ]
-            for task in tasks:
-                if task.get("category") == "frontend":
-                    desc = task.get("description", "") or ""
-                    desc = desc.rstrip()
-                    if desc and not desc.endswith((".", "!", "?")):
-                        desc += "."
-                    desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
-                    desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
-                    task["description"] = desc
+            print(f"{LOG} ⚠ LLM output was not a task list — building deterministic tasks from architecture.", flush=True)
+            tasks = [_normalize_task(t) for t in _fallback_from_architecture(plan, backend_routes)]
+
+        # Shared frontend enrichment (route hints + no-duplicate guard)
+        for task in tasks:
+            if task.get("category") == "frontend":
+                desc = task.get("description", "") or ""
+                desc = desc.rstrip()
+                if desc and not desc.endswith((".", "!", "?")):
+                    desc += "."
+                desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
+                desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
+                task["description"] = desc
+                if not task.get("api") and backend_routes:
+                    task["api"] = list(backend_routes)
 
         tasks = clamp_todo_list(tasks)
+        tasks = _enforce_file_limit(tasks)
+        tasks = _validate_dependencies(tasks)
 
         import re as _re
         for task in tasks:
