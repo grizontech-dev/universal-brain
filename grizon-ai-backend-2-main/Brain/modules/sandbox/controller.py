@@ -23,17 +23,18 @@ async def get_frameworks():
 async def resume_workspace(
     workspace_id: str,
     framework: Optional[str] = "react",
+    user_id: Optional[str] = Query(None),
 ):
     """
     After page reload: restore files into WebContainer and return startup ops if build is complete.
     """
-    host = workspace_manager.resolve_workspace_path(workspace_id)
+    host = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
     if not host or not os.path.exists(host):
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     messages = conversation_service.get_messages(workspace_id)
     todos = latest_todo_list_from_messages(messages)
-    return get_resume_payload(workspace_id, framework=framework or "react", todos=todos)
+    return get_resume_payload(workspace_id, framework=framework or "react", todos=todos, user_id=user_id)
 
 
 @router.get("/template-ops")
@@ -82,12 +83,18 @@ async def read_file(
     if not wid:
         raise HTTPException(status_code=422, detail="sandbox_id or workspace_id is required")
     workspace_path = workspace_manager.resolve_workspace_path(wid, user_id=user_id)
-    if not workspace_path or not os.path.exists(workspace_path):
-        workspace_path = workspace_manager.resolve_workspace_path(wid)
     if not workspace_path:
         return {"error": "Workspace not found"}
 
     host_path = os.path.join(workspace_path, path.lstrip("/"))
+    if not os.path.exists(host_path) and user_id:
+        # Fallback: legacy unscoped path (template/older builds lived there).
+        legacy = workspace_manager.resolve_workspace_path(wid)
+        if legacy:
+            legacy_host = os.path.join(legacy, path.lstrip("/"))
+            if os.path.exists(legacy_host):
+                workspace_path = legacy
+                host_path = legacy_host
     if not os.path.exists(host_path):
         return {"error": "File not found", "tried": host_path, "workspace": workspace_path}
 
@@ -145,6 +152,14 @@ async def list_files(
     host_path = workspace_manager.resolve_workspace_path(wid, user_id=user_id)
     if not host_path or not os.path.exists(host_path):
         host_path = workspace_manager.resolve_workspace_path(wid)
+    try:
+        if user_id and not any(os.scandir(host_path)):
+            legacy = workspace_manager.resolve_workspace_path(wid)
+            if legacy and legacy != host_path and any(os.scandir(legacy)):
+                print(f"DEBUG: list_files user dir empty, falling back to legacy: {legacy}")
+                host_path = legacy
+    except OSError:
+        pass
     print(f"DEBUG: list_files for {wid} -> host_path: {host_path}")
     if not host_path or not os.path.exists(host_path):
         print(f"DEBUG: list_files failed - path does not exist: {host_path}")

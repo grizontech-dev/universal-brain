@@ -50,11 +50,21 @@ def latest_todo_list_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[
     return []
 
 
-def workspace_disk_to_ops(workspace_id: str) -> List[Dict[str, Any]]:
+def workspace_disk_to_ops(workspace_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Sync on-disk workspace into WebContainer write_file ops."""
-    host = workspace_manager.resolve_workspace_path(workspace_id)
+    host = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
     if not host:
         return []
+
+    # Fallback: if user-scoped dir exists but is empty, use legacy unscoped dir (backward compat).
+    try:
+        if user_id and not any(os.scandir(host)):
+            legacy = workspace_manager.resolve_workspace_path(workspace_id)
+            if legacy and legacy != host and any(os.scandir(legacy)):
+                host = legacy
+                print(f"[RESUME] User workspace empty, falling back to legacy path: {legacy}")
+    except OSError:
+        pass
 
     ops: List[Dict[str, Any]] = []
     count = 0
@@ -88,13 +98,14 @@ def get_resume_payload(
     workspace_id: str,
     framework: str = "react",
     todos: Optional[List[Dict[str, Any]]] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
     fw = normalize_framework(framework)
     plan = todos or []
     index, build_complete = compute_resume_index(plan)
 
-    workspace_ops = workspace_disk_to_ops(workspace_id)
+    workspace_ops = workspace_disk_to_ops(workspace_id, user_id=user_id)
     
     sandbox_mcp = get_sandbox_mcp_service()
     tunnel_url = sandbox_mcp.get_tunnel_url(workspace_id)

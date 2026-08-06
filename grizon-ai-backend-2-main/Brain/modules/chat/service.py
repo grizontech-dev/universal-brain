@@ -277,17 +277,19 @@ class BrainChatService:
 
         job_id = state["current_job_id"]
         framework = normalize_framework(state.get("framework"))
+        user_id = state.get("user_id")
 
         if state.get("resume_build"):
             payload = get_resume_payload(
                 job_id,
                 framework=framework,
                 todos=state.get("plan", []),
+                user_id=user_id,
             )
             bootstrap_ops = payload.get("workspace_ops") or []
             progress_msg = f"[TEMPLATE] Restored {len(bootstrap_ops)} files from workspace"
         else:
-            bootstrap_ops = apply_templates_to_workspace(job_id, framework)
+            bootstrap_ops = apply_templates_to_workspace(job_id, framework, user_id=user_id)
             progress_msg = f"[TEMPLATE] Loaded express, supabase, and {framework} frontend template"
 
         runtime = RUNTIME_SANDBOX_MCP if sandbox_available else "local"
@@ -1027,7 +1029,7 @@ class BrainChatService:
 
                 try:
                     from Brain.services.template_service import inject_company_supabase_to_workspace
-                    inject_company_supabase_to_workspace(conv_id)
+                    inject_company_supabase_to_workspace(conv_id, user_id=state.get("user_id"))
                 except Exception as e:
                     print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
 

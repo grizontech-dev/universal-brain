@@ -19,9 +19,11 @@ export type ResumeBrainPayload = {
 
 export async function fetchResumePayload(
     workspaceId: string,
-    framework: string
+    framework: string,
+    userId?: string | null
 ): Promise<ResumeBrainPayload | null> {
     const params = new URLSearchParams({ framework });
+    if (userId) params.set('user_id', userId);
     const res = await brainApiFetch(`sandbox/resume/${workspaceId}?${params}`);
     if (!res?.ok) return null;
     return (await res.json()) as ResumeBrainPayload;

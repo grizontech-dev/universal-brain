@@ -36,9 +36,10 @@ class WorkspaceManager:
         print(f"DEBUG: Workspace '{workspace_id}' ready at {local_path}")
         return workspace_id
 
-    def write_file(self, workspace_id: str, path: str, content: str) -> bool:
+    def write_file(self, workspace_id: str, path: str, content: str, user_id: str = None) -> bool:
         try:
-            full_path = os.path.join(self.container_workspaces_path, workspace_id, path.lstrip("/"))
+            base = os.path.join(self.container_workspaces_path, user_id, workspace_id) if user_id else os.path.join(self.container_workspaces_path, workspace_id)
+            full_path = os.path.join(base, path.lstrip("/"))
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -47,9 +48,10 @@ class WorkspaceManager:
             print(f"CRITICAL: write_file '{path}' in {workspace_id}: {e}")
             return False
 
-    def mkdir(self, workspace_id: str, path: str) -> bool:
+    def mkdir(self, workspace_id: str, path: str, user_id: str = None) -> bool:
         try:
-            full_path = os.path.join(self.container_workspaces_path, workspace_id, path.lstrip("/"))
+            base = os.path.join(self.container_workspaces_path, user_id, workspace_id) if user_id else os.path.join(self.container_workspaces_path, workspace_id)
+            full_path = os.path.join(base, path.lstrip("/"))
             os.makedirs(full_path, exist_ok=True)
             return True
         except Exception as e:

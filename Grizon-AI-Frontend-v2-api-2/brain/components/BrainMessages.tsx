@@ -739,7 +739,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             if (!conversationId || resumeAfterReloadRef.current) return;
             resumeAfterReloadRef.current = true;
 
-            const payload = await fetchResumePayload(conversationId, framework);
+            const payload = await fetchResumePayload(conversationId, framework, user?.id);
             if (!payload) {
                 console.warn('[Brain] No resume payload — workspace not found or backend unreachable');
                 setMessages(prev => [...prev, {

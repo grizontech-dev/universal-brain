@@ -148,13 +148,13 @@ def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -
     return ops
 
 
-def apply_templates_to_workspace(workspace_id: str, framework: Optional[str]) -> List[Dict[str, Any]]:
+def apply_templates_to_workspace(workspace_id: str, framework: Optional[str], user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     from Brain.services.workspace_manager import workspace_manager
     from Brain.shared.frontend_entry import is_boilerplate_app, is_app_jsx_path
 
     ops = get_bootstrap_ops(framework)
     skipped = []
-    ws_root = workspace_manager.resolve_workspace_path(workspace_id)
+    ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
     for op in ops:
         if op["op"] == "write_file":
             path = op.get("path", "")
@@ -174,19 +174,19 @@ def apply_templates_to_workspace(workspace_id: str, framework: Optional[str]) ->
                     if not is_app_jsx_path(path) and existing.strip() != op["content"].strip():
                         skipped.append(path)
                         continue
-            workspace_manager.write_file(workspace_id, path, op["content"])
+            workspace_manager.write_file(workspace_id, path, op["content"], user_id=user_id)
         elif op["op"] == "mkdir":
-            workspace_manager.mkdir(workspace_id, op["path"])
+            workspace_manager.mkdir(workspace_id, op["path"], user_id=user_id)
     if skipped:
         print(f"[TEMPLATE] Skipped overwriting {len(skipped)} customized files: {skipped}")
     return ops
 
 
-def inject_company_supabase_to_workspace(workspace_id: str) -> bool:
+def inject_company_supabase_to_workspace(workspace_id: str, user_id: Optional[str] = None) -> bool:
     """Inject company Supabase credentials to existing workspace's backend/.env."""
     from Brain.services.workspace_manager import workspace_manager
 
-    ws_path = workspace_manager.resolve_workspace_path(workspace_id)
+    ws_path = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
     if not ws_path:
         return False
 
