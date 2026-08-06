@@ -604,11 +604,20 @@ export default function BrainEditorCanvas({
     useEffect(() => {
         const onRefresh = () => {
             const id = jobIdRef.current || jobId;
-            if (id) scheduleFileRefresh(id || '', false);
+            if (id) {
+                fetchApiFileTree(id).then((apiFiles) => {
+                    if (apiFiles.length > 0) {
+                        const expanded = openDefaultFolders(sortFileTreeNodes(apiFiles));
+                        const sig = treeSignature(expanded);
+                        fileTreeSigRef.current = sig;
+                        setFileTree(expanded);
+                    }
+                });
+            }
         };
         window.addEventListener('refreshBrainFiles', onRefresh);
         return () => window.removeEventListener('refreshBrainFiles', onRefresh);
-    }, [jobId, scheduleFileRefresh]);
+    }, [jobId]);
 
     useEffect(() => {
         const id = jobIdRef.current || jobId;
@@ -623,12 +632,19 @@ export default function BrainEditorCanvas({
             const poll = setInterval(() => {
                 const cur = jobIdRef.current || jobId;
                 if (cur && fileTree.length === 0) {
-                    fetchProjectFiles(cur, true, 1, 3000);
+                    fetchApiFileTree(cur).then((apiFiles) => {
+                        if (apiFiles.length > 0) {
+                            const expanded = openDefaultFolders(sortFileTreeNodes(apiFiles));
+                            const sig = treeSignature(expanded);
+                            fileTreeSigRef.current = sig;
+                            setFileTree(expanded);
+                        }
+                    });
                 }
-            }, 3000);
+            }, 1500);
             return () => clearInterval(poll);
         }
-    }, [embedded, buildJobId, buildComplete, fileTree.length, jobId, fetchProjectFiles]);
+    }, [embedded, buildJobId, buildComplete, fileTree.length, jobId]);
 
     useEffect(() => {
         if (!buildComplete) return;
