@@ -198,6 +198,17 @@ class BrainChatService:
 
     async def node_clarifier(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [recursive_clarify] started", flush=True)
+        leader_analysis = state.get("leader_analysis", {})
+        if isinstance(leader_analysis, dict) and leader_analysis.get("questions"):
+            print("DEBUG: NODE [recursive_clarify] single-pass fast path", flush=True)
+            questions_data = {
+                "preamble": leader_analysis.get("preamble", "To proceed, I need a couple of quick details:"),
+                "questions": leader_analysis["questions"]
+            }
+            state["questions_data"] = questions_data
+            state["report"] = f"__CLARIFY__:{json.dumps(questions_data)}"
+            return state
+
         agent = QuestionsAgent()
         state = await agent.execute(state)
         state["report"] = f"__CLARIFY__:{json.dumps(state.get('questions_data'))}"
@@ -741,9 +752,15 @@ class BrainChatService:
                 import traceback
                 traceback.print_exc()
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
+<<<<<<< HEAD
+                # CRITICAL FIX: Send error event to frontend so UI doesn't stay blank
+                yield f"data: {json.dumps({'error': f'Phase 1 error: {type(phase1_err).__name__}: {str(phase1_err)[:300]}'})}\n\n"
+=======
+>>>>>>> 8e45e8bcc5908d2a29e7bdc00253cdb9f5c7049d
                 if mg:
                     try:
-                        _asyncio.get_event_loop().create_task(
+                        import asyncio as _asyncio_ph1
+                        _asyncio_ph1.get_event_loop().create_task(
                             mg.session.update_workflow_state("error", str(phase1_err)[:200])
                         )
                     except RuntimeError:
@@ -837,10 +854,13 @@ class BrainChatService:
                         retries = retry_count.get(index, 0)
                         if retries >= MAX_RETRIES_PER_TASK:
                             print(f"WARNING: Task {index} failed after {MAX_RETRIES_PER_TASK} retries. Skipping.", flush=True)
-                            state["plan"][index]["status"] = "failed"
-                            state["plan"][index]["result"] = "Task failed after retries."
+                            if index < len(state.get("plan", [])):
+                                state["plan"][index]["status"] = "failed"
+                                state["plan"][index]["result"] = "Task failed after retries."
                             state["current_task_index"] = index + 1
                             retry_count[index] = 0
+                            # FIX: Notify frontend about the failed task
+                            yield f"data: {json.dumps({'task_failed': _sanitize_for_json({'current_task_index': index, 'reason': 'Task failed after maximum retries', 'plan': state.get('plan', [])})})}\n\n"
                             continue
                         else:
                             retry_count[index] = retries + 1
@@ -911,9 +931,12 @@ class BrainChatService:
                         import traceback
                         traceback.print_exc()
                         # Mark task as failed and continue to next
-                        state["plan"][index]["status"] = "failed"
-                        state["plan"][index]["result"] = f"Builder error: {build_err}"
+                        if index < len(state.get("plan", [])):
+                            state["plan"][index]["status"] = "failed"
+                            state["plan"][index]["result"] = f"Builder error: {build_err}"
                         state["current_task_index"] = index + 1
+                        # CRITICAL FIX: Send task_failed event to frontend so UI shows the error
+                        yield f"data: {json.dumps({'task_failed': _sanitize_for_json({'current_task_index': index, 'reason': f'{type(build_err).__name__}: {str(build_err)[:200]}', 'plan': state.get('plan', [])})})}\n\n"
 
                     # Track completed index AFTER agent.execute finishes
                     last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
@@ -1302,6 +1325,15 @@ class BrainChatService:
                             plan[i]["status"] = "failed"
                             plan[i]["result"] = "Task skipped: global iteration limit reached"
                     state["current_task_index"] = len(plan)
+                    # Notify via websocket so frontend knows build is done
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "build_error",
+                            "error": "Build exceeded maximum iterations. Some tasks were skipped.",
+                            "plan": plan,
+                        })
+                    except Exception:
+                        pass
                     break
 
                 index = state.get("current_task_index", 0)
@@ -1312,10 +1344,21 @@ class BrainChatService:
                     retries = retry_count.get(index, 0)
                     if retries >= MAX_RETRIES_PER_TASK:
                         print(f"[CHAT-SERVICE] BG-TASK: Task {index} failed after {MAX_RETRIES_PER_TASK} retries. Skipping.", flush=True)
-                        state["plan"][index]["status"] = "failed"
-                        state["plan"][index]["result"] = "Task failed after retries."
+                        if index < len(state.get("plan", [])):
+                            state["plan"][index]["status"] = "failed"
+                            state["plan"][index]["result"] = "Task failed after retries."
                         state["current_task_index"] = index + 1
                         retry_count[index] = 0
+                        # Notify frontend via websocket about the failed task
+                        try:
+                            await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                                "type": "task_failed",
+                                "task_index": index,
+                                "reason": "Task failed after maximum retries",
+                                "plan": plan,
+                            })
+                        except Exception:
+                            pass
                         continue
                     else:
                         retry_count[index] = retries + 1
@@ -1334,9 +1377,20 @@ class BrainChatService:
                     print(f"[CHAT-SERVICE] BG-TASK: Builder error for task {index+1}: {type(build_err).__name__}: {build_err}", flush=True)
                     import traceback
                     traceback.print_exc()
-                    state["plan"][index]["status"] = "failed"
-                    state["plan"][index]["result"] = f"Builder error: {build_err}"
+                    if index < len(state.get("plan", [])):
+                        state["plan"][index]["status"] = "failed"
+                        state["plan"][index]["result"] = f"Builder error: {build_err}"
                     state["current_task_index"] = index + 1
+                    # Notify frontend via websocket about the failed task
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "task_failed",
+                            "task_index": index,
+                            "reason": f"{type(build_err).__name__}: {str(build_err)[:200]}",
+                            "plan": plan,
+                        })
+                    except Exception:
+                        pass
 
                 last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
 

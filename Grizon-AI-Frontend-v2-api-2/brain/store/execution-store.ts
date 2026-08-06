@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type AgentPhase = 'IDLE' | 'ANALYZING' | 'PLANNING' | 'QUESTIONING' | 'WAITING_FOR_USER' | 'EXECUTING' | 'SYNCING' | 'COMPLETED';
+export type AgentPhase = 'IDLE' | 'ANALYZING' | 'PLANNING' | 'QUESTIONING' | 'WAITING_FOR_USER' | 'EXECUTING' | 'SYNCING' | 'COMPLETED' | 'ERROR';
 
 export type AgentRole = 'LEADER' | 'PLANNER' | 'FRONTEND' | 'BACKEND' | 'DATABASE' | 'TESTER';
 
