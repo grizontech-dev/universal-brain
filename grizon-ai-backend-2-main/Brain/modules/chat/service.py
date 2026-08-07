@@ -752,11 +752,8 @@ class BrainChatService:
                 import traceback
                 traceback.print_exc()
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
-<<<<<<< HEAD
                 # CRITICAL FIX: Send error event to frontend so UI doesn't stay blank
                 yield f"data: {json.dumps({'error': f'Phase 1 error: {type(phase1_err).__name__}: {str(phase1_err)[:300]}'})}\n\n"
-=======
->>>>>>> 8e45e8bcc5908d2a29e7bdc00253cdb9f5c7049d
                 if mg:
                     try:
                         import asyncio as _asyncio_ph1
