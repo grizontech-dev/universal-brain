@@ -300,12 +300,12 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
         await sandbox_mcp.initialize()
 
     try:
-        print(f"{LOG} Calling MCP execute_workspace_archive (timeout=600s)...", flush=True)
+        print(f"{LOG} Calling MCP execute_workspace_archive (timeout=300s)...", flush=True)
         result = await sandbox_mcp._call_tool("execute_workspace_archive", sandbox_mcp._with_client_id({
             "session_id": session_id,
             "entrypoint": entry_file,
             "archive_b64": encoded_archive,
-        }, user_id), timeout=600)
+        }, user_id), timeout=300)
         print(f"{LOG} MCP result type: {type(result).__name__}", flush=True)
         output_data = sandbox_mcp._parse_response(result)
                 

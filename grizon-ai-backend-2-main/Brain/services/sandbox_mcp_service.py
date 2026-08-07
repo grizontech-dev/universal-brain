@@ -51,22 +51,8 @@ class SandboxMCPService:
             self._initialized = False
 
     async def _connect(self):
-        """Verify MCP server is reachable. Each _call_tool creates its own fresh session."""
+        """Verify MCP server is reachable."""
         print(f"[SANDBOX_MCP] Connecting to MCP server...")
-        # Create a temporary session just to verify connectivity
-        try:
-            transport_ctx = streamablehttp_client(
-                url=self._url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=30,
-            )
-        except TypeError:
-            # Older MCP library doesn't support headers kwarg
-            print("[SANDBOX_MCP] headers kwarg not supported, trying without auth header")
-            transport_ctx = streamablehttp_client(
-                url=self._url,
-                timeout=30,
-            )
         try:
             async with streamablehttp_client(
                 url=self._url,
@@ -100,7 +86,7 @@ class SandboxMCPService:
             print(f"[SANDBOX_MCP] _with_client_id | client_id is None/empty — using grizon-default")
         return arguments
 
-    async def _call_tool(self, name: str, arguments: dict, timeout: float = 600) -> Any:
+    async def _call_tool(self, name: str, arguments: dict, timeout: float = 300) -> Any:
         """Call an MCP tool using a FRESH session per call to avoid shared session corruption."""
         if not self._initialized:
             await self.initialize()
@@ -112,35 +98,18 @@ class SandboxMCPService:
         call_start_time = time.time()
         safe_args = {k: (v[:50] + "..." if isinstance(v, str) and len(v) > 50 else v) for k, v in arguments.items()}
         print(f"[SANDBOX_MCP] _call_tool '{name}' | timeout={timeout}s | args={safe_args}")
-        print(f"[SANDBOX_MCP] _call_tool '{name}' | full args_keys={list(arguments.keys())} | args_sizes={ {k: len(str(v)) for k, v in arguments.items()} }")
 
-        # Create a FRESH MCP session for each tool call to avoid:
-        # 1. GC killing the shared session mid-call
-        # 2. Concurrent calls corrupting the SSE stream
-        # 3. anyio cancel-scope cross-task errors
+        # Create a FRESH MCP session for each tool call (avoids shared session corruption)
         try:
-            transport_ctx = streamablehttp_client(
-                url=self._url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=timeout,
-            )
-        except TypeError:
-            transport_ctx = streamablehttp_client(
-                url=self._url,
-                timeout=timeout,
-            )
-        try:
-            print(f"[SANDBOX_MCP] Opening transport connection...")
             async with streamablehttp_client(
                 url=self._url,
                 headers={"Authorization": f"Bearer {self._token}"},
                 timeout=timeout,
             ) as (read_stream, write_stream, *rest):
-                print(f"[SANDBOX_MCP] Creating and initializing session...")
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     elapsed_setup = time.time() - call_start_time
-                    print(f"[SANDBOX_MCP] Fresh session ready in {elapsed_setup:.1f}s, calling '{name}'...")
+                    print(f"[SANDBOX_MCP] Session ready in {elapsed_setup:.1f}s, calling '{name}'...")
 
                     task = asyncio.create_task(session.call_tool(name, arguments))
                     done, pending = await asyncio.wait([task], timeout=timeout)
@@ -165,11 +134,9 @@ class SandboxMCPService:
 
     def _parse_response(self, result) -> Dict[str, Any]:
         """Parse MCP CallToolResult into a dict."""
-        print(f"[SANDBOX_MCP] _parse_response result type={type(result).__name__}")
         parts = []
         if hasattr(result, "content") and result.content:
-            for i, item in enumerate(result.content):
-                print(f"[SANDBOX_MCP]   content[{i}] type={type(item).__name__}")
+            for item in result.content:
                 if hasattr(item, "text") and item.text:
                     parts.append(item.text)
                 elif isinstance(item, dict) and "text" in item:
@@ -177,7 +144,7 @@ class SandboxMCPService:
                 else:
                     parts.append(str(item))
         elif isinstance(result, list):
-            for i, item in enumerate(result):
+            for item in result:
                 if hasattr(item, "text") and item.text:
                     parts.append(item.text)
                 elif isinstance(item, dict) and "text" in item:
@@ -188,21 +155,12 @@ class SandboxMCPService:
             parts.append(str(result))
 
         text = "\n".join(parts)
-        print(f"[SANDBOX_MCP]   FULL TEXT ({len(text)} chars):")
-        # Log full text in chunks to avoid truncation
-        for chunk_start in range(0, len(text), 500):
-            chunk = text[chunk_start:chunk_start+500]
-            print(f"[SANDBOX_MCP]   [{chunk_start}:{chunk_start+500}] {chunk}")
         try:
             parsed = json.loads(text)
-            print(f"[SANDBOX_MCP]   json.loads OK | keys={list(parsed.keys()) if isinstance(parsed, dict) else 'not dict'}")
-            # If parsed is a list with one dict element, unwrap it
             if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
-                print(f"[SANDBOX_MCP]   unwrapping single-element list")
                 parsed = parsed[0]
             return parsed
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"[SANDBOX_MCP]   json.loads FAILED: {e}")
+        except json.JSONDecodeError:
             return {"raw": text}
 
     async def ensure_tool(self, name: str):
@@ -480,22 +438,26 @@ export default defineConfig({
             except Exception as e:
                 print(f"[SANDBOX_MCP] STEP-3 Could not validate App.jsx imports: {e}")
 
-        # ═══ ARCHIVE CREATION ═══
+        # ═══ ARCHIVE CREATION (async to avoid blocking event loop) ═══
         print(f"[SANDBOX_MCP] STEP-4 Creating archive from: {workspace_dir}")
-        buf = io.BytesIO()
-        archive_files = []
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            for root, dirs, files in os.walk(workspace_dir):
-                if "node_modules" in dirs:
-                    dirs.remove("node_modules")
-                if ".git" in dirs:
-                    dirs.remove(".git")
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, workspace_dir)
-                    tar.add(full_path, arcname=rel_path)
-                    archive_files.append(rel_path)
-        raw_bytes = buf.getvalue()
+        
+        def _create_archive():
+            buf = io.BytesIO()
+            archive_files = []
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                for root, dirs, files in os.walk(workspace_dir):
+                    if "node_modules" in dirs:
+                        dirs.remove("node_modules")
+                    if ".git" in dirs:
+                        dirs.remove(".git")
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, workspace_dir)
+                        tar.add(full_path, arcname=rel_path)
+                        archive_files.append(rel_path)
+            return buf.getvalue(), archive_files
+        
+        raw_bytes, archive_files = await asyncio.get_event_loop().run_in_executor(None, _create_archive)
         archive_b64 = base64.b64encode(raw_bytes).decode()
         print(f"[SANDBOX_MCP] STEP-4 archive raw_bytes={len(raw_bytes)} | b64_chars={len(archive_b64)}")
         print(f"[SANDBOX_MCP] STEP-4 archive contains {len(archive_files)} files:")
@@ -520,13 +482,16 @@ export default defineConfig({
         print(f"[SANDBOX_MCP] STEP-5 entrypoint = {args_with_client.get('entrypoint')}")
         print(f"[SANDBOX_MCP] STEP-5 archive_b64 len = {len(args_with_client.get('archive_b64', ''))}")
 
-        # ═══ DELETE OLD SANDBOX ═══
+        # ═══ DELETE OLD SANDBOX (only if one exists) ═══
         try:
-            print(f"[SANDBOX_MCP] STEP-6 Deleting old sandbox to clear port 9999...")
-            del_result = await self.delete_sandbox(session_id, user_id=user_id)
-            print(f"[SANDBOX_MCP] STEP-6 delete result = {del_result}")
-            import asyncio as _dasync
-            await _dasync.sleep(2)
+            existing_tunnel = self._tunnel_urls.get(session_id)
+            if existing_tunnel:
+                print(f"[SANDBOX_MCP] STEP-6 Deleting old sandbox to clear port 9999...")
+                del_result = await self.delete_sandbox(session_id, user_id=user_id)
+                print(f"[SANDBOX_MCP] STEP-6 delete result = {del_result}")
+                await asyncio.sleep(1)  # Reduced from 2s to 1s
+            else:
+                print(f"[SANDBOX_MCP] STEP-6 No existing sandbox, skipping delete")
         except Exception as e:
             print(f"[SANDBOX_MCP] STEP-6 Delete sandbox exception: {e}")
 
@@ -534,13 +499,10 @@ export default defineConfig({
         deploy_start = time.time()
         last_exception = None
 
-        for attempt in range(1, 4):
+        for attempt in range(1, 3):  # Reduced from 3 to 2 attempts
             try:
-                print(f"[SANDBOX_MCP] STEP-7 === CALLING execute_workspace_archive (attempt {attempt}/3) ===")
-                print(f"[SANDBOX_MCP] STEP-7 MCP URL = {self._url}")
-                token_display = self._token[:12] + "..." if self._token and len(self._token) > 12 else self._token
-                print(f"[SANDBOX_MCP] STEP-7 MCP token = {token_display}")
-                result = await self._call_tool("execute_workspace_archive", args_with_client, timeout=600)
+                print(f"[SANDBOX_MCP] STEP-7 === CALLING execute_workspace_archive (attempt {attempt}/2) ===")
+                result = await self._call_tool("execute_workspace_archive", args_with_client, timeout=300)  # Reduced from 600s to 300s
                 elapsed = time.time() - deploy_start
                 print(f"[SANDBOX_MCP] STEP-7 === MCP CALL RETURNED in {elapsed:.1f}s ===")
                 print(f"[SANDBOX_MCP] STEP-7 raw result type = {type(result).__name__}")
@@ -739,14 +701,50 @@ export default defineConfig({
                     continue
         return h.hexdigest()
 
+    def _quick_mtime_check(self, session_id: str, user_id: str = None) -> bool:
+        """Quick check: has any file mtime changed since last snapshot? Fast O(n) stat only."""
+        workspace_dir = self.get_workspace_dir(session_id, user_id=user_id)
+        if not os.path.isdir(workspace_dir):
+            return False
+        key = self._snapshot_key(session_id, user_id)
+        last_snapshot = self._deploy_snapshots.get(key)
+        if not last_snapshot:
+            return True  # No snapshot = definitely changed
+        # Quick check: sum of all mtimes — if same, nothing changed
+        total_mtime = 0
+        file_count = 0
+        for root, dirs, files in os.walk(workspace_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__")]
+            for name in files:
+                try:
+                    st = os.stat(os.path.join(root, name))
+                    total_mtime += int(st.st_mtime)
+                    file_count += 1
+                except OSError:
+                    continue
+        # Store mtime checksum for quick comparison
+        quick_key = f"{key}_quick_mtime"
+        quick_val = f"{total_mtime}_{file_count}"
+        last_quick = getattr(self, '_quick_mtimes', {}).get(quick_key)
+        if last_quick == quick_val:
+            return False  # Same mtime sum = no changes
+        if not hasattr(self, '_quick_mtimes'):
+            self._quick_mtimes = {}
+        self._quick_mtimes[quick_key] = quick_val
+        return True  # Might have changed, do full check
+
     def workspace_changed(self, session_id: str, user_id: str = None) -> bool:
         """True if workspace files differ from the last successful deploy snapshot."""
+        # Quick mtime check first (avoids expensive SHA-256 hash)
+        if not self._quick_mtime_check(session_id, user_id):
+            return False
+        # Full hash check
         key = self._snapshot_key(session_id, user_id)
         current = self._compute_workspace_snapshot(session_id, user_id)
         last = self._deploy_snapshots.get(key)
         changed = last is None or last != current
         if changed:
-            print(f"[SANDBOX_MCP] workspace_changed=True for {session_id} (last={str(last)[:12]} current={current[:12]})")
+            print(f"[SANDBOX_MCP] workspace_changed=True for {session_id}")
         return changed
 
     def store_deploy_snapshot(self, session_id: str, user_id: str = None):
