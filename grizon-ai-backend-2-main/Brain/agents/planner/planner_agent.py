@@ -174,10 +174,10 @@ class PlannerAgent(BaseAgent):
         CRITICAL: You MUST base your plan STRICTLY on the user's actual request and their Q&A answers provided in the conversation context below.
         Do NOT create a generic plan. Read every user message and answer carefully.
 
-        OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences. Keep the ENTIRE JSON under ~450 words:
+        OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences. Keep the ENTIRE JSON under ~900 words — be COMPLETE and DETAILED, cover every feature the user asked for:
         {{
           "project_name": "Short descriptive name of the actual project",
-          "markdown_plan": "COMPLETE but TIGHT Markdown plan. Every section below MUST be present with 2-5 short bullets each: Overview, Architecture, Frontend Stack, Data Models, Key Pages & Components, Components to Build, Implementation Steps, Data Storage. One line per bullet — NO paragraphs, NO filler.",
+          "markdown_plan": "COMPLETE, DETAILED Markdown plan. Every section below MUST be present with 3-8 short bullets each: Overview, Architecture, Frontend Stack, Data Models, API Design, Key Pages & Components, Components to Build, Implementation Steps, Data Storage. One line per bullet — NO paragraphs, NO filler, but cover every requested feature.",
           "tech_stack": ["React", "Express", "Supabase"],
           "stack": {{ "frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind" }},
           "architecture": {{
@@ -195,7 +195,7 @@ class PlannerAgent(BaseAgent):
         2. GROUNDING RULE (CRITICAL, ANTI-HALLUCINATION): Include ONLY what the user actually asked for in their request and Q&A answers. Do NOT invent features, pages, data models, or tech-stack items the user never mentioned or clearly implied. If the user's request is small, the plan must be small.
         3. The plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature must trace back to something the user said.
         4. AUTHORITY: The `architecture` object is for downstream agents (Todo/Builder) and is authoritative — it MUST match the markdown_plan exactly.
-        5. SPEED: Output must be SHORT and DENSE. Small request = very small output. Every word must carry information.
+        5. COMPLETENESS: Cover EVERY feature the user listed. The `architecture` object should be rich: 4-8 pages, real `tables` with concrete columns, `api_routes` with method + purpose, and every page with 2-5 components.
         6. `api_routes` MUST include method for every endpoint. `tables` MUST list real column names.
         7. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies. Both required.
         8. Use actual Markdown headers (e.g. `## Overview`) — not bold text. Bullet points with proper spacing.
@@ -223,7 +223,7 @@ class PlannerAgent(BaseAgent):
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
 
-        response_content = await self.chat(messages, timeout=60, max_tokens=1400)
+        response_content = await self.chat(messages, timeout=90, max_tokens=2000)
         print(f"{LOG} 📄 Planner raw response length: {len(response_content)}", flush=True)
         print(f"{LOG} ─ HEAD: {response_content[:2000]}", flush=True)
         print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)
