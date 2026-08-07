@@ -109,20 +109,22 @@ class SkillResolver:
         return collected
 
     def _load_local_skills(self, task_description: str) -> str:
-        """Fallback: compile skill guidance directly from local markdown files on disk."""
+        """Return relevant skill FILE PATHS for on-demand reading — not content.
+        
+        Agents read skill files when needed via MCP read_file tool, avoiding
+        45-50k token overload and hallucination from irrelevant context.
+        """
         here = os.path.dirname(__file__)
         skillss_dir = os.path.join(here, "..", "..", "skillss")
         skills_dir = os.path.join(here, "..", "..", "skills")
         skillss_dir = os.path.abspath(skillss_dir)
         skills_dir = os.path.abspath(skills_dir)
 
-        # Relevance filter based on keywords in the task description.
         t = (task_description or "").lower()
         frontend_kw = any(k in t for k in ["frontend", "react", "ui", "component", "landing", "page", "css", "html", "design"])
         backend_kw = any(k in t for k in ["backend", "express", "api", "server", "endpoint", "fastify", "node", "microservice"])
         db_kw = any(k in t for k in ["supabase", "database", "postgres", "sql", "query", "vector"])
 
-        # Map skill file -> relevance bucket using directory path (not just filename).
         def relevance(path: str) -> bool:
             p = path.lower().replace("\\", "/")
             if frontend_kw and any(d in p for d in ["/frontend", "/frontend-design", "/shadcn"]):
@@ -133,30 +135,24 @@ class SkillResolver:
                 return True
             return False
 
-        # SKILL.md files come from Brain/skillss/<skill>/SKILL.md
         skillss_files = self._collect_local_markdown(skillss_dir, allowed_names={"SKILL.md"})
-        # skills.md / *.md come from Brain/skills/<category>/
         skills_files = self._collect_local_markdown(skills_dir)
 
         filtered = [x for x in skillss_files + skills_files if relevance(x[0])]
 
-        if filtered:
-            print(f"[SkillResolver] 🗂️ Local fallback: using {len(filtered)} relevant skill files.")
-        else:
-            print(f"[SkillResolver] 🗂️ Local fallback: no relevance match for task, skipping skills to avoid hallucination.")
-            return "{}"
-
         if not filtered:
-            return "{}"
+            print(f"[SkillResolver] 🗂️ No relevant skill files found for task.")
+            return ""
 
-        parts = [f"# {name}\n\n{text}" for name, text in filtered]
-        compiled = "\n\n---\n\n".join(parts)
+        # Return ONLY file paths — agent reads on demand via read_file tool
+        paths = [name for name, _ in filtered]
+        print(f"[SkillResolver] 🗂️ Found {len(paths)} relevant skill files (paths returned, agent reads on demand).")
+        
+        path_list = "\n".join(f"- {p}" for p in paths)
+        return f"""SKILL FILES (read these when you need guidance — do NOT load all at once):
+{path_list}
 
-        max_len = 12000
-        if len(compiled) > max_len:
-            print(f"[SkillResolver] ⚠️ Local fallback output truncated from {len(compiled)} to {max_len} chars.")
-            compiled = compiled[:max_len] + "\n\n...\n\n(truncated local skill guidance)"
-        return compiled
+When you need help with a specific topic, use the read_file MCP tool to read the relevant skill file above. Only read what you need for the current task."""
 
     def resolve_skills_for_task(self, task_description: str) -> str:
         """End-to-end pipeline to get compiled JSON rules for a task.

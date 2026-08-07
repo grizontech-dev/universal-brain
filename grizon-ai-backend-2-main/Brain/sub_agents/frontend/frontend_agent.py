@@ -6,7 +6,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.agents.builder.mcp_tools import client_save_code
+from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 
@@ -25,6 +25,27 @@ class FrontendAgent(BaseAgent):
         plan = state.get("project_plan", {})
         executed = state.get("executed_tasks", [])[-5:]
         
+        # Extract selected color palette from user's question answers
+        color_palette = state.get("selected_color_palette", {})
+        theme_preference = state.get("theme_preference", "dark")
+        custom_color_input = state.get("custom_color_input", "")
+        
+        if not color_palette:
+            # Check in decisions or answers
+            decisions = state.get("decisions", {})
+            color_palette = decisions.get("color_palette", {})
+        
+        # Default palette based on theme preference
+        if theme_preference == "light":
+            default_colors = ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
+            default_name = "Clean Light"
+        else:
+            default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"]
+            default_name = "Midnight Blue"
+        
+        palette_colors = color_palette.get("colors", default_colors)
+        palette_name = color_palette.get("name", default_name)
+        
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
         structured_spec = format_structured_spec(task)
         
@@ -41,18 +62,102 @@ class FrontendAgent(BaseAgent):
 
         {FULL_STACK_BUILD_STANDARDS}
 
-        SKILLS (follow strictly):
+        SKILL FILES (read when needed via read_skill_file tool):
         {skills_content}
 
-        ***CRITICAL UI QUALITY RULES (NON-NEGOTIABLE)***:
-        - NEVER output placeholder components like `<h1>Home Page</h1>` or `<p>Coming soon</p>`
-        - EVERY component MUST have REAL, polished UI with Tailwind CSS
-        - Home page MUST include: Hero section with gradient background, Features grid, About section, Contact form, Footer
-        - Dashboard MUST include: Stats cards with icons, data visualization, sidebar nav, tables
-        - Auth pages MUST include: Styled form fields, validation, loading spinners, error states
-        - Use real placeholder images from: https://picsum.photos/800/400 or https://placehold.co/600x400
-        - Add hover effects, transitions, shadows for polish
-        - Mobile-responsive design is MANDATORY
+        ***SELECTED COLOR PALETTE — USE THESE EXACT COLORS (NON-NEGOTIABLE)***:
+        Palette: {palette_name}
+        Theme: {theme_preference}
+        Colors: {palette_colors}
+        {f"Custom User Request: {custom_color_input}" if custom_color_input else ""}
+        - Color 1 (Darkest/Base): {palette_colors[0] if len(palette_colors) > 0 else '#0f172a'}
+        - Color 2 (Primary/Accent): {palette_colors[1] if len(palette_colors) > 1 else '#3b82f6'}
+        - Color 3 (Secondary): {palette_colors[2] if len(palette_colors) > 2 else '#60a5fa'}
+        - Color 4 (Text): {palette_colors[3] if len(palette_colors) > 3 else '#f8fafc'}
+        - Color 5 (Background): {palette_colors[4] if len(palette_colors) > 4 else '#1e293b'}
+
+        {f"IMPORTANT: User specifically requested: {custom_color_input}. Interpret this and create a matching color scheme." if custom_color_input else ""}
+
+        USE THESE COLORS FOR:
+        - {("Light background: Color 5 or Color 1 (white/light base)" if theme_preference == "light" else "Dark background: Color 5 or Color 1 (dark base)")}
+        - Primary buttons, links, accents: Color 2
+        - Secondary accents, borders: Color 3
+        - {("Dark text on light: Color 4" if theme_preference == "light" else "Light text on dark: Color 4")}
+        - Gradient combinations: Color 2 → Color 3
+        DO NOT use any other colors. Stick to this palette exactly.
+
+        ***PREMIUM UI DESIGN RULES (NON-NEGOTIABLE — THIS IS WHAT MAKES US UNIQUE)***:
+        Your frontend MUST look like a premium SaaS product, NOT a generic template. Follow these design principles:
+
+        **ANIMATIONS (MANDATORY — EVERY PAGE MUST HAVE THEM)**:
+        - Install: `framer-motion` in package.json
+        - Page transitions: Use `<AnimatePresence>` + `motion.div` with fade/slide animations between routes
+        - Hover effects: Every card, button, link MUST have hover animations (scale, glow, shadow shift)
+        - Loading states: Skeleton loaders, spinning indicators, shimmer effects — NEVER show blank screens
+        - Scroll animations: Use `motion.div` with `whileInView` for elements animating into view
+        - Micro-interactions: Button press feedback, input focus glow, toggle switches with spring animation
+
+        **DESIGN PATTERNS (USE THESE FOR PREMIUM LOOK)**:
+        - Glass morphism: `bg-white/10 backdrop-blur-xl border border-white/20` for cards/modals
+        - Gradient accents: `bg-gradient-to-r from-violet-500 to-purple-600` for buttons, headers, highlights
+        - Dark mode ready: Use `dark:` Tailwind variants or dark color palette by default
+        - Shadows: `shadow-2xl shadow-purple-500/20` for depth and glow effects
+        - Borders: Subtle `border-white/10` or `border-gray-700/50` for separation
+        - Spacing: Generous padding (p-6 to p-12), breathing room between sections
+
+        **TYPOGRAPHY (PREMIUM FEEL)**:
+        - Headings: `font-bold tracking-tight` or `font-extrabold` with gradient text
+        - Body: `text-gray-300` or `text-slate-400` for readability on dark backgrounds
+        - Use `bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent` for hero headings
+
+        **LAYOUT (MODERN SaaS STYLE)**:
+        - Hero: Full-width gradient background, large heading, animated CTA button, floating elements
+        - Cards: Glass effect with hover glow, icon + title + description pattern
+        - Navigation: Sticky, glassmorphism navbar with smooth scroll
+        - Footer: Multi-column with gradient separator
+        - Sections: Alternating backgrounds (dark/slightly lighter) for visual rhythm
+
+        **COLOR PALETTE (USER SELECTED — USE EXACTLY AS SHOWN ABOVE)**:
+        The user has chosen a color palette. USE THOSE EXACT COLORS throughout the entire UI.
+        - Primary gradient: Use Color 2 → Color 3 from the selected palette
+        - Background: Use Color 5 or Color 1
+        - Text: Use Color 4 for headings, lighter shade for body
+        - Accents: Use Color 2 for buttons, links, highlights
+        DO NOT deviate from the selected palette. No other colors allowed.
+
+        **AVOID (THIS LOOKS GENERIC)**:
+        - Using purple/violet for EVERY project (overused!)
+        - Plain white backgrounds with black text
+        - No animations or transitions
+        - Basic `<h1>` tags without styling
+        - Flat buttons without hover effects
+        - Tables without row hover highlighting
+        - Forms without focus glow effects
+
+        **EXAMPLE PREMIUM CARD** (use selected palette colors):
+        ```jsx
+        <motion.div
+          whileHover={{ scale: 1.02, y: -4 }}
+          className="p-6 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 hover:border-[Color2]/50 hover:shadow-2xl hover:shadow-[Color2]/10 transition-all duration-300"
+        >
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[Color2] to-[Color3] flex items-center justify-center mb-4">
+            <Icon className="text-white" size={24} />
+          </div>
+          <h3 className="text-xl font-bold text-white mb-2">{title}</h3>
+          <p className="text-gray-400">{description}</p>
+        </motion.div>
+        ```
+
+        **EXAMPLE PREMIUM BUTTON** (use selected palette colors):
+        ```jsx
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="px-8 py-3 rounded-xl bg-gradient-to-r from-[Color2] to-[Color3] text-white font-semibold shadow-lg shadow-[Color2]/25 hover:shadow-[Color2]/40 transition-all duration-300"
+        >
+          Get Started
+        </motion.button>
+        ```
 
         ***SHADCN UI COMPONENTS (USE FOR PRODUCTION QUALITY)***:
         - Use shadcn-style components for buttons, cards, inputs, badges, forms
@@ -203,7 +308,7 @@ class FrontendAgent(BaseAgent):
         print(f"[FRONTEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
 
         llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = llm.bind_tools([client_save_code])
+        bound_llm = llm.bind_tools([client_save_code, read_skill_file])
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=messages[-1].content)]
 
@@ -249,6 +354,15 @@ class FrontendAgent(BaseAgent):
                                 content=f"Error saving {file_path}: {str(e)}",
                                 tool_call_id=tc["id"]
                             ))
+                elif tc["name"] == "read_skill_file":
+                    tool_args = tc["args"]
+                    file_path = tool_args.get("file_path", "")
+                    try:
+                        result = await read_skill_file.ainvoke(tool_args)
+                        print(f"[FRONTEND] 📖 Read skill: {file_path} ({len(result)} chars)", flush=True)
+                        msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+                    except Exception as e:
+                        msgs.append(ToolMessage(content=f"Error reading skill: {e}", tool_call_id=tc["id"]))
 
         if not files_saved:
             # Fallback: try parsing JSON from response

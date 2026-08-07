@@ -6,7 +6,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.agents.builder.mcp_tools import client_save_code
+from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 
@@ -39,7 +39,7 @@ class BackendAgent(BaseAgent):
 
         {FULL_STACK_BUILD_STANDARDS}
 
-        SKILLS (follow strictly):
+        SKILL FILES (read when needed via read_skill_file tool):
         {skills_content}
 
         BACKEND AGENT RULES:
@@ -98,7 +98,7 @@ class BackendAgent(BaseAgent):
         print(f"[BACKEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
 
         llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = llm.bind_tools([client_save_code])
+        bound_llm = llm.bind_tools([client_save_code, read_skill_file])
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=messages[-1].content)]
 
@@ -141,8 +141,17 @@ class BackendAgent(BaseAgent):
                             tool_result = f"Error saving {file_path}: {str(e)}"
                     else:
                         tool_result = "Error: client_save_code requires both file_path and code_content"
+                elif tc["name"] == "read_skill_file":
+                    tool_args = tc.get("args") or {}
+                    file_path = tool_args.get("file_path", "")
+                    try:
+                        result = await read_skill_file.ainvoke(tool_args)
+                        print(f"[BACKEND] 📖 Read skill: {file_path} ({len(result)} chars)", flush=True)
+                        tool_result = result
+                    except Exception as e:
+                        tool_result = f"Error reading skill: {e}"
                 else:
-                    tool_result = f"Unknown tool: {tc['name']}. Use client_save_code."
+                    tool_result = f"Unknown tool: {tc['name']}. Use client_save_code or read_skill_file."
 
                 msgs.append(ToolMessage(
                     content=tool_result,

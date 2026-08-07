@@ -21,11 +21,15 @@ class BaseAgent(ABC):
         target_model = model_id or self.model_id
         return ProviderRouter.get_model(target_model, temperature=temperature, max_tokens=max_tokens)
 
-    async def chat(self, messages: List[BaseMessage], model_id: Optional[str] = None, temperature: float = 0.3, timeout: float = 90, max_tokens: Optional[int] = None) -> str:
-        """Generic chat method for interacting with the LLM."""
+    async def chat(self, messages: List[BaseMessage], model_id: Optional[str] = None, temperature: float = 0.3, timeout: float = 90, max_tokens: Optional[int] = None, tools: Optional[List] = None) -> str:
+        """Generic chat method for interacting with the LLM. Supports optional tool-calling."""
         model = self.get_model(model_id, temperature, max_tokens=max_tokens)
         target_model_id = model_id or self.model_id
-        print(f"{LOG} [{self.name}] chat() | model={target_model_id} | timeout={timeout}s | msgs={len(messages)}", flush=True)
+        print(f"{LOG} [{self.name}] chat() | model={target_model_id} | timeout={timeout}s | msgs={len(messages)} | tools={len(tools) if tools else 0}", flush=True)
+        
+        if tools:
+            model = model.bind_tools(tools)
+        
         try:
             import time as _t
             _t0 = _t.time()
@@ -38,12 +42,42 @@ class BaseAgent(ABC):
         except Exception as e:
             print(f"{LOG} [{self.name}] ✖ LLM ERROR: {type(e).__name__}: {e}", flush=True)
             return '{"error": "LLM call failed"}'
+        
+        # Handle tool calls (up to 3 rounds)
+        if tools and hasattr(response, 'tool_calls') and response.tool_calls:
+            for _ in range(3):
+                tool_results = []
+                for tc in response.tool_calls:
+                    tool_name = tc.get("name", "")
+                    tool_args = tc.get("args", {})
+                    print(f"{LOG} [{self.name}] 🔧 Tool call: {tool_name}", flush=True)
+                    
+                    # Find and execute the tool
+                    result = ""
+                    for t in tools:
+                        if hasattr(t, 'name') and t.name == tool_name:
+                            try:
+                                if asyncio.iscoroutinefunction(t.invoke):
+                                    result = await t.ainvoke(tool_args)
+                                else:
+                                    result = t.invoke(tool_args)
+                            except Exception as e:
+                                result = f"Tool error: {e}"
+                            break
+                    
+                    tool_results.append({"role": "tool", "content": str(result), "tool_call_id": tc.get("id", "")})
+                
+                messages.append(response)
+                messages.extend(tool_results)
+                
+                response = await asyncio.wait_for(model.ainvoke(messages), timeout=timeout)
+                if not hasattr(response, 'tool_calls') or not response.tool_calls:
+                    break
+        
         content = response.content
         if isinstance(content, list):
-            # Handle multi-part messages by joining string parts
             content = " ".join([str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in content])
         
-        # Log a snippet of the raw response
         snippet = str(content)[:200].replace('\n', ' ')
         print(f"{LOG} [{self.name}] ← response: {len(str(content))} chars | preview='{snippet}'", flush=True)
         

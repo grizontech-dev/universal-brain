@@ -427,7 +427,7 @@ class TodoAgent(BaseAgent):
         super().__init__(
             name="Todo",
             description="Converts the approved plan into executable tasks (3–15).",
-            model_id="deepseek-v4-flash",
+            model_id="llama-4-scout-17b-16e-instruct",
         )
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -554,7 +554,7 @@ class TodoAgent(BaseAgent):
 
         async def _scope_call(sys: str, timeout: float, max_tok: int):
             msgs = [SystemMessage(content=sys)] + list(base_msgs)
-            return await self.chat(msgs, model_id="deepseek-v4-flash", timeout=timeout, max_tokens=max_tok)
+            return await self.chat(msgs, model_id="llama-4-scout-17b-16e-instruct", timeout=timeout, max_tokens=max_tok)
 
         print(f"{LOG} Calling LLM — 2 scoped calls in parallel (build + frontend), total chars={sum(len(m.content) for m in base_msgs)}", flush=True)
         _t0 = time.time()

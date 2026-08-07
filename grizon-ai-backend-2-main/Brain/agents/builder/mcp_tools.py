@@ -27,6 +27,34 @@ def _make_activity(act_type: str, label: str, path: str = "", task_title: str = 
     }
 
 @tool
+async def read_skill_file(file_path: str) -> str:
+    """Reads a skill/guidance file from Brain/skills/ or Brain/skillss/ directory. Use this to get help when building components."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(here, "..", "..")
+    base_dir = os.path.abspath(base_dir)
+    
+    # Normalize path — handle both relative and absolute
+    normalized = file_path.replace("\\", "/").strip("/")
+    if normalized.startswith("Brain/"):
+        full_path = os.path.join(os.path.dirname(base_dir), normalized)
+    else:
+        full_path = os.path.join(base_dir, normalized)
+    
+    if not os.path.isfile(full_path):
+        return f"ERROR: Skill file not found: {file_path}"
+    
+    with open(full_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # Truncate if too long
+    max_chars = 3000
+    if len(content) > max_chars:
+        content = content[:max_chars] + f"\n\n... (truncated, {len(content)} chars total)"
+    
+    print(f"{LOG} read_skill_file | {file_path} | {len(content)} chars", flush=True)
+    return content
+
+@tool
 async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "") -> str:
     """Saves a single file directly into the sandbox session's workspace directory on the server."""
     actual_path = file_path or code_path

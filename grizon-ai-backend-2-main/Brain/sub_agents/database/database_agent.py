@@ -35,7 +35,7 @@ class DatabaseAgent(BaseAgent):
 
         {FULL_STACK_BUILD_STANDARDS}
 
-        SKILLS:
+        SKILL FILES (reference only — use general Supabase knowledge):
         {skills_content}
 
         DATABASE AGENT RULES:

@@ -14,6 +14,54 @@ PREAMBLES = [
 MAX_QUESTIONS = 5
 MAX_RECENT_USER_MESSAGES = 5
 
+# Color palettes like Lovable.dev - user picks one, frontend uses those exact colors
+COLOR_PALETTES = [
+    # DARK THEMES
+    {
+        "id": "midnight-blue",
+        "name": "Midnight Blue",
+        "theme": "dark",
+        "colors": ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"],
+        "description": "Deep navy + electric blue + clean white"
+    },
+    {
+        "id": "dark-coral",
+        "name": "Dark Coral",
+        "theme": "dark",
+        "colors": ["#1a1a2e", "#e94560", "#ff6b6b", "#feca57", "#16213e"],
+        "description": "Dark base + coral red + warm yellow"
+    },
+    # LIGHT THEME
+    {
+        "id": "clean-light",
+        "name": "Clean Light",
+        "theme": "light",
+        "colors": ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"],
+        "description": "White base + indigo accent + soft gray"
+    },
+]
+
+THEME_TYPE_QUESTION = {
+    "id": "q_theme_type",
+    "text": "Do you prefer a dark or light theme?",
+    "type": "single",
+    "options": ["Dark theme", "Light theme"],
+    "allowAll": False,
+    "category": "design",
+}
+
+COLOR_PALETTE_QUESTION = {
+    "id": "q_color_palette",
+    "text": "What color direction appeals to you?",
+    "type": "single",
+    "options": [f"{p['name']} - {p['description']}" for p in COLOR_PALETTES],
+    "allowAll": False,
+    "category": "design",
+    "palettes": COLOR_PALETTES,
+    "allowCustom": True,  # User can type their own color preference
+    "customPlaceholder": "Write your own color scheme... (e.g., 'neon green and black' or 'pastel pink and white')"
+}
+
 
 class QuestionsAgent(BaseAgent):
     def __init__(self):
@@ -145,6 +193,13 @@ Return ONLY JSON:
             ]
 
         normalized = normalized[:MAX_QUESTIONS]
+
+        # ALWAYS append theme type question first (dark or light?)
+        normalized.append(THEME_TYPE_QUESTION)
+
+        # Then append color palette question
+        normalized.append(COLOR_PALETTE_QUESTION)
+
         round_num = state.get("question_rounds", 0)
         state["questions_data"] = {
             "preamble": PREAMBLES[min(round_num, len(PREAMBLES) - 1)],
