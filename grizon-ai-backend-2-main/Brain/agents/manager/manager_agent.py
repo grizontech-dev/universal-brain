@@ -318,6 +318,7 @@ class ManagerAgent(BaseAgent):
         4. DECISION:
            - If critical info is missing (e.g. "Build a website" — what kind? For whom?): is_context_missing = true, next_agent = "questions".
            - If we have enough to start planning: is_context_missing = false, next_agent = "planner".
+        5. WHEN IN DOUBT, ASK: If the request is ambiguous and could mean very different projects (e.g. "create a youtube clone" — simple video browsing UI vs full platform with uploads, auth, comments), ask 2-4 targeted questions about scope and key features. Asking beats guessing wrong.
 
         Respond ONLY in JSON (no extra text, no markdown fences):
         {
@@ -370,9 +371,13 @@ class ManagerAgent(BaseAgent):
         state["leader_analysis"] = analysis
         state["intent_confidence"] = analysis.get("confidence", 0.5)
 
-        # FORCED AUTO-MODE: Never ask clarification questions. Always proceed to planner to generate todo list and build.
-        state["next_agent"] = "planner"
-        state["status"] = "ready_to_plan"
+        # Force planner if we've been in questions for too long
+        if current_rounds >= 2:
+            state["next_agent"] = "planner"
+            state["status"] = "ready_to_plan"
+        else:
+            state["next_agent"] = analysis.get("next_agent", "questions")
+            state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
 
         print(f"{LOG} → next_agent='{state['next_agent']}' | status='{state['status']}' | confidence={state.get('intent_confidence', 'N/A')}", flush=True)
         return state
