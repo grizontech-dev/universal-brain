@@ -58,7 +58,7 @@ class PlannerAgent(BaseAgent):
         super().__init__(
             name="Planner",
             description="Creates the technical architecture and project plan.",
-            model_id="deepseek-v4-flash"
+            model_id="llama-4-scout-17b-16e-instruct"
         )
         self.supabase_service = SupabaseOAuthService()
 

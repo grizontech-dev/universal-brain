@@ -22,6 +22,13 @@ class ProviderRouter:
         deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com/v1"
         deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "").strip() or None
         deepinfra_base = os.getenv("DEEPINFRA_BASE_URL", "").strip() or "https://api.deepinfra.com/v1/openai"
+        groq_key = os.getenv("GROQ_API_KEY", "").strip() or None
+        groq_base = os.getenv("GROQ_BASE_URL", "").strip() or "https://api.groq.com/openai/v1"
+
+        # DeepInfra model IDs differ from Groq/OpenRouter style IDs
+        _deepinfra_aliases = {
+            "llama-4-scout-17b-16e-instruct": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        }
 
         def _make_openai(model: str):
             return ChatOpenAI(
@@ -115,6 +122,27 @@ class ProviderRouter:
                     request_timeout=90,
                     **({"max_tokens": max_tokens} if max_tokens else {})
                 )
+            return get_fallback_model()
+
+        # Llama Models — prefer Groq (fastest), else DeepInfra, else fallback
+        elif "llama" in model_id.lower():
+            if groq_key:
+                print(f"{LOG} → Groq '{model_id}' (base={groq_base})", flush=True)
+                return ChatOpenAI(
+                    model=model_id,
+                    api_key=groq_key,
+                    base_url=groq_base,
+                    temperature=temperature,
+                    max_retries=1,
+                    timeout=90,
+                    request_timeout=90,
+                    **({"max_tokens": max_tokens} if max_tokens else {})
+                )
+            if deepinfra_key:
+                target = _deepinfra_aliases.get(model_id, model_id)
+                print(f"{LOG} → DeepInfra '{target}' (base={deepinfra_base})", flush=True)
+                return _make_deepinfra(target)
+            print(f"{LOG} → Llama '{model_id}' — no Groq/DeepInfra key → fallback", flush=True)
             return get_fallback_model()
 
         # Claude Models or Unknown IDs - Fallback
