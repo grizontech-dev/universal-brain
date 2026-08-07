@@ -122,14 +122,14 @@ class SkillResolver:
         backend_kw = any(k in t for k in ["backend", "express", "api", "server", "endpoint", "fastify", "node", "microservice"])
         db_kw = any(k in t for k in ["supabase", "database", "postgres", "sql", "query", "vector"])
 
-        # Map skill file -> relevance bucket.
-        def relevance(name: str) -> bool:
-            n = name.lower()
-            if frontend_kw and any(k in n for k in ["frontend-design", "shadcn", "react", "nodejs", "skillss/frontend", "skills/frontend"]):
+        # Map skill file -> relevance bucket using directory path (not just filename).
+        def relevance(path: str) -> bool:
+            p = path.lower().replace("\\", "/")
+            if frontend_kw and any(d in p for d in ["/frontend", "/frontend-design", "/shadcn"]):
                 return True
-            if backend_kw and any(k in n for k in ["backend-development", "nodejs", "api-security", "skillss/backend", "skills/backend"]):
+            if backend_kw and any(d in p for d in ["/backend", "/backend-development", "/nodejs-backend"]):
                 return True
-            if db_kw and any(k in n for k in ["supabase", "database", "skillss/database", "skills/database"]):
+            if db_kw and any(d in p for d in ["/database", "/supabase"]):
                 return True
             return False
 
@@ -143,8 +143,8 @@ class SkillResolver:
         if filtered:
             print(f"[SkillResolver] 🗂️ Local fallback: using {len(filtered)} relevant skill files.")
         else:
-            print(f"[SkillResolver] 🗂️ Local fallback: no relevance match, including ALL {len(skillss_files) + len(skills_files)} local skill files.")
-            filtered = skillss_files + skills_files
+            print(f"[SkillResolver] 🗂️ Local fallback: no relevance match for task, skipping skills to avoid hallucination.")
+            return "{}"
 
         if not filtered:
             return "{}"
