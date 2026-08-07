@@ -419,6 +419,11 @@ export default function BrainBuildActivityFeed({
                         if (act.type === 'explore' || act.type === 'task_start') {
                             const isRunning = act.status === 'running' && !isTaskCompleted(act.taskTitle || '', idx);
                             const labelText = act.label.replace(/^Exploring\s*[-—]\s*/i, 'Moved to ');
+                            const matchedTodo = todos.find(t => {
+                                const title = (t.title || t.task || '').toLowerCase();
+                                const taskTitle = (act.taskTitle || '').toLowerCase();
+                                return title && taskTitle && (title.includes(taskTitle) || taskTitle.includes(title));
+                            });
                             return (
                                 <div key={act.id} className="flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-1 duration-200 py-2">
                                     <div className="w-[18px] h-[18px] rounded-full bg-surface-2 border border-border-subtle flex items-center justify-center shrink-0">
@@ -428,9 +433,12 @@ export default function BrainBuildActivityFeed({
                                             <Check size={10} className="text-emerald-500" />
                                         )}
                                     </div>
-                                    <span className={`text-[13px] font-bold truncate ${isRunning ? 'text-accent' : 'text-text-primary'}`}>
-                                        {labelText}
-                                    </span>
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                        <span className={`text-[13px] font-bold truncate ${isRunning ? 'text-accent' : 'text-text-primary'}`}>
+                                            {labelText}
+                                        </span>
+                                        {matchedTodo && <TodoChips todo={matchedTodo} />}
+                                    </div>
                                 </div>
                             );
                         }
