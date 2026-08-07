@@ -134,30 +134,24 @@ class ManagerAgent(BaseAgent):
             print(f"DEBUG: ManagerAgent detected user answered questions (round {current_rounds})")
             user_answers = prompt  # The user's submitted answers IS the current message
 
-            # Extract color palette and theme preference from user answers
+            # Extract color palette from user answers
             from Brain.agents.questions.questions_agent import COLOR_PALETTES
             answers_lower = str(user_answers).lower()
-            
-            # Check theme preference
-            if "dark" in answers_lower:
-                state["theme_preference"] = "dark"
-                print(f"DEBUG: Theme preference: dark", flush=True)
-            elif "light" in answers_lower:
-                state["theme_preference"] = "light"
-                print(f"DEBUG: Theme preference: light", flush=True)
             
             # Extract color palette - check predefined first
             palette_found = False
             for palette in COLOR_PALETTES:
                 if palette["name"].lower() in answers_lower or palette["id"].lower() in answers_lower:
                     state["selected_color_palette"] = palette
-                    print(f"DEBUG: Selected color palette: {palette['name']}", flush=True)
+                    state["theme_preference"] = palette.get("theme", "dark")
+                    print(f"DEBUG: Selected color palette: {palette['name']} (theme: {palette.get('theme', 'dark')})", flush=True)
                     palette_found = True
                     break
             
             # If no predefined palette matched, treat as custom color input
             if not palette_found:
                 state["custom_color_input"] = str(user_answers)
+                state["theme_preference"] = "dark"  # Default to dark for custom
                 print(f"DEBUG: Custom color input: {user_answers}", flush=True)
 
             # Skip LLM re-evaluation after ANY answer round — the QuestionsAgent

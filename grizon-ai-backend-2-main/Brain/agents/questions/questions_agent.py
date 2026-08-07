@@ -41,15 +41,6 @@ COLOR_PALETTES = [
     },
 ]
 
-THEME_TYPE_QUESTION = {
-    "id": "q_theme_type",
-    "text": "Do you prefer a dark or light theme?",
-    "type": "single",
-    "options": ["Dark theme", "Light theme"],
-    "allowAll": False,
-    "category": "design",
-}
-
 COLOR_PALETTE_QUESTION = {
     "id": "q_color_palette",
     "text": "What color direction appeals to you?",
@@ -58,7 +49,7 @@ COLOR_PALETTE_QUESTION = {
     "allowAll": False,
     "category": "design",
     "palettes": COLOR_PALETTES,
-    "allowCustom": True,  # User can type their own color preference
+    "allowCustom": True,
     "customPlaceholder": "Write your own color scheme... (e.g., 'neon green and black' or 'pastel pink and white')"
 }
 
@@ -194,10 +185,7 @@ Return ONLY JSON:
 
         normalized = normalized[:MAX_QUESTIONS]
 
-        # ALWAYS append theme type question first (dark or light?)
-        normalized.append(THEME_TYPE_QUESTION)
-
-        # Then append color palette question
+        # ALWAYS append color palette question (like Lovable)
         normalized.append(COLOR_PALETTE_QUESTION)
 
         round_num = state.get("question_rounds", 0)

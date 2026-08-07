@@ -1,16 +1,19 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 import os
 import json
 import asyncio
 from Brain.shared.agent import BaseAgent
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 
+
 class FrontendAgent(BaseAgent):
+    # Class-level skill cache: {task_category: skills_content}
+    _skill_cache = {}
+
     def __init__(self):
         super().__init__(
             name="Frontend Agent",
@@ -18,243 +21,128 @@ class FrontendAgent(BaseAgent):
             model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
         self.skill_resolver = SkillResolver()
+        # Cache bound model once — avoid recreating every execute()
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
+
+    async def _safe_tool_call(self, tool, args, config=None):
+        """Execute a tool call with error handling."""
+        try:
+            if config:
+                return await asyncio.wait_for(tool.ainvoke(args, config=config), timeout=30)
+            else:
+                return await asyncio.wait_for(tool.ainvoke(args), timeout=30)
+        except Exception as e:
+            return e
+
+    def _build_system_prompt(self, task: Dict, palette_colors: list, palette_name: str,
+                              theme_preference: str, custom_color_input: str,
+                              skills_content: str, framework: str) -> str:
+        """Build compact system prompt (~1500 tokens)."""
+
+        c = palette_colors
+        while len(c) < 5:
+            c.append('#0f172a' if theme_preference == 'dark' else '#ffffff')
+
+        prompt = f"""You are a Senior React Frontend Engineer. Stack: {framework} + Tailwind CSS + framer-motion + react-router-dom + lucide-react.
+
+═══ COLOR PALETTE (USE EXACTLY — NON-NEGOTIABLE) ═══
+Palette: {palette_name} | Theme: {theme_preference}
+- Base/Darkest: {c[0]}
+- Primary/Accent: {c[1]}
+- Secondary: {c[2]}
+- Text: {c[3]}
+- Background: {c[4]}
+{f"Custom: {custom_color_input}" if custom_color_input else ""}
+Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
+
+═══ RULES (VIOLATION = BROKEN BUILD) ═══
+1. Use client_save_code for EVERY file. One tool call per file.
+2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)
+3. Import EVERY component at top of file. Do NOT re-declare imported names.
+4. Use react-router-dom Link, NOT <a href>. Routes NOT Switch. element={{<X />}} NOT component={{X}}.
+5. Do NOT import CSS files (Tailwind is global). Do NOT use brand icons (Github, Google, Twitter).
+6. NO orphan components: every file MUST be imported in App.jsx AND rendered.
+7. NO duplicate files: pages in pages/, reusable UI in components/. Never both.
+8. NO TypeScript: use plain JSX, no React.FC types. No App.tsx — use App.jsx only.
+9. EVERY component needs real Tailwind styling — NEVER output <h1>Home Page</h1> as only content.
+10. Connect forms/data to backend via frontend/src/lib/api.js (apiGet, apiPost, apiPut, apiDelete). NEVER import browser Supabase client.
+11. ALL packages MUST be in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding deps.
+12. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
+
+═══ PREMIUM UI (NON-NEGOTIABLE) ═══
+- Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.
+- Glass: bg-white/10 backdrop-blur-xl border border-white/20
+- Shadows: shadow-2xl shadow-[c[1]]/20
+- Typography: font-bold tracking-tight, gradient text bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent
+- Layout: Hero full-width gradient, Cards glass+hover glow, Navbar sticky glass, Footer multi-column
+- Spacing: p-6 to p-12, generous breathing room
+
+═══ BATCH GENERATION (SPEED) ═══
+Generate ALL related files in ONE response (2-5 tool calls). This cuts time 40-60%.
+
+{f"SKILL FILES (read via read_skill_file when needed):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+
+═══ OUTPUT FORMAT ═══
+Respond ONLY in JSON.
+Update App.jsx ONLY IF: new page, new route, new layout, new navigation, new provider, or imports changed.
+Otherwise DO NOT generate App.jsx — just create the component files.
+{{"files": [...], "commands": [], "summary": "..."}}
+"""
+        return prompt
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
         framework = (state.get("framework") or "react").lower()
-        plan = state.get("project_plan", {})
-        executed = state.get("executed_tasks", [])[-5:]
-        
-        # Extract selected color palette from user's question answers
+        executed = state.get("executed_tasks", [])[-3:]  # Only last 3 tasks
+
+        # Extract color palette
         color_palette = state.get("selected_color_palette", {})
         theme_preference = state.get("theme_preference", "dark")
         custom_color_input = state.get("custom_color_input", "")
-        
         if not color_palette:
-            # Check in decisions or answers
             decisions = state.get("decisions", {})
             color_palette = decisions.get("color_palette", {})
-        
-        # Default palette based on theme preference
-        if theme_preference == "light":
-            default_colors = ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
-            default_name = "Clean Light"
-        else:
-            default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"]
-            default_name = "Midnight Blue"
-        
+
+        default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"] if theme_preference == "dark" \
+            else ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
         palette_colors = color_palette.get("colors", default_colors)
-        palette_name = color_palette.get("name", default_name)
-        
+        palette_name = color_palette.get("name", "Midnight Blue" if theme_preference == "dark" else "Clean Light")
+
+        # Skill resolution with caching by task category
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
-        structured_spec = format_structured_spec(task)
-        
+        # Only skip for truly trivial UI primitives — NOT navbar, hero, footer, etc.
+        simple_keywords = ["badge", "chip", "avatar", "spinner", "divider", "separator", "tooltip"]
+        is_simple = len(task_description) < 60 and any(kw in task_description.lower() for kw in simple_keywords)
+
         skills_content = "{}"
-        try:
-            skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
-        except Exception as e:
-            print(f"Skill resolution failed: {e}")
-            skills_content = "{}"
-        
-        system_prompt = f"""
-        You are the Frontend Agent for Grizon Brain. Stack: {framework} in `frontend/` (Vite + React template exists).
-        You build **production-quality, connected UIs** that appear correctly in the live preview.
+        if not is_simple:
+            # Cache by task category to avoid repeated resolution
+            task_category = task.get("category", "general")
+            if task_category in FrontendAgent._skill_cache:
+                skills_content = FrontendAgent._skill_cache[task_category]
+                print(f"[FRONTEND] Using cached skills for category: {task_category}", flush=True)
+            else:
+                try:
+                    skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
+                    FrontendAgent._skill_cache[task_category] = skills_content
+                except Exception:
+                    skills_content = "{}"
 
-        {FULL_STACK_BUILD_STANDARDS}
+        # Build compact system prompt
+        system_prompt = self._build_system_prompt(
+            task, palette_colors, palette_name, theme_preference,
+            custom_color_input, skills_content, framework
+        )
 
-        SKILL FILES (read when needed via read_skill_file tool):
-        {skills_content}
-
-        ***SELECTED COLOR PALETTE — USE THESE EXACT COLORS (NON-NEGOTIABLE)***:
-        Palette: {palette_name}
-        Theme: {theme_preference}
-        Colors: {palette_colors}
-        {f"Custom User Request: {custom_color_input}" if custom_color_input else ""}
-        - Color 1 (Darkest/Base): {palette_colors[0] if len(palette_colors) > 0 else '#0f172a'}
-        - Color 2 (Primary/Accent): {palette_colors[1] if len(palette_colors) > 1 else '#3b82f6'}
-        - Color 3 (Secondary): {palette_colors[2] if len(palette_colors) > 2 else '#60a5fa'}
-        - Color 4 (Text): {palette_colors[3] if len(palette_colors) > 3 else '#f8fafc'}
-        - Color 5 (Background): {palette_colors[4] if len(palette_colors) > 4 else '#1e293b'}
-
-        {f"IMPORTANT: User specifically requested: {custom_color_input}. Interpret this and create a matching color scheme." if custom_color_input else ""}
-
-        USE THESE COLORS FOR:
-        - {("Light background: Color 5 or Color 1 (white/light base)" if theme_preference == "light" else "Dark background: Color 5 or Color 1 (dark base)")}
-        - Primary buttons, links, accents: Color 2
-        - Secondary accents, borders: Color 3
-        - {("Dark text on light: Color 4" if theme_preference == "light" else "Light text on dark: Color 4")}
-        - Gradient combinations: Color 2 → Color 3
-        DO NOT use any other colors. Stick to this palette exactly.
-
-        ***PREMIUM UI DESIGN RULES (NON-NEGOTIABLE — THIS IS WHAT MAKES US UNIQUE)***:
-        Your frontend MUST look like a premium SaaS product, NOT a generic template. Follow these design principles:
-
-        **ANIMATIONS (MANDATORY — EVERY PAGE MUST HAVE THEM)**:
-        - Install: `framer-motion` in package.json
-        - Page transitions: Use `<AnimatePresence>` + `motion.div` with fade/slide animations between routes
-        - Hover effects: Every card, button, link MUST have hover animations (scale, glow, shadow shift)
-        - Loading states: Skeleton loaders, spinning indicators, shimmer effects — NEVER show blank screens
-        - Scroll animations: Use `motion.div` with `whileInView` for elements animating into view
-        - Micro-interactions: Button press feedback, input focus glow, toggle switches with spring animation
-
-        **DESIGN PATTERNS (USE THESE FOR PREMIUM LOOK)**:
-        - Glass morphism: `bg-white/10 backdrop-blur-xl border border-white/20` for cards/modals
-        - Gradient accents: `bg-gradient-to-r from-violet-500 to-purple-600` for buttons, headers, highlights
-        - Dark mode ready: Use `dark:` Tailwind variants or dark color palette by default
-        - Shadows: `shadow-2xl shadow-purple-500/20` for depth and glow effects
-        - Borders: Subtle `border-white/10` or `border-gray-700/50` for separation
-        - Spacing: Generous padding (p-6 to p-12), breathing room between sections
-
-        **TYPOGRAPHY (PREMIUM FEEL)**:
-        - Headings: `font-bold tracking-tight` or `font-extrabold` with gradient text
-        - Body: `text-gray-300` or `text-slate-400` for readability on dark backgrounds
-        - Use `bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent` for hero headings
-
-        **LAYOUT (MODERN SaaS STYLE)**:
-        - Hero: Full-width gradient background, large heading, animated CTA button, floating elements
-        - Cards: Glass effect with hover glow, icon + title + description pattern
-        - Navigation: Sticky, glassmorphism navbar with smooth scroll
-        - Footer: Multi-column with gradient separator
-        - Sections: Alternating backgrounds (dark/slightly lighter) for visual rhythm
-
-        **COLOR PALETTE (USER SELECTED — USE EXACTLY AS SHOWN ABOVE)**:
-        The user has chosen a color palette. USE THOSE EXACT COLORS throughout the entire UI.
-        - Primary gradient: Use Color 2 → Color 3 from the selected palette
-        - Background: Use Color 5 or Color 1
-        - Text: Use Color 4 for headings, lighter shade for body
-        - Accents: Use Color 2 for buttons, links, highlights
-        DO NOT deviate from the selected palette. No other colors allowed.
-
-        **AVOID (THIS LOOKS GENERIC)**:
-        - Using purple/violet for EVERY project (overused!)
-        - Plain white backgrounds with black text
-        - No animations or transitions
-        - Basic `<h1>` tags without styling
-        - Flat buttons without hover effects
-        - Tables without row hover highlighting
-        - Forms without focus glow effects
-
-        **EXAMPLE PREMIUM CARD** (use selected palette colors):
-        ```jsx
-        <motion.div
-          whileHover={{ scale: 1.02, y: -4 }}
-          className="p-6 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 hover:border-[Color2]/50 hover:shadow-2xl hover:shadow-[Color2]/10 transition-all duration-300"
-        >
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[Color2] to-[Color3] flex items-center justify-center mb-4">
-            <Icon className="text-white" size={24} />
-          </div>
-          <h3 className="text-xl font-bold text-white mb-2">{title}</h3>
-          <p className="text-gray-400">{description}</p>
-        </motion.div>
-        ```
-
-        **EXAMPLE PREMIUM BUTTON** (use selected palette colors):
-        ```jsx
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          className="px-8 py-3 rounded-xl bg-gradient-to-r from-[Color2] to-[Color3] text-white font-semibold shadow-lg shadow-[Color2]/25 hover:shadow-[Color2]/40 transition-all duration-300"
-        >
-          Get Started
-        </motion.button>
-        ```
-
-        ***SHADCN UI COMPONENTS (USE FOR PRODUCTION QUALITY)***:
-        - Use shadcn-style components for buttons, cards, inputs, badges, forms
-        - Create components in `frontend/src/components/ui/` directory
-        - Always import `cn` from `../lib/utils` for className merging
-        - Add dependencies to package.json: class-variance-authority, clsx, tailwind-merge, @radix-ui/react-slot
-        - Use CSS variables for theming (add to index.css)
-        - Example Card usage:
-          ```jsx
-          import {{ Card, CardContent, CardHeader, CardTitle }} from "../components/ui/card";
-          <Card>
-            <CardHeader><CardTitle>Title</CardTitle></CardHeader>
-            <CardContent>Content here</CardContent>
-          </Card>
-          ```
-
-        ***CRITICAL VIOLATIONS THAT WILL FAIL THE TASK***:
-        - Using `<Switch>` instead of `<Routes>` (React Router v5 vs v6)
-        - Using `component={{Home}}` instead of `element={{<Home />}}` (v5 vs v6 syntax)
-        - Creating components but NOT importing them in App.jsx (orphan components)
-        - Importing or using a browser Supabase client in frontend code (all DB access is server-side only)
-        - Home.jsx containing only `<h1>Home Page</h1>` (placeholder, not real UI)
-        - Not including the FULL updated App.jsx in your response
-        - Creating the SAME component in BOTH `frontend/src/components/` AND `frontend/src/pages/` (duplicate files)
-        - Creating a component that is NOT imported in App.jsx (orphan)
-
-        FRONTEND AGENT RULES:
-        1. **CRITICAL — Vite entry**: `frontend/src/main.jsx` imports `./App.jsx` ONLY. **`App.tsx` is NEVER used in preview.** All routes and component imports go in `frontend/src/App.jsx`.
-        2. **App.jsx is the product** — You MUST include `frontend/src/App.jsx` in every response that adds or changes components.
-           Import and render every component you create. Remove template demo (counter, "Grizon React", "ready for Brain to extend").
-        3. **FORBIDDEN**: `frontend/src/App.tsx` — do not create it. Use plain JSX in App.jsx (no TypeScript, no `React.FC` types).
-        4. **NO DUPLICATE FILES**: NEVER create the same component in both `frontend/src/components/` and `frontend/src/pages/`. Pages go in `pages/`, reusable UI blocks go in `components/`. If `PostPage.jsx` exists in `pages/`, do NOT also create it in `components/`.
-        5. **NO ORPHAN COMPONENTS**: Every file you create in `frontend/src/components/` or `frontend/src/pages/` MUST be imported in `frontend/src/App.jsx` and rendered in the JSX. Before returning, verify: for every component file, is it in App.jsx imports AND in the JSX tree?
-        6. **REACT ROUTER v6 MANDATORY**: Use `<Routes>` NOT `<Switch>`. Use `element={{<Component />}}` NOT `component={{Component}}`. Example:
-           ```jsx
-           import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
-           <BrowserRouter>
-             <Routes>
-               <Route path="/" element={{<Home />}} />
-               <Route path="/about" element={{<About />}} />
-             </Routes>
-           </BrowserRouter>
-           ```
-        7. **IMPORT ALL COMPONENTS**: If you created Home.jsx, About.jsx, Contact.jsx, Navbar.jsx, HeroSection.jsx — ALL must be imported in App.jsx. No orphan components allowed!
-        8. **REAL UI ONLY**: Every component MUST have real Tailwind CSS styling. NEVER output `<h1>Home Page</h1>` as the only content. Use the skills provided for UI quality.
-        9. **API integration** — Connect forms and data to the backend via `frontend/src/lib/api.js` (`apiGet`, `apiPost`, `apiPut`, `apiDelete`), using the backend's REAL `/api/*` routes (which mount in `backend/server.js`). NEVER import or use a browser Supabase client (e.g. `import {{ supabase }} from '../supabase/client.js'`) — all DB access happens server-side. Example: contact form → `apiPost('/api/contact', formData)`.
-        10. **Tailwind** — Use utility classes; add `tailwindcss`, `postcss`, `autoprefixer` to `frontend/package.json` if missing; include `tailwind.config.js` and `src/index.css` with `@tailwind` directives when styling.
-        11. **Structure**: `frontend/src/components/` for UI blocks; `frontend/src/pages/` for route pages when using router.
-        12. **commands & packages**: ALL packages used in the project MUST be added to `frontend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies (like `react-icons`, `lucide-react`, `@supabase/supabase-js`, etc.) or if the user reports a "Failed to resolve import" error, you MUST add them to `frontend/package.json` AND return `"commands": ["cd frontend && npm install"]`. The runner handles `npm run dev` at the end automatically.
-        13. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. For Vite, you MUST configure `vite.config.js` or the package.json dev script to explicitly use `--port 9999 --host 0.0.0.0`. This is an absolute requirement for the tunnel URL to work properly.
-        14. **CRITICAL VALIDATION RULE**: Before returning files, you MUST mentally verify for EVERY file created inside `frontend/src/components/` and `frontend/src/pages/`:
-            - 1. Is it imported in App.jsx or a parent page?
-            - 2. Is it rendered somewhere in the component tree?
-            - 3. No orphan components are allowed! An orphan component is any component that exists but is not reachable from App.jsx. If a component is not connected, the task is considered FAILED. Return ONLY when all components pass this internal checklist.
-        15. **APP.JSX IS THE SINGLE SOURCE OF TRUTH**: Every page, route, layout, component, section, widget, table, modal, form, dashboard, chart, navbar, footer, sidebar, and UI element created by the agent MUST be reachable from `App.jsx`. Never leave a placeholder `Home.jsx` as the only rendered page. Replace template routes completely with the generated application.
-        16. **ROUTING RULES**: If you create more than one page, you MUST: (1) Import all pages into App.jsx, (2) Create Route entries, (3) Create navigation links, (4) Ensure every page can be visited. Failure to connect routes is considered a failed task.
-        ```jsx
-        import {{ BrowserRouter, Routes, Route }} from 'react-router-dom';
-        import Navbar from './components/Navbar';
-        import Home from './pages/Home';
-        // import ALL other components/pages you created
-        export default function App() {{
-          return (
-            <BrowserRouter>
-              <div className="min-h-screen bg-slate-950 text-white">
-                <Navbar />
-                <Routes>
-                  <Route path="/" element={{<Home />}} />
-                  {{/* more routes */}}
-                </Routes>
-              </div>
-            </BrowserRouter>
-          );
-        }}
-        ```
-
-        TASK:
-        Title: {task.get('title')}
-        Description: {task.get('description')}
-        Acceptance: {task.get('acceptance_criteria', '')}
-        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
-
-        Respond ONLY in JSON. You MUST ALWAYS include the FULL `frontend/src/App.jsx` in the `files` array, even if you just added a small component. If you do not include `App.jsx`, the components will be orphaned and the UI will fail.
-        {{
-          "files": [ 
-             {{ "path": "frontend/src/App.jsx", "content": "import {{ BrowserRouter... \n// FULL UPDATED CODE HERE" }},
-             {{ "path": "frontend/src/components/MyNewComponent.jsx", "content": "..." }}
-          ],
-          "commands": [],
-          "summary": "List components created AND how they are wired in App.jsx + routes + API calls"
-        }}
-        """
+        # App.jsx context — skip for component-only tasks (Button, Card, Badge, etc.)
+        component_only_keywords = ["button", "card", "badge", "input", "modal", "avatar", "spinner", "tooltip", "divider"]
+        is_component_only = any(kw in task.get("title", "").lower() for kw in component_only_keywords)
 
         workspace_id = state.get("current_job_id")
         user_id = state.get("user_id")
-        current_app_jsx = ""
-        if workspace_id and not workspace_id.startswith("error:"):
+        app_jsx_context = ""
+        if not is_component_only and workspace_id and not workspace_id.startswith("error:"):
             from Brain.services.workspace_manager import workspace_manager
             ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
             if ws_root:
@@ -262,64 +150,55 @@ class FrontendAgent(BaseAgent):
                 if os.path.exists(app_jsx_path):
                     try:
                         with open(app_jsx_path, "r", encoding="utf-8") as f:
-                            current_app_jsx = f.read()
+                            content = f.read()
+                        # Extract only routes and imports (not full content)
+                        import re
+                        imports = [m.group(0) for m in re.finditer(r"import\s+.*?from\s+['\"].*?['\"]", content)]
+                        # Match single-line, multi-line, and nested Route definitions
+                        routes = [m.group(0).replace('\n', ' ').strip() for m in re.finditer(r"<Route\s+[^>]*?/?>", content)]
+                        summary_parts = []
+                        if imports:
+                            summary_parts.append(f"Imports ({len(imports)}): " + "; ".join(imports[:8]))
+                        if routes:
+                            summary_parts.append(f"Routes ({len(routes)}): " + "; ".join(routes[:6]))
+                        summary_parts.append(f"Lines: {len(content.splitlines())}")
+                        app_jsx_context = f"\n\nCURRENT App.jsx: {' | '.join(summary_parts)}\nOnly update App.jsx if required by this task. Otherwise leave it unchanged."
                     except Exception:
                         pass
-        
-        app_jsx_context = ""
-        if current_app_jsx:
-            # Truncate to save tokens — only send first 1500 chars
-            truncated = current_app_jsx[:1500] + ("..." if len(current_app_jsx) > 1500 else "")
-            app_jsx_context = f"\n\n--- CURRENT frontend/src/App.jsx (truncated) ---\n```jsx\n{truncated}\n```\nIMPORTANT: Build upon this file! If it contains a placeholder comment ('Brain MUST replace this file' or 'Remove this placeholder'), you MUST remove the placeholder setup entirely and implement the real Router with the components you created. Otherwise, preserve all existing real routes and imports. Return the FULL updated App.jsx file in your response."
 
-        session_state = state.get("memory_context", {}).get("session_state", {})
-        wf_state = session_state.get("workflow_state", "")
-        cur_agent = session_state.get("current_agent", "")
-        task_idx = session_state.get("task_index", "")
-        total_tk = session_state.get("total_tasks", "")
-        session_summary_parts = []
-        if wf_state: session_summary_parts.append(f"Phase: {wf_state}")
-        if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
-        if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
-        session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+        # Compact executed tasks context
+        executed_context = ""
+        if executed:
+            summaries = [t.get("title", "task") for t in executed if t.get("status") == "completed"]
+            executed_context = f"\nDone: {', '.join(summaries)}" if summaries else ""
 
-        active_decisions = state.get("active_decisions", {})
-        decisions_context = ""
-        if active_decisions:
-            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
-            decisions_context = "[Approved Decisions - CRITICAL - Must Follow]\n" + "\n".join(decisions_lines)
+        # Compact structured spec
+        structured_hint = format_structured_spec(task)
+        spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
-        messages = [SystemMessage(content=system_prompt)]
-        if session_context:
-            messages.append(SystemMessage(content=session_context))
-        if decisions_context:
-            messages.append(SystemMessage(content=decisions_context))
-        messages.append(
-            HumanMessage(
-                content=(
-                    f"Execute task: {task.get('title')}\n"
-                    f"Project plan: {json.dumps(plan, default=str)[:4000]}\n"
-                    f"Recent completed tasks: {json.dumps(executed, default=str)[:2000]}"
-                    f"{app_jsx_context}"
-                )
-            ),
+        # Build user message — compact
+        user_content = (
+            f"Task: {task.get('title')}\n"
+            f"Description: {task.get('description', '')}"
+            f"{spec_context}"
+            f"{executed_context}"
+            f"{app_jsx_context}"
         )
 
-        print(f"[FRONTEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
+        # Initialize messages
+        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = llm.bind_tools([client_save_code, read_skill_file])
+        print(f"[FRONTEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
-        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=messages[-1].content)]
+        files_saved = set()  # Use set to prevent duplicates
+        max_iterations = 3  # Reduced from 8 — most tasks need 1-2 iterations
 
-        files_saved = []
-        max_iterations = 8
         for iteration in range(max_iterations):
             try:
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(msgs),
-                    timeout=180
-                )
+                response = await asyncio.wait_for(self.bound_llm.ainvoke(msgs), timeout=60)
+            except asyncio.TimeoutError:
+                print(f"[FRONTEND] Timeout after 60s (iteration {iteration+1})", flush=True)
+                break
             except Exception as e:
                 print(f"[FRONTEND] LLM error: {e}", flush=True)
                 break
@@ -329,43 +208,49 @@ class FrontendAgent(BaseAgent):
             if not response.tool_calls:
                 break
 
-            for tc in response.tool_calls:
-                if tc["name"] == "client_save_code":
-                    tool_args = tc["args"]
-                    file_path = tool_args.get("file_path", "")
-                    code_content = tool_args.get("code_content", "")
+            # Execute tool calls in parallel if multiple save operations
+            save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
+            skill_calls = [tc for tc in response.tool_calls if tc["name"] == "read_skill_file"]
 
-                    if file_path and code_content:
-                        config = {"configurable": {"thread_id": state.get("current_job_id"), "task_title": task.get("title", ""), "user_id": state.get("user_id")}}
-                        try:
-                            await asyncio.wait_for(
-                                client_save_code.ainvoke(tool_args, config=config),
-                                timeout=30
-                            )
-                            files_saved.append(file_path)
-                            print(f"[FRONTEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
-                            msgs.append(ToolMessage(
-                                content=f"Successfully saved file: {file_path} ({len(code_content)} chars)",
-                                tool_call_id=tc["id"]
-                            ))
-                        except Exception as e:
-                            print(f"[FRONTEND] ✖ Failed to save {file_path}: {e}", flush=True)
-                            msgs.append(ToolMessage(
-                                content=f"Error saving {file_path}: {str(e)}",
-                                tool_call_id=tc["id"]
-                            ))
-                elif tc["name"] == "read_skill_file":
-                    tool_args = tc["args"]
-                    file_path = tool_args.get("file_path", "")
-                    try:
-                        result = await read_skill_file.ainvoke(tool_args)
-                        print(f"[FRONTEND] 📖 Read skill: {file_path} ({len(result)} chars)", flush=True)
+            # Execute skill reads first (parallel)
+            if skill_calls:
+                skill_results = await asyncio.gather(*[
+                    self._safe_tool_call(read_skill_file, tc["args"]) for tc in skill_calls
+                ], return_exceptions=True)
+                for tc, result in zip(skill_calls, skill_results):
+                    if isinstance(result, Exception):
+                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
+                    else:
                         msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-                    except Exception as e:
-                        msgs.append(ToolMessage(content=f"Error reading skill: {e}", tool_call_id=tc["id"]))
+
+            # Execute saves in parallel (parallel)
+            if save_calls:
+                save_configs = [{"configurable": {
+                    "thread_id": state.get("current_job_id"),
+                    "task_title": task.get("title", ""),
+                    "user_id": state.get("user_id")
+                }} for _ in save_calls]
+
+                save_results = await asyncio.gather(*[
+                    self._safe_tool_call(client_save_code, tc["args"], config)
+                    for tc, config in zip(save_calls, save_configs)
+                ], return_exceptions=True)
+
+                for tc, result in zip(save_calls, save_results):
+                    file_path = tc["args"].get("file_path", "")
+                    code_content = tc["args"].get("code_content", "")
+                    if isinstance(result, Exception):
+                        print(f"[FRONTEND] ✖ Failed: {file_path}: {result}", flush=True)
+                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
+                    else:
+                        files_saved.add(file_path)  # set.add() instead of list.append()
+                        print(f"[FRONTEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
+                        msgs.append(ToolMessage(
+                            content=f"Saved: {file_path} ({len(code_content)} chars)",
+                            tool_call_id=tc["id"]
+                        ))
 
         if not files_saved:
-            # Fallback: try parsing JSON from response
             last_content = msgs[-1].content if msgs else ""
             if isinstance(last_content, list):
                 last_content = str(last_content)
@@ -373,4 +258,4 @@ class FrontendAgent(BaseAgent):
             if isinstance(parsed, dict) and "files" in parsed:
                 return parsed
 
-        return {"files": [{"path": f, "content": ""} for f in files_saved], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        return {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}

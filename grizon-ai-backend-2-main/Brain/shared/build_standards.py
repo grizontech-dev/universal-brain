@@ -1,100 +1,207 @@
 """
-Mandatory full-stack build standards for Grizon Brain agents.
-Injected into Planner, Todo, Builder sub-agents, and skills alignment.
+Build standards for Grizon Brain agents.
+Split into agent-specific standards to reduce token usage.
 """
 
-FULL_STACK_BUILD_STANDARDS = """
-## Grizon Brain — mandatory full-stack delivery (NON-NEGOTIABLE)
+# ═══════════════════════════════════════════════════════════════
+# GLOBAL — Inject into ALL agents (~300 tokens)
+# ═══════════════════════════════════════════════════════════════
+GLOBAL_BUILD_STANDARDS = """
+## Grizon Brain — Global Rules (NON-NEGOTIABLE)
 
-### Preview must show the real product
-- Vite entry is `frontend/src/main.jsx` → imports **`./App.jsx` only** (NOT App.tsx). Writing `App.tsx` will NOT appear in preview.
-- The live preview reads `frontend/src/App.jsx`. If components exist but App.jsx still shows "Grizon React", a counter demo, or "ready for Brain to extend" — the build FAILED.
-- NEVER leave orphan files under `frontend/src/components/` — every component MUST be imported and rendered from App.jsx (or a page imported by App.jsx).
+### Code Quality
+- Output production-ready code. NEVER generate placeholders, stubs, or TODOs.
+- Every file must be complete, functional, and follow existing project conventions.
+- Use the project's established folder structure. Do not create new top-level directories.
+- Keep imports valid — every import must resolve to an actual file.
+- Do not hallucinate files or dependencies that don't exist.
+- Respect the structured spec when provided. Follow acceptance criteria exactly.
 
-### CRITICAL: UI Quality Standards (NON-NEGOTIABLE)
-- **Every component MUST have REAL content** — not just `<h1>Home Page</h1>`. Include:
-  - Proper Tailwind CSS styling (dark theme, gradients, shadows)
-  - Real headings, paragraphs, images (use placeholder images from unsplash/picsum)
-  - Interactive elements (buttons, forms, modals)
-  - Responsive design (mobile-first)
-  - Animations/transitions for polish
-- **Home page MUST have**: Hero section, Features section, About section, Contact section, Footer
-- **Dashboard MUST have**: Stats cards, data tables/charts, sidebar navigation
-- **Auth pages MUST have**: Form fields with validation, loading states, error handling
-- **NEVER output placeholder components** like `<h1>Home Page</h1>` or `<p>Coming soon</p>`
-- **Home.jsx MUST be 150-300 lines minimum** — include hero, stats bar, feature cards grid, why section, CTA section. NOT just a heading and one paragraph.
-- **Header.jsx MUST use `<Link to=\"/page\">` from react-router-dom** — NEVER use `<a href=\"/page\">` which causes full page reloads and breaks SPA navigation.
-- **Footer.jsx MUST be 50+ lines** — brand column, 3 link columns, copyright, social icons.
+### Naming & Structure
+- File names: PascalCase for components (Navbar.jsx), camelCase for utilities (api.js).
+- Route paths: lowercase kebab-case (/api/contact-us).
+- Variable names: camelCase. Component names: PascalCase.
+- Keep consistent naming across frontend and backend.
 
-### CRITICAL: Navigation Standards (NON-NEGOTIABLE)
-- Header nav links MUST use: `import {{ Link, useLocation }} from 'react-router-dom'` then `<Link to=\"/dashboard\">Dashboard</Link>`
-- NEVER use `<a href=\"/dashboard\">` — this causes a full page reload and breaks the single-page app
-- Use `useLocation()` to highlight the active nav item: `const isActive = location.pathname === item.path`
-- Every CTA button in Home.jsx MUST use `<Link to=\"/page\">` — not `<button onClick={...}>`
-- Footer links MUST use `<Link to=\"/page\">` — not `<a href=\"/page\">`
+### Validation Checklist
+- [ ] Every import resolves to an actual file
+- [ ] No orphan files (every file is used/imported)
+- [ ] All packages listed in package.json
+- [ ] Code follows existing patterns in the project
+"""
 
-### CRITICAL: Task Failures (NON-NEGOTIABLE)
-The following will cause the task to FAIL immediately:
-- Using `<Switch>` instead of `<Routes>` (React Router v5 syntax)
-- Using `component={Home}` instead of `element={<Home />}` (v5 syntax)
-- Creating components but NOT importing them in App.jsx (orphan components)
-- Home.jsx containing only `<h1>Home Page</h1>` (placeholder, not real UI)
-- Not including the FULL updated App.jsx in the response
-- Missing Navbar in App.jsx when Navbar component exists
+# ═══════════════════════════════════════════════════════════════
+# FRONTEND — Only FrontendAgent (~500 tokens)
+# ═══════════════════════════════════════════════════════════════
+FRONTEND_BUILD_STANDARDS = """
+## Frontend Standards (NON-NEGOTIABLE)
 
-### CRITICAL: Import validation (NON-NEGOTIABLE)
-- **Every import in App.jsx MUST correspond to an actual file in the workspace.** Before writing App.jsx, the agent MUST list all component files it created and ONLY import those.
-- **NEVER import components that don't exist.** If you created `Home.jsx`, `About.jsx`, `Contact.jsx` — import those. If you created `Login.jsx`, `Register.jsx`, `TaskList.jsx` — import those. Match imports to actual files.
-- **NEVER import from paths like `./components/NotFound`** unless `NotFound.jsx` was explicitly created by the agent in the same task.
-- **Router routes MUST use the same component names as the imports.** If you import `Home`, use `<Home />`. If you import `TaskList`, use `<TaskList />`.
-- **Every page/component imported in App.jsx MUST exist as a file.** The agent must verify: "I created X files, I import X files, they match."
-- If the agent creates 5 components, App.jsx MUST import and render exactly those 5 components — no more, no fewer.
+### Preview & App.jsx
+- Vite entry: `frontend/src/main.jsx` → imports `./App.jsx` ONLY (NOT App.tsx).
+- Preview reads `frontend/src/App.jsx`. If it shows placeholder text — build FAILED.
+- NEVER leave orphan files. Every component MUST be imported and rendered from App.jsx.
+- NEVER create `frontend/src/App.tsx`. Use App.jsx only (plain JSX, no TypeScript).
 
-### Frontend (`frontend/`)
-- **CRITICAL PORT: Vite dev server MUST run on port 9999** (not 5173). The remote sandbox tunnel is bound to port 9999.
-  - In `vite.config.js`: `server: { port: 9999 }`
-  - In `package.json` dev script: `"dev": "vite --host 0.0.0.0 --port 9999"`
-  - If port is 5173, the live preview will show "refused to connect".
-- **NEVER create `frontend/src/App.tsx`.** Put all app wiring in **`frontend/src/App.jsx`** only (JavaScript JSX, not TypeScript).
-- If you wrote TypeScript by habit, rewrite the same content as `App.jsx` and do not output App.tsx.
-- Add `react-router-dom` in `frontend/package.json` when using multiple pages.
-- **Routing (React Router v6)**: wrap app in `BrowserRouter`; Navbar uses `<Link to="...">`; use `<Routes>` (NOT `<Switch>`); use `element={<Component />}` (NOT `component={Component}`); paths MUST match Link targets exactly (`/`, `/about`, `/programs`, `/contact`, etc.). Example: `<Route path="/" element={<Home />} />`
-- **Single-page landing**: one route `/` with Navbar + Hero + Features + About + Contact + Footer stacked; navbar anchor/hash links must scroll to section ids.
-- **API calls**: use `import { apiGet, apiPost } from './lib/api.js'` — paths like `/api/contact`, `/api/programs` (Vite proxies `/api` → Express :3001).
-- **UI quality**: Use shadcn-style components for production quality. Create `frontend/src/components/ui/` with Button, Card, Input, Badge components. Add `class-variance-authority`, `clsx`, `tailwind-merge` to package.json. Create `frontend/src/lib/utils.js` with `cn` helper. Use CSS variables for theming.
-- **Forms**: Contact/program forms call `apiPost('/api/...', data)` with loading + error states. Use shadcn Input and Button components.
+### UI Quality
+- Every component MUST have REAL content — never `<h1>Home Page</h1>`.
+- Tailwind CSS on everything: dark theme, gradients, shadows, responsive.
+- Home page: Hero + Features + About + Contact + Footer sections.
+- Dashboard: Stats cards, data tables/charts, sidebar navigation.
+- Auth pages: Form fields with validation, loading states, error handling.
+- Animations: framer-motion — page transitions, hover effects, scroll animations.
+- Use shadcn-style components for production quality.
 
-### Backend (`backend/`)
-- Express on port **3001**. Every new `routes/*.js` MUST be imported and mounted in `backend/server.js`:
+### Navigation (React Router v6)
+- Wrap app in `<BrowserRouter>`. Use `<Routes>` NOT `<Switch>`.
+- Use `element={<Component />}` NOT `component={Component}`.
+- Header/Footer links: `<Link to="/page">` — NEVER `<a href>` (breaks SPA).
+- Use `useLocation()` to highlight active nav item.
+- Every route in App.jsx must have a matching Link in navigation.
+
+### Import Validation
+- Every import in App.jsx MUST correspond to an actual file.
+- Before writing App.jsx, list all component files and ONLY import those.
+- Router routes MUST use same component names as imports.
+- If you create 5 components, App.jsx imports and renders exactly 5.
+
+### Port & Config
+- Vite dev server MUST run on port 9999 (not 5173).
+- In vite.config.js: `server: { port: 9999 }`
+- API calls: `import { apiGet, apiPost } from './lib/api.js'`
+- Vite proxies `/api` → Express :3001.
+
+### Task Failures (Immediate Fail)
+- Using `<Switch>` instead of `<Routes>`
+- Using `component={Home}` instead of `element={<Home />}`
+- Creating orphan components not imported in App.jsx
+- Home.jsx containing only `<h1>Home Page</h1>`
+- Not including FULL updated App.jsx in response
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# BACKEND — Only BackendAgent (~400 tokens)
+# ═══════════════════════════════════════════════════════════════
+BACKEND_BUILD_STANDARDS = """
+## Backend Standards (NON-NEGOTIABLE)
+
+### Stack & Syntax
+- Express.js on port 3001. CommonJS (require/module.exports). NEVER use ES modules.
+- Structure: `backend/routes/*.js`, `backend/controllers/*.js`.
+- Use Express.Router in routes: `module.exports = router;`
+- Every controller starts with: `const { supabase } = require('../supabase/client');`
+
+### Server.js
+- Every new route MUST be imported and mounted in `backend/server.js`:
+  `const contactRoutes = require('./routes/contact');`
   `app.use('/api/contact', contactRoutes);`
-- Controllers must check for a connected user Supabase connector first; if one exists, generated code should use that connector's configuration. Only fall back to the company-owned Python Supabase proxy when no connector is connected. Never ask users for their own Supabase credentials or expose database access in the browser.
-- JSON: `{ success: true, data }` or `{ success: false, error: "..." }`.
-- List all new deps in `backend/package.json` (Runner runs npm install).
+- Write server.js LAST with ALL routes mounted.
+- Preserve existing mounts when updating server.js.
 
-### Database / Supabase
-- Use the Shared Table + JSONB Data Matrix Pattern for Supabase-backed features: a shared tenant-scoped table with JSONB payload fields, not one table per user.
-- If a user already has a connected Supabase connector, prefer that connector first; fall back to the company-owned Python Supabase proxy only when no connector is connected.
-- Schema as `backend/supabase/*.sql` files only (no Supabase CLI commands).
-- Tables referenced in controllers must exist in SQL files, and indexes must reflect tenant filters plus JSONB search paths.
-- Keep payloads sparse and prune large blobs to respect the 500 MB free-tier storage constraint.
-- Document only server-side, company-owned env vars in summaries; never request user Supabase credentials.
+### Supabase & Database
+- Check user's connected Supabase connector first; fallback to Python proxy.
+- NEVER ask users for their own Supabase credentials.
+- NEVER import browser Supabase client. All DB access is server-side.
+- Shared Table + JSONB: one shared tenant-scoped table, NOT one table per user.
+- Schema as `backend/supabase/*.sql` files only (no Supabase CLI).
+- Keep payloads sparse, prune large blobs (500 MB free-tier limit).
 
-### Task order (Todo Agent)
+### API Contract
+- Frontend calls `/api/...` — your routes must match exactly.
+- JSON responses: `{ success: true, data }` or `{ success: false, error: "..." }`.
+- List all new deps in `backend/package.json`.
+- Return `"commands": ["cd backend && npm install"]` when adding dependencies.
+
+### Port & Config
+- Express port 3001 (internal). Vite proxies to it.
+- All web servers MUST run on port 9999 for tunnel URL.
+- Bind to 0.0.0.0 for sandbox compatibility.
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# DATABASE — Only DatabaseAgent (~200 tokens)
+# ═══════════════════════════════════════════════════════════════
+DATABASE_BUILD_STANDARDS = """
+## Database / Supabase Standards (NON-NEGOTIABLE)
+
+### Schema Pattern
+- Shared Table + JSONB Data Matrix: one shared tenant-scoped table with JSONB payload fields.
+- NOT one table per user. Use tenant_id + JSONB for flexibility.
+- Schema files: `backend/supabase/*.sql` only. No Supabase CLI commands.
+
+### Connector Priority
+- If user has connected Supabase connector → use that connector's config first.
+- Fallback to company-owned Python Supabase proxy only when no connector connected.
+- Never request user Supabase credentials. Never expose DB access in browser.
+
+### Constraints
+- Indexes must reflect tenant filters + JSONB search paths.
+- Keep payloads sparse. Prune large blobs (500 MB free-tier limit).
+- Document only server-side, company-owned env vars in summaries.
+
+### Validation
+- Tables referenced in controllers MUST exist in SQL files.
+- Every SQL file must be syntactically valid.
+- Include appropriate indexes for query performance.
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# INTEGRATION — Only Integration task (~300 tokens)
+# ═══════════════════════════════════════════════════════════════
+INTEGRATION_BUILD_STANDARDS = """
+## Integration Standards (NON-NEGOTIABLE)
+
+### App.jsx Wiring
+1. List EVERY file in `frontend/src/components/` and `frontend/src/pages/` recursively.
+2. Rewrite App.jsx to import AND render ALL those files — no orphans allowed.
+3. React Router v6: `<BrowserRouter>`, `<Routes>` (NOT `<Switch>`), `element={<X />}` (NOT `component={X}`).
+
+### Backend Wiring
+1. Verify `backend/server.js` mounts every `routes/*.js` under `/api/*`.
+2. Ensure all controllers are properly imported.
+
+### API Connection
+1. Wire frontend forms/lists to backend via `frontend/src/lib/api.js`.
+2. Use actual `/api/*` routes defined by backend tasks.
+3. Use apiGet / apiPost / apiPut / apiDelete.
+
+### Cleanup
+1. Delete duplicate components (keep one canonical name per feature).
+2. Delete `frontend/src/App.tsx` if it exists.
+3. Add `react-router-dom` to `frontend/package.json` if missing.
+4. Include FULL updated App.jsx in response.
+
+### Validation
+- [ ] App.jsx imports ALL created components
+- [ ] server.js mounts ALL routes
+- [ ] Frontend forms connect to backend API
+- [ ] No orphan files remain
+- [ ] No duplicate components
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# TASK ORDER — For Todo Agent
+# ═══════════════════════════════════════════════════════════════
+TASK_ORDER_STANDARDS = """
+## Task Order (Todo Agent)
+
 1. Database schema (if needed)
 2. Backend routes + controllers + server.js mounts
 3. Frontend components + pages
-4. **Integration task** — rewrite App.jsx + verify server.js mounts + wire forms to API through the Python Supabase proxy
+4. Integration task — wire App.jsx + server.js + API connections
 5. Runner (install & start servers) — never duplicate in other tasks
 
-### FINAL VALIDATION CHECKLIST (Before marking task complete)
-- [ ] App.jsx imports ALL created components (no orphans)
-- [ ] Every component has REAL UI content (not placeholders)
-- [ ] Tailwind CSS applied to all components
-- [ ] Backend server.js mounts ALL routes
-- [ ] Frontend connects to backend via api.js
-- [ ] No console errors in preview
-- [ ] Responsive design works on mobile
+### Acceptance Criteria
+- Preview shows complete working website with navigation
+- All styled components render correctly
+- Working API calls between frontend and backend
+- No console errors in preview
+- Responsive design works on mobile
 """
+
+# ═══════════════════════════════════════════════════════════════
+# BACKWARD COMPATIBILITY — Keep original for any external usage
+# ═══════════════════════════════════════════════════════════════
+FULL_STACK_BUILD_STANDARDS = GLOBAL_BUILD_STANDARDS + FRONTEND_BUILD_STANDARDS + BACKEND_BUILD_STANDARDS + DATABASE_BUILD_STANDARDS
 
 INTEGRATION_TASK_TEMPLATE = {
     "id": "t-integration",

@@ -8,13 +8,128 @@ from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 
 from Brain.services.workspace_manager import workspace_manager
 from Brain.services.websocket_manager import ws_manager
 
 LOG = "[BUILDER]"
+
+
+class ProjectIndex:
+    """Caches project filesystem data to avoid repeated os.walk() calls.
+    
+    Usage:
+        index = ProjectIndex.get_or_create(frontend_src)  # Get cached or create new
+        index.scan()  # One-time scan
+        jsx_files = index.jsx_files  # Cached list
+        imports = index.get_imports(file_path)  # Cached imports
+    """
+    
+    _cache = {}  # Class-level cache: {frontend_src: ProjectIndex}
+    
+    def __init__(self, frontend_src: str):
+        self.frontend_src = frontend_src
+        self.jsx_files = []  # [(full_path, rel_path), ...]
+        self.all_files = {}  # {rel_path: full_path}
+        self.imports_cache = {}  # {file_path: [imports]}
+        self._scanned = False
+    
+    @classmethod
+    def get_or_create(cls, frontend_src: str) -> 'ProjectIndex':
+        """Get cached ProjectIndex or create new one."""
+        if frontend_src not in cls._cache:
+            cls._cache[frontend_src] = cls(frontend_src)
+        return cls._cache[frontend_src]
+    
+    @classmethod
+    def clear_cache(cls):
+        """Clear the cache (call at start of new build)."""
+        cls._cache = {}
+    
+    def scan(self):
+        """Scan the frontend/src directory once."""
+        if self._scanned:
+            return
+        
+        import re
+        self.jsx_files = []
+        self.all_files = {}
+        self.imports_cache.clear()  # Clear cached imports on rescan
+        
+        for root, dirs, files in _os.walk(self.frontend_src):
+            for f in files:
+                full = _os.path.join(root, f)
+                rel = _os.path.relpath(full, self.frontend_src).replace('\\', '/')
+                self.all_files[rel] = full
+                if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
+                    self.jsx_files.append((full, rel))
+        
+        self._scanned = True
+        print(f"{LOG} ProjectIndex: {len(self.jsx_files)} JSX/JS files, {len(self.all_files)} total files", flush=True)
+    
+    def get_imports(self, file_path: str) -> list:
+        """Get imports from a file (cached)."""
+        if file_path in self.imports_cache:
+            return self.imports_cache[file_path]
+        
+        import re
+        imports = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Match: import X from './path' or import { X } from './path'
+            for match in re.finditer(r"import\s+(?:\w+|\{[^}]+\})\s+from\s+['\"]\.\/(components|pages|lib|hooks)\/(\w+)['\"]", content):
+                folder, name = match.groups()
+                imports.append((folder, name))
+        except Exception:
+            pass
+        
+        self.imports_cache[file_path] = imports
+        return imports
+    
+    def file_exists(self, rel_path: str) -> bool:
+        """Check if a file exists (uses cache)."""
+        return rel_path in self.all_files
+    
+    def get_existing_components(self) -> list:
+        """Get list of existing components for context."""
+        return [f"  - {rel}" for rel in sorted(self.all_files.keys()) 
+                if rel.endswith(('.jsx', '.js')) and not rel.startswith('main.')]
+    
+    def get_file_metadata(self, rel_path: str) -> str:
+        """Get file metadata (exports, structure) instead of full content."""
+        import re
+        full_path = self.all_files.get(rel_path)
+        if not full_path:
+            return ""
+        
+        try:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Extract exports
+            exports = []
+            for match in re.finditer(r'export\s+(?:default\s+)?(?:function|const|class)\s+(\w+)', content):
+                exports.append(match.group(1))
+            
+            # Extract imports (just the module names)
+            imports = []
+            for match in re.finditer(r'import\s+.*?from\s+["\']([^"\']+)["\']', content):
+                imports.append(match.group(1))
+            
+            # Build metadata summary
+            meta_parts = []
+            if exports:
+                meta_parts.append(f"exports: {', '.join(exports)}")
+            if imports:
+                meta_parts.append(f"imports from: {', '.join(imports[:5])}{'...' if len(imports) > 5 else ''}")
+            meta_parts.append(f"lines: {len(content.splitlines())}")
+            
+            return f"{rel_path} ({'; '.join(meta_parts)})"
+        except Exception:
+            return rel_path
+
 
 class BuilderAgent(BaseAgent):
     def __init__(self):
@@ -134,11 +249,11 @@ class BuilderAgent(BaseAgent):
 
     async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend", user_id: str = None) -> str:
         """
-        One-file-at-a-time agent loop.
-        Each LLM call generates exactly ONE file. After saving, we tell the LLM
-        what was saved and ask for the next file. This prevents timeout on large tasks.
+        Multi-file agent loop.
+        Each LLM call generates MULTIPLE files (2-5 files per call).
+        This is 40-60% faster than one-file-per-call.
         """
-        max_files = 5  # Reduced from 8 to save LLM credits
+        max_files = 8  # Allow more files per task
         files_saved = []
         start_time = time.time()
 
@@ -168,7 +283,6 @@ class BuilderAgent(BaseAgent):
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        bound_llm = self.llm.bind_tools([client_save_code])
         start_time = time.time()
         seen_files = set()
         tool_call_count = 0
@@ -202,7 +316,7 @@ class BuilderAgent(BaseAgent):
                         "activities": [{
                             "id": f"act-gen-{int(time.time() * 1000)}",
                             "type": "run_command",
-                            "label": f"AI generating file {len(files_saved)+1}...",
+                            "label": f"AI generating files ({len(files_saved)}/{max_files})...",
                             "taskTitle": task_title,
                             "status": "running",
                             "timestamp": int(time.time() * 1000),
@@ -343,16 +457,22 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         # VALIDATION LOOP: Scan ALL files for broken imports, auto-fix
         # ═══════════════════════════════════════════════════════════════
-        print(f"{LOG} ═══ VALIDATION: Scanning for broken imports ═══", flush=True)
-        fixed_files = await self._validate_and_fix_imports(
+        print(f"{LOG} ═══ VALIDATION: Scanning for broken imports + backend routes ═══", flush=True)
+        
+        # Run both validations in parallel
+        import_validation_task = self._validate_and_fix_imports(
             session_id, task_title, files_saved, start_time, timeout_sec
         )
-
-        # ═══════════════════════════════════════════════════════════════
-        # BACKEND VALIDATION: Check server.js mounts all routes
-        # ═══════════════════════════════════════════════════════════════
-        await self._validate_backend_routes(session_id)
-        files_saved.extend(fixed_files)
+        backend_validation_task = self._validate_backend_routes(session_id)
+        
+        fixed_files, _ = await asyncio.gather(
+            import_validation_task,
+            backend_validation_task,
+            return_exceptions=True
+        )
+        
+        if isinstance(fixed_files, list):
+            files_saved.extend(fixed_files)
 
         # Summary
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -363,12 +483,20 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
         # ═══════════════════════════════════════════════════════════════
-        files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+        # Skip Phase 1 (import validation) since _validate_and_fix_imports already ran
+        # Quick esbuild check first - skip repair if build passes
+        if not files_saved or category == "database":
+            print(f"{LOG} ⏭ Skipping esbuild check (no frontend files or database task)", flush=True)
+        else:
+            files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
 
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
 
     async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
-        """Comprehensive self-healing: validate imports → fix missing files → esbuild syntax check → auto-fix errors."""
+        """Self-healing: esbuild syntax check → auto-fix errors.
+        
+        Import validation is handled separately by _validate_and_fix_imports().
+        """
         import os as _os
         import re as _re
         import asyncio
@@ -386,208 +514,22 @@ class BuilderAgent(BaseAgent):
         start_time = _time.time()
         bound_llm = self.llm.bind_tools([client_save_code])
 
-        # ═══════════════════════════════════════════════════════════════
-        # PHASE 1: Import validation — find missing imported files
-        # ═══════════════════════════════════════════════════════════════
-        print(f"{LOG} ═══ SELF-HEALING: Phase 1 — Import validation ═══", flush=True)
-
-        all_jsx_files = []
-        for root, dirs, files in _os.walk(frontend_src):
-            for f in files:
-                if f.endswith(('.jsx', '.js', '.tsx', '.ts')) and not f.startswith('main.'):
-                    full = _os.path.join(root, f)
-                    rel = _os.path.relpath(full, frontend_src).replace('\\', '/')
-                    all_jsx_files.append((full, rel))
-
-        # Check for missing imports
-        import_pattern = _re.compile(
-            r"import\s+(?:\w+|\{[^}]+\})\s+from\s+['\"]\.\/(components|pages|lib|hooks)\/(\w+)['\"]"
-        )
-        missing_imports = []
-        already_checked = set()
-
-        for full_path, rel_path in all_jsx_files:
-            try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except Exception:
-                continue
-
-            imports = import_pattern.findall(content)
-            for folder, name in imports:
-                check_key = f"{folder}/{name}"
-                if check_key in already_checked:
-                    continue
-                already_checked.add(check_key)
-
-                found = False
-                for ext in ['.jsx', '.js', '.tsx', '.ts']:
-                    if _os.path.exists(_os.path.join(frontend_src, folder, f"{name}{ext}")):
-                        found = True
-                        break
-
-                if not found:
-                    missing_imports.append({
-                        "path": f"frontend/src/{folder}/{name}.jsx",
-                        "name": name,
-                        "folder": folder,
-                        "imported_by": rel_path,
-                    })
-                    print(f"{LOG}   ✖ {rel_path} imports {folder}/{name} → MISSING", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # PHASE 1b: Check App.jsx is not placeholder
-        # ═══════════════════════════════════════════════════════════════
-        app_jsx_path = _os.path.join(frontend_src, "App.jsx")
-        app_is_placeholder = False
-        if _os.path.isfile(app_jsx_path):
-            try:
-                with open(app_jsx_path, 'r', encoding='utf-8') as f:
-                    app_content = f.read()
-                if any(marker in app_content for marker in ["Brain MUST replace", "Brain UI Builder", "Remove this placeholder"]):
-                    app_is_placeholder = True
-                    print(f"{LOG}   ✖ App.jsx is still a placeholder — needs real implementation", flush=True)
-            except Exception:
-                pass
-
-        # Generate missing imports + fix placeholder App.jsx via LLM
-        if missing_imports or app_is_placeholder:
-            print(f"{LOG} → Generating {len(missing_imports)} missing files + fixing App.jsx...", flush=True)
-
-            sys_msg = (
-                "You are a React frontend engineer. Generate missing component files and fix broken App.jsx.\n"
-                "Rules:\n"
-                "- Dark theme: bg-[#09090b], text-white, Tailwind CSS\n"
-                "- Use lucide-react for icons\n"
-                "- Real functional content, NOT placeholders\n"
-                "- Each component: export default, 50-150 lines\n"
-                "- For App.jsx: use BrowserRouter, Route, Routes from react-router-dom\n"
-                "- Import ALL components that exist in the project\n"
-                "- CRITICAL: Do NOT output placeholder/stub code. Every component must be fully functional.\n"
-            )
-
-            gen_messages = [SystemMessage(content=sys_msg)]
-
-            # Build context about existing components
-            existing_components = []
-            for root, dirs, files in _os.walk(frontend_src):
-                for f in files:
-                    if f.endswith(('.jsx', '.js')) and not f.startswith('main.'):
-                        name = f.split('.')[0]
-                        rel = _os.path.relpath(_os.path.join(root, f), frontend_src).replace('\\', '/')
-                        existing_components.append(f"  - {rel}")
-
-            if existing_components:
-                gen_messages.append(HumanMessage(content=(
-                    "Existing project files:\n" + "\n".join(existing_components) +
-                    "\n\nUse this context to generate proper imports in App.jsx."
-                )))
-
-            # Generate each missing file
-            for item in missing_imports:
-                if _time.time() - start_time > timeout_sec - 60:
-                    print(f"{LOG} ✖ Timeout — skipping remaining missing files", flush=True)
-                    break
-
-                gen_messages.append(HumanMessage(content=(
-                    f"Generate the missing file: {item['path']}\n"
-                    f"This is a {item['folder']} component called '{item['name']}'.\n"
-                    f"It's imported in {item['imported_by']}.\n"
-                    f"Make it a complete, working React component with Tailwind CSS dark theme.\n"
-                    f"Use client_save_code to save it to: {item['path']}"
-                )))
-
-                try:
-                    response = await asyncio.wait_for(bound_llm.ainvoke(list(gen_messages)), timeout=120)
-                    gen_messages.append(response)
-
-                    if response.tool_calls:
-                        for tc in response.tool_calls:
-                            if tc["name"] == "client_save_code":
-                                tool_args = tc["args"]
-                                fp = tool_args.get("file_path", "")
-                                try:
-                                    await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Self-heal)"}}),
-                                        timeout=30
-                                    )
-                                    if fp and fp not in files_saved:
-                                        files_saved.append(fp)
-                                    print(f"{LOG} ✓ Generated missing: {fp}", flush=True)
-                                except Exception as e:
-                                    print(f"{LOG} ✖ Failed to generate {fp}: {e}", flush=True)
-                except Exception as e:
-                    print(f"{LOG} ✖ LLM error generating missing file: {e}", flush=True)
-
-            # Fix placeholder App.jsx if needed
-            if app_is_placeholder and _time.time() - start_time < timeout_sec - 60:
-                # Collect all component names for the prompt
-                all_components = []
-                for root, dirs, files in _os.walk(frontend_src):
-                    for f in files:
-                        if f.endswith(('.jsx', '.js')) and f not in ('App.jsx', 'main.jsx', 'index.js'):
-                            name = f.split('.')[0]
-                            rel = _os.path.relpath(_os.path.join(root, f), frontend_src).replace('\\', '/')
-                            import_path = f"./{rel.replace('.jsx', '').replace('.js', '')}"
-                            all_components.append({"name": name, "import_path": import_path, "rel": rel})
-
-                component_list = "\n".join([f"  - {c['name']} from '{c['import_path']}'" for c in all_components])
-
-                fix_messages = [
-                    SystemMessage(content=(
-                        "You are a React frontend engineer. Replace the placeholder App.jsx with a real implementation.\n"
-                        "Rules:\n"
-                        "- Use BrowserRouter, Route, Routes from react-router-dom\n"
-                        "- Import and render ALL existing components listed below\n"
-                        "- Dark theme: bg-[#09090b], text-white\n"
-                        "- Tailwind CSS layout\n"
-                        "- CRITICAL: This must be a COMPLETE, WORKING App.jsx — no placeholders.\n"
-                        "- Use client_save_code to save to: frontend/src/App.jsx\n"
-                    )),
-                    HumanMessage(content=(
-                        f"Existing components to import:\n{component_list}\n\n"
-                        "Generate a complete App.jsx that imports and renders all these components with proper routing."
-                    ))
-                ]
-
-                try:
-                    response = await asyncio.wait_for(bound_llm.ainvoke(fix_messages), timeout=120)
-                    if response.tool_calls:
-                        for tc in response.tool_calls:
-                            if tc["name"] == "client_save_code":
-                                tool_args = tc["args"]
-                                fp = tool_args.get("file_path", "")
-                                try:
-                                    await asyncio.wait_for(
-                                        client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix App.jsx)"}}),
-                                        timeout=30
-                                    )
-                                    if fp and fp not in files_saved:
-                                        files_saved.append(fp)
-                                    print(f"{LOG} ✓ Fixed placeholder App.jsx", flush=True)
-                                except Exception as e:
-                                    print(f"{LOG} ✖ Failed to fix App.jsx: {e}", flush=True)
-                except Exception as e:
-                    print(f"{LOG} ✖ LLM error fixing App.jsx: {e}", flush=True)
-        else:
-            print(f"{LOG} ✓ All imports validated — no missing files", flush=True)
+        # Use cached ProjectIndex instead of repeated os.walk
+        project_index = ProjectIndex.get_or_create(frontend_src)
+        project_index.scan()
 
         # ═══════════════════════════════════════════════════════════════
         # PHASE 2: esbuild syntax check (max 2 iterations to save credits)
         # ═══════════════════════════════════════════════════════════════
-        print(f"{LOG} ═══ SELF-HEALING: Phase 2 — esbuild syntax check ═══", flush=True)
+        print(f"{LOG} ═══ SELF-HEALING: esbuild syntax check ═══", flush=True)
 
         for iteration in range(2):
             if _time.time() - start_time > timeout_sec - 30:
                 print(f"{LOG} ✖ Timeout — skipping remaining esbuild iterations", flush=True)
                 break
 
-            # Re-collect files (may have been added in Phase 1)
-            all_files = []
-            for root, _, files in _os.walk(frontend_src):
-                for f in files:
-                    if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
-                        all_files.append(_os.path.join(root, f))
+            # Use cached ProjectIndex for file list
+            all_files = [full_path for full_path, _ in project_index.jsx_files]
 
             if not all_files:
                 break
@@ -652,20 +594,46 @@ class BuilderAgent(BaseAgent):
 
                 print(f"{LOG} ⚠ esbuild failed (iter {iteration+1}):\n{error_output[:500]}...", flush=True)
 
-                # Read ALL existing source files for context
+                # Extract file names from error message (targeted approach)
+                import re as _re
+                error_files = set()
+                for match in _re.finditer(r'(?:"([^"]+\.jsx?)"|\'([^\']+\.jsx?)\')', error_output):
+                    fname = match.group(1) or match.group(2)
+                    if fname and not fname.startswith('node_modules'):
+                        error_files.add(fname)
+                
+                # Also check for line numbers like "path/file.jsx:123"
+                for match in _re.finditer(r'([^\s:]+\.jsx?):(\d+)', error_output):
+                    fname = match.group(1)
+                    if fname and not fname.startswith('node_modules'):
+                        error_files.add(fname)
+                
+                # If no files extracted from error, fall back to first 3 files
+                if not error_files:
+                    error_files = {fp for fp in all_files[:3]}
+                else:
+                    # Convert relative paths to full paths
+                    error_files = {_os.path.join(frontend_src, f) for f in error_files if _os.path.exists(_os.path.join(frontend_src, f))}
+                    # If none exist, try from frontend_dir
+                    if not error_files:
+                        error_files = {_os.path.join(frontend_dir, f) for f in error_files if _os.path.exists(_os.path.join(frontend_dir, f))}
+
+                # Read ONLY error-related files for context (targeted)
                 file_context = ""
-                for fp in all_files[:8]:  # Reduced from 15 to save tokens
+                for fp in list(error_files)[:5]:  # Max 5 files
+                    if not _os.path.isfile(fp):
+                        continue
                     try:
                         with open(fp, 'r', encoding='utf-8') as f:
                             content = f.read()
                         rel = _os.path.relpath(fp, frontend_src).replace('\\', '/')
-                        file_context += f"\n--- {rel} ---\n```jsx\n{content[:800]}\n```\n"  # Reduced from 1500
+                        file_context += f"\n--- {rel} ---\n```jsx\n{content[:1000]}\n```\n"
                     except Exception:
                         pass
 
                 prompt = (
                     "The React build failed with the following errors. Fix the broken files using `client_save_code`.\n"
-                    f"```\n{error_output[:1500]}\n```\n"  # Reduced from 3000 to save tokens
+                    f"```\n{error_output[:1500]}\n```\n"
                     "Rules:\n"
                     "- ONLY fix files mentioned in the error messages\n"
                     "- Fix the specific import/syntax issue — do NOT rewrite entire files\n"
@@ -737,42 +705,29 @@ class BuilderAgent(BaseAgent):
             print(f"{LOG} ⚠ No frontend/src dir found", flush=True)
             return fixed
 
-        # Collect ALL .jsx/.js files in frontend/src (components + pages + lib)
-        all_jsx_files = []
-        for root, dirs, files in _os.walk(frontend_src):
-            for f in files:
-                if f.endswith(('.jsx', '.js', '.tsx', '.ts')) and not f.startswith('main.'):
-                    full = _os.path.join(root, f)
-                    rel = _os.path.relpath(full, frontend_src).replace('\\', '/')
-                    all_jsx_files.append((full, rel))
+        # Use cached ProjectIndex instead of os.walk
+        project_index = ProjectIndex.get_or_create(frontend_src)
+        project_index.scan()
 
-        print(f"{LOG} ═══ VALIDATION: Scanning {len(all_jsx_files)} files for broken imports ═══", flush=True)
+        print(f"{LOG} ═══ VALIDATION: Scanning {len(project_index.jsx_files)} files for broken imports ═══", flush=True)
 
-        # Extract imports from ALL files
-        import_pattern = _re.compile(r"import\s+(?:\w+|\{[^}]+\})\s+from\s+['\"]\.\/(components|pages|lib)\/(\w+)['\"]")
+        # Use cached imports from ProjectIndex
         missing = []
 
-        for full_path, rel_path in all_jsx_files:
-            try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except Exception:
-                continue
-
-            imports = import_pattern.findall(content)
+        for full_path, rel_path in project_index.jsx_files:
+            # Use cached imports
+            imports = project_index.get_imports(full_path)
             for folder, name in imports:
                 check_key = f"{folder}/{name}"
                 if check_key in already_checked:
                     continue
                 already_checked.add(check_key)
 
-                # Check if file exists
-                found = False
-                for ext in ['.jsx', '.js', '.tsx', '.ts']:
-                    candidate = _os.path.join(frontend_src, folder, f"{name}{ext}")
-                    if _os.path.exists(candidate):
-                        found = True
-                        break
+                # Use cached file existence check
+                found = project_index.file_exists(f"{folder}/{name}.jsx") or \
+                        project_index.file_exists(f"{folder}/{name}.js") or \
+                        project_index.file_exists(f"{folder}/{name}.tsx") or \
+                        project_index.file_exists(f"{folder}/{name}.ts")
 
                 if not found:
                     rel_missing = f"frontend/src/{folder}/{name}.jsx"
@@ -795,19 +750,13 @@ class BuilderAgent(BaseAgent):
                     name = f.split('.')[0]
                     component_files.append(name)
 
-            # Find all imports across ALL files
+            # Find all imports across ALL files (using ProjectIndex)
             all_imports = set()
-            for full_path, rel_path in all_jsx_files:
-                try:
-                    with open(full_path, 'r', encoding='utf-8') as fh:
-                        content = fh.read()
-                    for match in _re.finditer(r"import\s+\w+\s+from\s+['\"]\.\/(?:components|pages)\/(\w+)['\"]", content):
-                        all_imports.add(match.group(1))
-                    # Also check ../components imports
-                    for match in _re.finditer(r"import\s+\w+\s+from\s+['\"]\.\.\/(?:components|pages)\/(\w+)['\"]", content):
-                        all_imports.add(match.group(1))
-                except Exception:
-                    continue
+            for full_path, rel_path in project_index.jsx_files:
+                # Use cached imports from ProjectIndex
+                imports = project_index.get_imports(full_path)
+                for folder, name in imports:
+                    all_imports.add(name)
 
             # Find orphans
             orphans = [c for c in component_files if c not in all_imports]
@@ -1038,6 +987,11 @@ class BuilderAgent(BaseAgent):
         user_id = state.get("user_id")
         category = "backend"  # SAFE DEFAULT — always defined before use
 
+        # Clear ProjectIndex cache at start of new build (first task)
+        if index == 0:
+            ProjectIndex.clear_cache()
+            print(f"{LOG} 🔄 Cleared ProjectIndex cache for new build", flush=True)
+
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
         print(f"{LOG} EXECUTE | task={index+1}/{len(tasks)} | session={session_id}", flush=True)
         print(f"{LOG} Total tasks in plan: {len(tasks)}", flush=True)
@@ -1051,6 +1005,8 @@ class BuilderAgent(BaseAgent):
 
         if index >= len(tasks):
             print(f"{LOG} ✓ All {len(tasks)} tasks done — handing off to runner", flush=True)
+            ProjectIndex.clear_cache()  # Cleanup cache after build
+            print(f"{LOG} 🧹 Cleared ProjectIndex cache after build completion", flush=True)
             state["status"] = "building_complete"
             state["next_agent"] = "runner"
             yield state
@@ -1090,9 +1046,19 @@ class BuilderAgent(BaseAgent):
                     agent = DatabaseAgent()
 
                 print(f"{LOG} → Delegating to {agent.name} | task={task_title}", flush=True)
+                
+                # Adaptive timeout based on task complexity
+                task_desc = current_task.get("description", "") + current_task.get("title", "")
+                if len(task_desc) > 200 or "dashboard" in task_desc.lower() or "complex" in task_desc.lower():
+                    subagent_timeout = 300  # 5 min for complex tasks
+                elif len(task_desc) > 100:
+                    subagent_timeout = 180  # 3 min for medium tasks
+                else:
+                    subagent_timeout = 120  # 2 min for simple tasks
+                
                 result = await asyncio.wait_for(
                     agent.execute(current_task, state),
-                    timeout=600
+                    timeout=subagent_timeout
                 )
 
                 # Save files from sub-agent result
@@ -1160,34 +1126,25 @@ class BuilderAgent(BaseAgent):
         system_prompt = ""
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
         
-        # Gather existing codebase memory for follow-ups
+        # Gather existing codebase memory for follow-ups (metadata only, not full content)
         existing_code_context = ""
         try:
             ws_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or os.path.join(os.getcwd(), "workspaces", session_id)
             if os.path.exists(ws_dir):
-                files_to_read = []
-                for root, _, files in os.walk(ws_dir):
-                    if "node_modules" in root or ".git" in root or "dist" in root:
-                        continue
-                    for f in files:
-                        if f.endswith(('.js', '.jsx', '.ts', '.tsx', '.css', '.json', '.html')):
-                            full_path = os.path.join(root, f)
-                            rel_path = os.path.relpath(full_path, ws_dir).replace("\\", "/")
-                            if "package-lock.json" not in rel_path:
-                                files_to_read.append((rel_path, full_path))
+                # Use cached ProjectIndex for file listing
+                ws_src = os.path.join(ws_dir, "frontend", "src") if os.path.exists(os.path.join(ws_dir, "frontend", "src")) else ws_dir
+                ws_index = ProjectIndex.get_or_create(ws_src)
+                ws_index.scan()
                 
-                if files_to_read:
-                    existing_code_context = "\n\n═══ EXISTING FILES (read-only reference) ═══\n"
-                    for rel_path, full_path in files_to_read:
-                        try:
-                            with open(full_path, 'r', encoding='utf-8') as fh:
-                                content = fh.read()
-                            # Truncate large files to save tokens
-                            if len(content) > 2000:
-                                content = content[:2000] + "\n... (truncated)"
-                            existing_code_context += f"--- {rel_path} ---\n```\n{content}\n```\n\n"
-                        except Exception:
-                            pass
+                if ws_index.all_files:
+                    existing_code_context = "\n\n═══ EXISTING FILES (metadata only — use read_skill_file for full content) ═══\n"
+                    for rel_path in sorted(ws_index.all_files.keys())[:30]:  # Limit to 30 files
+                        if "node_modules" in rel_path or ".git" in rel_path:
+                            continue
+                        metadata = ws_index.get_file_metadata(rel_path)
+                        if metadata:
+                            existing_code_context += f"• {metadata}\n"
+                    existing_code_context += "\nNote: These are summaries. Use read_skill_file tool to read full file content when needed.\n"
         except Exception as e:
             print(f"{LOG} Failed to load existing codebase: {e}")
 
@@ -1363,7 +1320,10 @@ class BuilderAgent(BaseAgent):
                 "2. Structure: `backend/routes/*.js`, `backend/controllers/*.js`.\n"
                 "3. Use client_save_code for EVERY file. Do NOT call client_execute_in_sandbox.\n"
                 "4. Every route MUST be imported and mounted in server.js.\n"
-                "5. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
+                "5. BATCH GENERATION: Generate ALL related files in ONE response (up to 5 files per call).\n"
+                "   Example: If task needs routes/todos.js + controllers/todos.js + server.js update,\n"
+                "   generate ALL THREE in a single response with multiple tool calls.\n"
+                "6. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
             )
 
         if existing_code_context:

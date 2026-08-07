@@ -1,13 +1,16 @@
-from typing import Any, Dict, List
-import os
-import json
+from typing import Any, Dict
+import asyncio
 from Brain.shared.agent import BaseAgent
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
-from langchain_core.messages import SystemMessage, HumanMessage
+from Brain.shared.build_standards import DATABASE_BUILD_STANDARDS
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.shared.structured_spec import format_structured_spec
+from Brain.services.provider_router import ProviderRouter
+from langchain_core.messages import SystemMessage, HumanMessage
+
 
 class DatabaseAgent(BaseAgent):
+    _skill_cache = {}
+
     def __init__(self):
         super().__init__(
             name="Database Agent",
@@ -15,80 +18,109 @@ class DatabaseAgent(BaseAgent):
             model_id="deepseek-v4-flash"
         )
         self.skill_resolver = SkillResolver()
+        # Cache model once
+        self.llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
+
+    def _get_skill_cache_key(self, task: Dict, task_description: str) -> str:
+        """Generate granular cache key based on DB task type."""
+        desc_lower = task_description.lower()
+        if any(kw in desc_lower for kw in ["migration", "migrate", "alter", "drop"]):
+            return "database_migration"
+        elif any(kw in desc_lower for kw in ["rls", "row level security", "policy", "access control"]):
+            return "database_rls"
+        elif any(kw in desc_lower for kw in ["seed", "seed data", "mock data", "dummy"]):
+            return "database_seed"
+        elif any(kw in desc_lower for kw in ["index", "optimize", "performance", "query"]):
+            return "database_indexes"
+        elif any(kw in desc_lower for kw in ["schema", "table", "create table", "column"]):
+            return "database_schema"
+        else:
+            return "database_general"
+
+    def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
+        prompt = f"""You are the Database Agent for Grizon Brain. Supabase schema design.
+
+{DATABASE_BUILD_STANDARDS}
+
+SKILL FILES (reference only):
+{skills_content}
+
+═══ RULES ═══
+1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql` only.
+2. Shared tenant-scoped table with JSONB: tenant_id, entity_type, entity_key, payload_jsonb, metadata_jsonb.
+3. Include RLS policies, tenant filters, JSONB GIN indexes.
+4. Keep schemas compact (500 MB free-tier limit).
+5. NEVER output user Supabase credentials. Server-side only.
+6. NEVER: Supabase CLI, echo commands, npm install.
+7. commands: always [].
+
+═══ OUTPUT FORMAT ═══
+Respond ONLY in JSON.
+{{"files": [{{"path": "backend/supabase/...", "content": "..."}}, ...], "commands": [], "summary": "..."}}
+"""
+        return prompt
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
-        plan = state.get("project_plan", {})
-
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
-        structured_spec = format_structured_spec(task)
-        
-        skills_content = "{}"
-        try:
-            skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
-        except Exception as e:
-            print(f"Skill resolution failed: {e}")
-            skills_content = "{}"
-        
-        system_prompt = f"""
-        You are the Database Agent for Grizon Brain. When the task uses Supabase, first check whether the current user already has a connected Supabase connector. If a connector is connected, use that user's Supabase configuration and schema. If no connector is connected, fall back to the fixed company-owned Supabase deployment through the Shared Table + JSONB Data Matrix Pattern and the company-owned Python proxy. Do not alter any non-Supabase project flow.
 
-        {FULL_STACK_BUILD_STANDARDS}
+        # Skill resolution with granular caching — DB tasks are never simple
+        cache_key = self._get_skill_cache_key(task, task_description)
+        if cache_key in DatabaseAgent._skill_cache:
+            skills_content = DatabaseAgent._skill_cache[cache_key]
+            print(f"[DB] Using cached skills: {cache_key}", flush=True)
+        else:
+            try:
+                skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
+                DatabaseAgent._skill_cache[cache_key] = skills_content
+                print(f"[DB] Cached skills for: {cache_key}", flush=True)
+            except Exception:
+                skills_content = "{}"
 
-        SKILL FILES (reference only — use general Supabase knowledge):
-        {skills_content}
+        system_prompt = self._build_system_prompt(task, skills_content)
 
-        DATABASE AGENT RULES:
-        1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql` only for Supabase-related tasks.
-        2. Prefer a shared tenant-scoped table with JSONB payload columns (`tenant_id`, `entity_type`, `entity_key`, `payload_jsonb`, `metadata_jsonb`) over per-user tables.
-        3. Include RLS policies, tenant filters, and JSONB GIN indexes in SQL when tables store user data.
-        4. Keep schemas compact and storage-aware so the shared company Supabase project stays within the 500 MB free-tier constraint.
-        5. Do not output any user Supabase credentials; if config notes are needed, keep them server-side and proxy-only.
-        6. NEVER: Supabase CLI, echo commands, npm install.
-        7. **commands**: always `[]`.
+        # Compact structured spec
+        structured_hint = format_structured_spec(task)
+        spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
-        TASK:
-        Title: {task.get('title')}
-        Description: {task.get('description')}
-        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
-
-        Respond ONLY in JSON:
-        {{
-          "files": [ {{ "path": "backend/supabase/...", "content": "..." }} ],
-          "commands": [],
-          "summary": "Shared table SQL created and how the proxy/backend should use it"
-        }}
-        """
-
-        session_state = state.get("memory_context", {}).get("session_state", {})
-        wf_state = session_state.get("workflow_state", "")
-        cur_agent = session_state.get("current_agent", "")
-        task_idx = session_state.get("task_index", "")
-        total_tk = session_state.get("total_tasks", "")
-        session_summary_parts = []
-        if wf_state: session_summary_parts.append(f"Phase: {wf_state}")
-        if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
-        if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
-        session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
-
-        active_decisions = state.get("active_decisions", {})
-        decisions_context = ""
-        if active_decisions:
-            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
-            decisions_context = "[Approved Decisions - CRITICAL - Must Follow]\n" + "\n".join(decisions_lines)
-
-        messages = [SystemMessage(content=system_prompt)]
-        if session_context:
-            messages.append(SystemMessage(content=session_context))
-        if decisions_context:
-            messages.append(SystemMessage(content=decisions_context))
-        messages.append(
-            HumanMessage(
-                content=f"Execute task: {task.get('title')}\nPlan: {json.dumps(plan, default=str)[:3000]}"
-            ),
+        user_content = (
+            f"Task: {task.get('title')}\n"
+            f"Description: {task.get('description', '')}"
+            f"{spec_context}"
         )
 
-        # Generation (review loop disabled to prevent timeout)
-        response_content = await self.chat(messages, timeout=180, max_tokens=2000)
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
+
+        print(f"[DB] model=deepseek-v4-flash | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+
+        # Execute with one retry on timeout
+        response_content = None
+        for attempt in range(2):
+            try:
+                response = await asyncio.wait_for(
+                    self.llm.ainvoke(messages, max_tokens=1500),
+                    timeout=60
+                )
+                response_content = response.content if hasattr(response, 'content') else str(response)
+                break
+            except asyncio.TimeoutError:
+                print(f"[DB] Timeout attempt {attempt+1}/2", flush=True)
+                if attempt == 0:
+                    continue
+                response_content = '{"files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation timed out"}], "commands": [], "summary": "Database generation timed out after 2 attempts"}'
+            except Exception as e:
+                print(f"[DB] LLM error: {e}", flush=True)
+                response_content = f'{{"files": [{{"path": "backend/supabase/schema.sql", "content": "-- Error: {e}"}}], "commands": [], "summary": "Error: {e}"}}'
+                break
+
+        # Validate parsed JSON
         generated_json = self._format_json_response(response_content)
+        if not isinstance(generated_json, dict) or "files" not in generated_json:
+            print(f"[DB] Invalid JSON response, using fallback", flush=True)
+            generated_json = {
+                "files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation failed"}],
+                "commands": [],
+                "summary": f"Invalid response: {str(response_content)[:200]}"
+            }
+
         return generated_json

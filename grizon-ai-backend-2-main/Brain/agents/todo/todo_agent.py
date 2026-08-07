@@ -4,7 +4,7 @@ import re
 import asyncio
 import time
 from Brain.shared.agent import BaseAgent
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS, INTEGRATION_TASK_TEMPLATE
+from Brain.shared.build_standards import TASK_ORDER_STANDARDS, INTEGRATION_TASK_TEMPLATE
 from Brain.services.template_service import normalize_framework
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -469,7 +469,7 @@ class TodoAgent(BaseAgent):
         system_prompt = f"""
         You are the Todo Agent. Convert the approved project plan into executable tasks that produce a **fully connected** app in preview.
 
-        {FULL_STACK_BUILD_STANDARDS}
+        {TASK_ORDER_STANDARDS}
 
         SELECTED FRONTEND FRAMEWORK: {framework}
         - React/Vite: use existing `frontend/` react-template (do NOT re-scaffold).

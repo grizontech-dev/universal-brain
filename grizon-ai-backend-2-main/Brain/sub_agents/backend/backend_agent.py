@@ -1,16 +1,19 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 import os
+import re
 import json
 import asyncio
 from Brain.shared.agent import BaseAgent
-from Brain.shared.build_standards import FULL_STACK_BUILD_STANDARDS
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 
+
 class BackendAgent(BaseAgent):
+    _skill_cache = {}
+
     def __init__(self):
         super().__init__(
             name="Backend Agent",
@@ -18,98 +21,159 @@ class BackendAgent(BaseAgent):
             model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
         self.skill_resolver = SkillResolver()
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
+
+    async def _safe_tool_call(self, tool, args, config=None):
+        try:
+            if config:
+                return await asyncio.wait_for(tool.ainvoke(args, config=config), timeout=30)
+            else:
+                return await asyncio.wait_for(tool.ainvoke(args), timeout=30)
+        except Exception as e:
+            return e
+
+    def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
+        prompt = f"""You are a Senior Backend Engineer. Node.js + Express API in `backend/`.
+
+═══ STACK ═══
+- Express.js, CommonJS (require/module.exports). NEVER use ES modules.
+- Supabase for DB (server-side only — no browser client).
+- JSON responses: {{"success": true, "data": ...}} or {{"success": false, "error": "..."}}.
+
+═══ RULES (VIOLATION = BROKEN BUILD) ═══
+1. Use client_save_code for EVERY file. One tool call per file.
+2. CommonJS only: require() / module.exports. NEVER import/export.
+3. Routes: backend/routes/*.js, Controllers: backend/controllers/*.js
+4. Use Express.Router in routes: module.exports = router;
+5. ALWAYS update backend/server.js — import route + app.use('/api/...', routes)
+6. Frontend contract: paths must match /api/... (POST /api/contact, GET /api/programs)
+7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
+8. Port 9999, bind 0.0.0.0 — required for tunnel URL
+9. NEVER import browser Supabase client. All DB access is server-side.
+10. Supabase: check user's connected connector first, fallback to Python proxy.
+11. Schema as backend/supabase/*.sql files only. No Supabase CLI.
+12. Write server.js LAST with ALL routes mounted.
+
+═══ SUPABASE PATTERNS ═══
+- Shared Table + JSONB: one shared tenant-scoped table with JSONB payload, NOT one table per user.
+- Keep payloads sparse, prune large blobs (500 MB free-tier limit).
+- Document server-side env vars only. Never request user Supabase credentials.
+
+═══ QUALITY (NON-NEGOTIABLE) ═══
+Generate ALL files required for this task. Do NOT omit files to save tokens.
+Batch them in one response (2-5 files). Quality is more important than response length.
+If task needs routes + controllers + server.js update, generate ALL THREE.
+
+{f"SKILL FILES (read via read_skill_file when needed):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+
+═══ OUTPUT FORMAT ═══
+Respond ONLY in JSON.
+{{"files": [{{"path": "backend/...", "content": "..."}}, ...], "commands": [], "summary": "..."}}
+"""
+        return prompt
+
+    def _get_skill_cache_key(self, task: Dict, task_description: str) -> str:
+        """Generate granular cache key based on task sub-type."""
+        base = task.get("category", "backend")
+        desc_lower = task_description.lower()
+        if any(kw in desc_lower for kw in ["auth", "login", "register", "jwt", "token", "oauth", "rbac", "permission"]):
+            return f"{base}_auth"
+        elif any(kw in desc_lower for kw in ["upload", "image", "file", "storage"]):
+            return f"{base}_upload"
+        elif any(kw in desc_lower for kw in ["payment", "stripe", "billing", "invoice"]):
+            return f"{base}_payment"
+        elif any(kw in desc_lower for kw in ["crud", "create", "read", "update", "delete", "list"]):
+            return f"{base}_crud"
+        elif any(kw in desc_lower for kw in ["websocket", "socket", "realtime", "notification"]):
+            return f"{base}_realtime"
+        else:
+            return f"{base}_api"
 
     async def execute(self, current_task: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         task = current_task
-        plan = state.get("project_plan", {})
-        executed = state.get("executed_tasks", [])[-5:]
+        executed = state.get("executed_tasks", [])[-3:]
 
+        # Skill resolution with granular caching
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
-        structured_spec = format_structured_spec(task)
-        
+        # Only skip for truly trivial tasks — NOT auth, CRUD, payments, etc.
+        simple_keywords = ["health check", "ping", "hello world", "single endpoint", "boilerplate"]
+        is_simple = len(task_description) < 60 and any(kw in task_description.lower() for kw in simple_keywords)
+
         skills_content = "{}"
-        try:
-            skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
-        except Exception as e:
-            print(f"Skill resolution failed: {e}")
-            skills_content = "{}"
-        
-        system_prompt = f"""
-        You are the Backend Agent for Grizon Brain. Express API in `backend/` (template exists on port 3001) that first uses the current user's connected Supabase connector when available, and otherwise talks to the company-owned Python Supabase proxy for persistence.
+        if not is_simple:
+            cache_key = self._get_skill_cache_key(task, task_description)
+            if cache_key in BackendAgent._skill_cache:
+                skills_content = BackendAgent._skill_cache[cache_key]
+                print(f"[BACKEND] Using cached skills: {cache_key}", flush=True)
+            else:
+                try:
+                    skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
+                    BackendAgent._skill_cache[cache_key] = skills_content
+                    print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
+                except Exception:
+                    skills_content = "{}"
 
-        {FULL_STACK_BUILD_STANDARDS}
+        system_prompt = self._build_system_prompt(task, skills_content)
 
-        SKILL FILES (read when needed via read_skill_file tool):
-        {skills_content}
+        # server.js metadata — routes and imports only
+        server_js_context = ""
+        workspace_id = state.get("current_job_id")
+        user_id = state.get("user_id")
+        if workspace_id and not workspace_id.startswith("error:"):
+            from Brain.services.workspace_manager import workspace_manager
+            ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
+            if ws_root:
+                server_js_path = os.path.join(ws_root, "backend", "server.js")
+                if os.path.exists(server_js_path):
+                    try:
+                        with open(server_js_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        imports = [m.group(0) for m in re.finditer(r"const\s+\w+\s*=\s*require\(['\"].*?['\"]\)", content)]
+                        mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"].*?\)", content)]
+                        parts = []
+                        if imports:
+                            parts.append(f"Imports ({len(imports)}): " + "; ".join(imports[:6]))
+                        if mounts:
+                            parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:8]))
+                        parts.append(f"Lines: {len(content.splitlines())}")
+                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nOnly update server.js if this task changes routing. Otherwise leave it unchanged."
+                    except Exception:
+                        pass
 
-        BACKEND AGENT RULES:
-        1. **Always update `backend/server.js`** when you add or change any route — import and `app.use('/api/...', routes)`.
-        2. **Structure**: `backend/routes/*.js`, `backend/controllers/*.js`, use Express.Router in routes.
-        3. **Supabase**: controllers must generate runtime logic that checks whether the current user has a connected Supabase connector and uses that connector's config first; otherwise call the Python Backend Proxy / internal persistence service. Never require end-user Supabase credentials in generated code.
-        4. **Frontend contract**: paths must match what frontend calls via `/api/...` (e.g. POST `/api/contact`, GET `/api/programs`).
-        5. **package.json**: add express, cors, and any HTTP client deps needed to reach the proxy; do not add browser-facing Supabase client code.
-        6. **commands & packages**: ALL packages used in the project MUST be added to `backend/package.json`. This is critical so that when `npm install` runs, there are no missing package errors and the project runs correctly. If you add ANY new dependencies, you MUST add them to `backend/package.json` AND return `"commands": ["cd backend && npm install"]`. The runner handles server restarts automatically.
-        7. **MCP SANDBOX REQUIREMENT**: ALL web servers MUST run on port 9999 and bind to 0.0.0.0. This is an absolute requirement for the tunnel URL to work properly.
-        Title: {task.get('title')}
-        Description: {task.get('description')}
-        Acceptance: {task.get('acceptance_criteria', '')}
-        {('STRUCTURED SPEC (follow exactly):\n' + structured_spec) if structured_spec else ''}
+        # Compact executed tasks context
+        executed_context = ""
+        if executed:
+            summaries = [t.get("title", "task") for t in executed if t.get("status") == "completed"]
+            executed_context = f"\nDone: {', '.join(summaries)}" if summaries else ""
 
-        Respond ONLY in JSON:
-        {{
-          "files": [ {{ "path": "backend/...", "content": "..." }} ],
-          "commands": [],
-                    "summary": "List routes mounted in server.js and which proxy endpoints or shared tables they use"
-        }}
-        """
+        # Compact structured spec
+        structured_hint = format_structured_spec(task)
+        spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
-        session_state = state.get("memory_context", {}).get("session_state", {})
-        wf_state = session_state.get("workflow_state", "")
-        cur_agent = session_state.get("current_agent", "")
-        task_idx = session_state.get("task_index", "")
-        total_tk = session_state.get("total_tasks", "")
-        session_summary_parts = []
-        if wf_state: session_summary_parts.append(f"Phase: {wf_state}")
-        if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
-        if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
-        session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
-
-        active_decisions = state.get("active_decisions", {})
-        decisions_context = ""
-        if active_decisions:
-            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
-            decisions_context = "[Approved Decisions - CRITICAL - Must Follow]\n" + "\n".join(decisions_lines)
-
-        messages = [SystemMessage(content=system_prompt)]
-        if session_context:
-            messages.append(SystemMessage(content=session_context))
-        if decisions_context:
-            messages.append(SystemMessage(content=decisions_context))
-        messages.append(
-            HumanMessage(
-                content=(
-                    f"Execute task: {task.get('title')}\n"
-                    f"Project plan: {json.dumps(plan, default=str)[:4000]}\n"
-                    f"Recent completed tasks: {json.dumps(executed, default=str)[:2000]}"
-                )
-            ),
+        # Build compact user message
+        user_content = (
+            f"Task: {task.get('title')}\n"
+            f"Description: {task.get('description', '')}\n"
+            f"Acceptance: {task.get('acceptance_criteria', '')}"
+            f"{spec_context}"
+            f"{executed_context}"
+            f"{server_js_context}"
         )
 
-        print(f"[BACKEND] Using model: Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | task={task.get('title', 'N/A')}", flush=True)
+        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.7)
-        bound_llm = llm.bind_tools([client_save_code, read_skill_file])
+        print(f"[BACKEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
-        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=messages[-1].content)]
+        files_saved = set()
+        max_iterations = 3
 
-        files_saved = []
-        max_iterations = 8
         for iteration in range(max_iterations):
             try:
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(msgs),
-                    timeout=180
-                )
+                response = await asyncio.wait_for(self.bound_llm.ainvoke(msgs), timeout=60)
+            except asyncio.TimeoutError:
+                print(f"[BACKEND] Timeout after 60s (iteration {iteration+1})", flush=True)
+                break
             except Exception as e:
                 print(f"[BACKEND] LLM error: {e}", flush=True)
                 break
@@ -119,44 +183,44 @@ class BackendAgent(BaseAgent):
             if not response.tool_calls:
                 break
 
-            for tc in response.tool_calls:
-                tool_result = ""
-                if tc["name"] == "client_save_code":
-                    tool_args = tc.get("args") or {}
-                    file_path = tool_args.get("file_path", "")
-                    code_content = tool_args.get("code_content", "")
+            save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
+            skill_calls = [tc for tc in response.tool_calls if tc["name"] == "read_skill_file"]
 
-                    if file_path and code_content:
-                        config = {"configurable": {"thread_id": state.get("current_job_id"), "task_title": task.get("title", ""), "user_id": state.get("user_id")}}
-                        try:
-                            await asyncio.wait_for(
-                                client_save_code.ainvoke(tool_args, config=config),
-                                timeout=30
-                            )
-                            files_saved.append(file_path)
-                            print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
-                            tool_result = f"Successfully saved file: {file_path} ({len(code_content)} chars)"
-                        except Exception as e:
-                            print(f"[BACKEND] ✖ Failed to save {file_path}: {e}", flush=True)
-                            tool_result = f"Error saving {file_path}: {str(e)}"
+            if skill_calls:
+                skill_results = await asyncio.gather(*[
+                    self._safe_tool_call(read_skill_file, tc["args"]) for tc in skill_calls
+                ], return_exceptions=True)
+                for tc, result in zip(skill_calls, skill_results):
+                    if isinstance(result, Exception):
+                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
                     else:
-                        tool_result = "Error: client_save_code requires both file_path and code_content"
-                elif tc["name"] == "read_skill_file":
-                    tool_args = tc.get("args") or {}
-                    file_path = tool_args.get("file_path", "")
-                    try:
-                        result = await read_skill_file.ainvoke(tool_args)
-                        print(f"[BACKEND] 📖 Read skill: {file_path} ({len(result)} chars)", flush=True)
-                        tool_result = result
-                    except Exception as e:
-                        tool_result = f"Error reading skill: {e}"
-                else:
-                    tool_result = f"Unknown tool: {tc['name']}. Use client_save_code or read_skill_file."
+                        msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
-                msgs.append(ToolMessage(
-                    content=tool_result,
-                    tool_call_id=tc["id"]
-                ))
+            if save_calls:
+                save_configs = [{"configurable": {
+                    "thread_id": state.get("current_job_id"),
+                    "task_title": task.get("title", ""),
+                    "user_id": state.get("user_id")
+                }} for _ in save_calls]
+
+                save_results = await asyncio.gather(*[
+                    self._safe_tool_call(client_save_code, tc["args"], config)
+                    for tc, config in zip(save_calls, save_configs)
+                ], return_exceptions=True)
+
+                for tc, result in zip(save_calls, save_results):
+                    file_path = tc["args"].get("file_path", "")
+                    code_content = tc["args"].get("code_content", "")
+                    if isinstance(result, Exception):
+                        print(f"[BACKEND] ✖ Failed: {file_path}: {result}", flush=True)
+                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
+                    else:
+                        files_saved.add(file_path)
+                        print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
+                        msgs.append(ToolMessage(
+                            content=f"Saved: {file_path} ({len(code_content)} chars)",
+                            tool_call_id=tc["id"]
+                        ))
 
         if not files_saved:
             last_content = msgs[-1].content if msgs else ""
@@ -166,4 +230,4 @@ class BackendAgent(BaseAgent):
             if isinstance(parsed, dict) and "files" in parsed:
                 return parsed
 
-        return {"files": [{"path": f, "content": ""} for f in files_saved], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        return {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
