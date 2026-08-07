@@ -211,8 +211,12 @@ class BrainChatService:
 
         agent = QuestionsAgent()
         state = await agent.execute(state)
-        state["report"] = f"__CLARIFY__:{json.dumps(state.get('questions_data'))}"
-        print(f"DEBUG: NODE [recursive_clarify] complete | questions_count={len(state.get('questions_data', {}).get('questions', []))}", flush=True)
+        qd = state.get("questions_data")
+        if qd:
+            state["report"] = f"__CLARIFY__:{json.dumps(qd)}"
+        else:
+            state["report"] = "Context looks good - I have enough to start planning."
+        print(f"DEBUG: NODE [recursive_clarify] complete | questions_count={len(state.get('questions_data', {}).get('questions', [])) if isinstance(state.get('questions_data'), dict) else 0}", flush=True)
         return state
 
     async def node_planner(self, state: BrainState) -> Dict[str, Any]:

@@ -371,13 +371,24 @@ class ManagerAgent(BaseAgent):
         state["leader_analysis"] = analysis
         state["intent_confidence"] = analysis.get("confidence", 0.5)
 
+        # Python pre-filter: drop missing details already covered by approved decisions.
+        # If nothing genuinely remains, skip the Questions agent entirely -> planner.
+        missing = analysis.get("missing_details") or []
+        if isinstance(missing, list):
+            approved = [str(k).lower() for k in (active_decisions or {}).keys()]
+            if approved:
+                missing = [m for m in missing if not any(k in str(m).lower() for k in approved)]
+            missing = [m for m in missing if str(m).strip()]
+            analysis["missing_details"] = missing
+        wants_questions = analysis.get("next_agent") == "questions" and bool(missing)
+
         # Force planner if we've been in questions for too long
-        if current_rounds >= 2:
+        if current_rounds >= 2 or not wants_questions:
             state["next_agent"] = "planner"
             state["status"] = "ready_to_plan"
         else:
-            state["next_agent"] = analysis.get("next_agent", "questions")
-            state["status"] = "needs_clarification" if state["next_agent"] == "questions" else "ready_to_plan"
+            state["next_agent"] = "questions"
+            state["status"] = "needs_clarification"
 
         print(f"{LOG} → next_agent='{state['next_agent']}' | status='{state['status']}' | confidence={state.get('intent_confidence', 'N/A')}", flush=True)
         return state

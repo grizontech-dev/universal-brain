@@ -5,6 +5,15 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 LOG = "[QUESTIONS]"
 
+PREAMBLES = [
+    "I just need one quick clarification before I create the perfect plan.",
+    "A couple of quick questions before I generate the architecture.",
+    "A few important details are still missing - let's wrap these up.",
+]
+
+MAX_QUESTIONS = 5
+
+
 class QuestionsAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -13,128 +22,120 @@ class QuestionsAgent(BaseAgent):
             model_id="deepseek-v4-flash"
         )
 
-    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generates contextual questions based on leader analysis.
-        """
-        prompt = state.get("content", "")
-        analysis = state.get("leader_analysis", {})
-        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:150]}' | missing_count={len(analysis.get('missing_details', []))}", flush=True)
-        if isinstance(analysis, str):
-            analysis = {"missing_details": [analysis]}
-        
-        missing = analysis.get("missing_details", [])
-        history = state.get("messages", [])
+    def _filter_missing(self, missing: List[str], approved_keys: List[str]) -> List[str]:
+        """Pre-filter missing details against already-approved decisions (Python, no LLM)."""
         if not isinstance(missing, list):
             missing = [str(missing)]
+        missing = [str(m).strip() for m in missing if str(m).strip()]
+        if approved_keys:
+            missing = [
+                m for m in missing
+                if not any(k in m.lower() for k in approved_keys)
+            ]
+        return missing[:MAX_QUESTIONS]
+
+    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = state.get("content", "")
+        analysis = state.get("leader_analysis", {})
+        if isinstance(analysis, str):
+            analysis = {"missing_details": [analysis]}
 
         memory_context = state.get("memory_context", {})
-        session_state = memory_context.get("session_state", {})
         active_decisions = memory_context.get("decisions", {})
-        wf_state = session_state.get("workflow_state", "")
-        cur_agent = session_state.get("current_agent", "")
-        task_idx = session_state.get("task_index", "")
-        total_tk = session_state.get("total_tasks", "")
-        session_summary_parts = []
-        if wf_state: session_summary_parts.append(f"Phase: {wf_state}")
-        if cur_agent: session_summary_parts.append(f"Active Agent: {cur_agent}")
-        if task_idx or total_tk: session_summary_parts.append(f"Task: {task_idx}/{total_tk}")
-        session_context = f"[Session] {' | '.join(session_summary_parts)}" if session_summary_parts else ""
+        approved_keys = [str(k).lower() for k in (active_decisions or {}).keys()]
 
-        decisions_context = ""
-        if active_decisions:
-            decisions_lines = [f"  {k}: {v}" for k, v in active_decisions.items()]
-            decisions_context = "[Already Approved Decisions - Do NOT ask about these]\n" + "\n".join(decisions_lines)
+        missing = self._filter_missing(analysis.get("missing_details", []), approved_keys)
+        print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:150]}' | missing_count={len(missing)}", flush=True)
+
+        # If nothing meaningful remains, skip questions entirely -> planner.
+        if not missing:
+            print(f"{LOG} No missing details remain after filtering - routing to planner", flush=True)
+            state["leader_analysis"] = {"analysis": "Context is sufficient - proceeding to planning."}
+            state["next_agent"] = "planner"
+            state["status"] = "ready_to_plan"
+            state["questions_data"] = None
+            return state
+
+        # Compact context: only recent USER messages, truncated. Assistant outputs are irrelevant here.
+        history = state.get("messages", [])
+        user_msgs = [
+            str(m.get("content", "")).strip()
+            for m in history
+            if m.get("role", "USER") == "USER" and str(m.get("content", "")).strip()
+        ][-8:]
+        user_msgs = [m[:300] + ("..." if len(m) > 300 else "") for m in user_msgs]
+        context_summary = "Recent user messages:\n" + "\n".join(f"- {m}" for m in user_msgs) if user_msgs else f"User request: {prompt[:300]}"
 
         system_prompt = """
-        You are the Questions Agent, a Senior Technical Architect. 
-        Your goal is to gather ONLY the truly essential context missing for a production build.
-        
-        STRICT RULES:
-        1. **NO REDUNDANCY**: Check the User Prompt and History. If the user said "Node.js" or "Express", NEVER ask "What backend framework will you use?".
-        2. **SEMANTIC MATCHING**: If the user gave a broad answer like "All of the above", "Standard", or "Everything", mark all related technical requirements as RESOLVED. 
-        3. **DONT BE PEDANTIC**: If you have enough info to make a professional decision (e.g., they want "Real-time sync", you can assume WebSocket or Supabase), DO NOT ASK.
-        4. **MOMENTUM**: If you have 80% of the project vision, do not ask more questions. Let the Planner handle the rest.
-        5. **NO SILLY QUESTIONS**: Only ask questions that are unique to their business logic, not generic tech stack questions that you can infer.
-        6. **QUESTION SELECTION TYPE**: Explicitly identify whether a question allows single selection ("single") or multiple selections ("multi"). If a user can select multiple features, pages, or options, set `"type": "multi"` and `"allowAll": true` so the interface displays checkbox selectors and a quick "All of the above" option.
+You are the Questions Agent. Phrase the missing details below as clear, concise questions.
 
-        Respond ONLY in JSON format:
-        {
-          "preamble": "A conversational, friendly explanation of why we need this context. (e.g., 'I see you want to build a Twitter clone! To ensure we architect it perfectly, I just need to clarify a few quick details.')",
-          "questions": [
-            {
-              "id": "unique_id",
-              "text": "Clear, non-redundant technical question",
-              "type": "single|multi",
-              "allowAll": true|false,
-              "options": ["Option 1", "Option 2"],
-              "category": "frontend|backend|database"
-            }
-          ]
-        }
-        """
+RULES:
+1. Do NOT ask about anything the user already provided or decided.
+2. Max 5 questions, one per missing detail.
+3. Each question needs 2-5 concrete options. If more than one option can be selected, list ALL options as the selectable set.
+4. No preamble, no fluff - only the questions.
+
+Return ONLY JSON:
+{"questions": [{"id": "q1", "text": "Question text", "options": ["A", "B", "C"]}]}
+"""
 
         messages = [
             SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Missing details to clarify:\n- " + "\n- ".join(missing) + f"\n\n{context_summary}"),
         ]
-        if session_context:
-            messages.append(SystemMessage(content=session_context))
-        if decisions_context:
-            messages.append(SystemMessage(content=decisions_context))
-        
-        # Add history for context
-        if history:
-            for msg in history:
-                role = msg.get("role", "USER")
-                content = str(msg.get("content", "")) # Guard: Force string
-                if role == "USER":
-                    messages.append(HumanMessage(content=content))
-                else:
-                    messages.append(SystemMessage(content=f"Assistant: {content}"))
-        
-        messages.append(HumanMessage(content=f"Current Task: {prompt}\nRemaining Missing Context to Address: {', '.join(missing)}"))
 
-        print(f"DEBUG: QuestionsAgent requesting chat with model {self.model_id}")
+        print(f"DEBUG: QuestionsAgent requesting chat with model {self.model_id} | msgs={len(messages)}")
         import time as _t
         _t0 = _t.time()
-        response_content = await self.chat(messages)
+        response_content = await self.chat(messages, model_id="deepseek-v4-flash", timeout=30, max_tokens=500)
         print(f"DEBUG: QuestionsAgent LLM call took {_t.time()-_t0:.1f}s", flush=True)
         print(f"DEBUG: QuestionsAgent raw response: {response_content[:200]}...")
         questions_data = self._format_json_response(response_content)
-        print(f"DEBUG: QuestionsAgent parsed data: {json.dumps(questions_data)[:200]}...")
 
-        if not isinstance(questions_data, dict) or questions_data.get("error"):
-            questions_data = {
-                "preamble": "To proceed, I need a couple of quick details:",
-                "questions": [
-                    {
-                        "id": "q1",
-                        "text": "What is the primary goal of this project?",
-                        "type": "single",
-                        "allowAll": False,
-                        "options": ["Lead generation", "Portfolio/brand", "Sales", "Other"],
-                        "category": "frontend"
-                    }
-                ]
-            }
-        elif not questions_data.get("questions"):
-            questions_data["preamble"] = questions_data.get("preamble") or "To proceed, I need a couple of quick details:"
-            questions_data["questions"] = [
-                {
-                    "id": "q1",
-                    "text": "What is the primary goal of this project?",
-                    "type": "single",
-                    "allowAll": False,
-                    "options": ["Lead generation", "Portfolio/brand", "Sales", "Other"],
-                    "category": "frontend"
-                }
-            ]
+        questions = questions_data.get("questions") if isinstance(questions_data, dict) else None
+        normalized: List[Dict[str, Any]] = []
+        if isinstance(questions, list):
+            for i, q in enumerate(questions):
+                if not isinstance(q, dict):
+                    continue
+                text = str(q.get("text", "")).strip()
+                if not text:
+                    continue
+                opts = q.get("options")
+                if not isinstance(opts, list):
+                    opts = []
+                opts = [str(o).strip() for o in opts if str(o).strip()][:6]
+                multi = len(opts) > 1
+                normalized.append({
+                    "id": str(q.get("id", f"q{i+1}")),
+                    "text": text,
+                    "options": opts or ["Yes", "No"],
+                    "type": "multi" if multi else "single",
+                    "allowAll": multi,
+                    "category": str(q.get("category") or "frontend"),
+                })
 
-        state["questions_data"] = questions_data
+        if not normalized:
+            print(f"{LOG} LLM produced no usable questions - using fallback", flush=True)
+            normalized = [{
+                "id": "q1",
+                "text": "What is the primary goal of this project?",
+                "options": ["Lead generation", "Portfolio/brand", "Sales", "Other"],
+                "type": "single",
+                "allowAll": False,
+                "category": "frontend",
+            }]
+
+        normalized = normalized[:MAX_QUESTIONS]
+        round_num = state.get("question_rounds", 0)
+        state["questions_data"] = {
+            "preamble": PREAMBLES[min(round_num, len(PREAMBLES) - 1)],
+            "questions": normalized,
+        }
         state["status"] = "awaiting_user_answers"
-        state["next_agent"] = None # Wait for user input
-        
+        state["next_agent"] = None  # Wait for user input
+
         # Increment the round counter
-        state["question_rounds"] = state.get("question_rounds", 0) + 1
-        
+        state["question_rounds"] = round_num + 1
+
         return state
