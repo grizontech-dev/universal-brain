@@ -205,7 +205,7 @@ export const fileService = {
     return {
       id: file.id,
       mimeType: file.fileType,
-      extractedText: file.extractedText || `[Attached File: ${file.originalName}]`,
+      extractedText: file.extractedText || `[Attached File: ${file.fileName}]`,
       vectorised: file.vectorised,
     };
   },
