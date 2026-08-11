@@ -9,6 +9,11 @@ from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
+from Brain.shared.llm_retry import ainvoke_with_retry
+
+
+class LLMRateLimitedError(RuntimeError):
+    """Raised when all LLM attempts (primary + fallback model) fail on rate limits."""
 
 from Brain.services.workspace_manager import workspace_manager
 from Brain.services.websocket_manager import ws_manager
@@ -57,10 +62,10 @@ class ProjectIndex:
         self.all_files = {}
         self.imports_cache.clear()  # Clear cached imports on rescan
         
-        for root, dirs, files in _os.walk(self.frontend_src):
+        for root, dirs, files in os.walk(self.frontend_src):
             for f in files:
-                full = _os.path.join(root, f)
-                rel = _os.path.relpath(full, self.frontend_src).replace('\\', '/')
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, self.frontend_src).replace('\\', '/')
                 self.all_files[rel] = full
                 if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
                     self.jsx_files.append((full, rel))
@@ -282,6 +287,7 @@ class BuilderAgent(BaseAgent):
 
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
+        _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.7).bind_tools(tools)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
         start_time = time.time()
         seen_files = set()
@@ -292,6 +298,7 @@ class BuilderAgent(BaseAgent):
         MAX_CONSECUTIVE_DUPLICATES = 3
         sql_failure_count = 0
         MAX_SQL_FAILURES = 3  # Stop if SQL fails 3 times in a row — LLM is stuck
+        llm_failed = False  # True if the LLM itself errored out (rate limit etc.)
         while True:
             elapsed = time.time() - start_time
             if elapsed > timeout_sec:
@@ -333,9 +340,9 @@ class BuilderAgent(BaseAgent):
 
             try:
                 print(f"{LOG} → Calling LLM (timeout={int(llm_timeout)}s, msgs={len(messages)})...", flush=True)
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(list(messages)),
-                    timeout=llm_timeout
+                response = await ainvoke_with_retry(
+                    bound_llm, messages, timeout=llm_timeout,
+                    tag="BUILDER", fallback_llm=_fallback_llm,
                 )
                 print(f"{LOG} ← LLM responded | tool_calls={len(response.tool_calls)} | content_len={len(response.content or '')}", flush=True)
             except asyncio.TimeoutError:
@@ -345,6 +352,7 @@ class BuilderAgent(BaseAgent):
                 print(f"{LOG} ✖ LLM ERROR: {type(e).__name__}: {e}", flush=True)
                 import traceback as _tb
                 _tb.print_exc()
+                llm_failed = True
                 break
 
             messages.append(response)
@@ -489,6 +497,12 @@ class BuilderAgent(BaseAgent):
             print(f"{LOG} ⏭ Skipping esbuild check (no frontend files or database task)", flush=True)
         else:
             files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+
+        if llm_failed and not files_saved:
+            raise LLMRateLimitedError(
+                f"LLM rate-limited for task '{task_title}' — no files saved "
+                f"(retried primary model + fallback)"
+            )
 
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
 
@@ -1360,6 +1374,9 @@ class BuilderAgent(BaseAgent):
         except asyncio.TimeoutError:
             print(f"{LOG} ✖ OVERALL TIMEOUT ({overall_timeout}s) for '{task_title}'", flush=True)
             output_content = f"Task '{task_title}' completed with fallback (overall timeout after {overall_timeout}s)"
+        except LLMRateLimitedError:
+            print(f"{LOG} ✖ TASK FAILED: '{task_title}' — LLM unavailable after retries + fallback", flush=True)
+            raise
         except Exception as loop_err:
             import traceback as _tb
             print(f"{LOG} ✖ AGENT LOOP ERROR: {type(loop_err).__name__}: {loop_err}", flush=True)

@@ -9,6 +9,7 @@ from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
+from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
@@ -23,6 +24,7 @@ class BackendAgent(BaseAgent):
         self.skill_resolver = SkillResolver()
         self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
+        self.fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools([client_save_code, read_skill_file])
 
     async def _safe_tool_call(self, tool, args, config=None):
         try:
@@ -170,7 +172,10 @@ Respond ONLY in JSON.
 
         for iteration in range(max_iterations):
             try:
-                response = await asyncio.wait_for(self.bound_llm.ainvoke(msgs), timeout=60)
+                response = await ainvoke_with_retry(
+                    self.bound_llm, msgs, timeout=60,
+                    tag="BACKEND", fallback_llm=self.fallback_llm,
+                )
             except asyncio.TimeoutError:
                 print(f"[BACKEND] Timeout after 60s (iteration {iteration+1})", flush=True)
                 break
