@@ -810,7 +810,7 @@ class BrainChatService:
             if plan and state.get("plan_approved", False):
                 # Run builder in background task to survive client disconnect
                 import asyncio as _bgio
-                _bgio.get_event_loop().create_task(
+                _builder_task = _bgio.get_event_loop().create_task(
                     self._run_builder_background(state, plan, conv_id, mg)
                 )
                 print(f"[CHAT-SERVICE] Builder started as background task for {len(plan)} tasks", flush=True)
@@ -876,9 +876,11 @@ class BrainChatService:
                     )
                     return
 
-                # Phase 3: Runner — deploy runs as detached background task
+                # Phase 3: Runner — the builder already ran RunnerAgent after
+                # writing all files, so its workspace is complete. Just report
+                # its final state to the client (no second race-y deploy).
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
-                print(f"[CHAT-SERVICE] Phase 3: Runner - deploying to sandbox", flush=True)
+                print(f"[CHAT-SERVICE] Phase 3: reporting builder result (deploy already triggered)", flush=True)
 
                 try:
                     from Brain.services.template_service import inject_company_supabase_to_workspace
@@ -887,25 +889,9 @@ class BrainChatService:
                     print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
 
                 print(f"[CHAT-SERVICE] \n-------------------------------------------------------------", flush=True)
-                runner = RunnerAgent()
-                runner_state = state
-                _runner_iterator = runner.execute(state).__aiter__()
-                while True:
-                    try:
-                        import asyncio as _asyncio
-                        _task = _asyncio.create_task(_runner_iterator.__anext__())
-                        while not _task.done():
-                            _done, _ = await _asyncio.wait([_task], timeout=15.0)
-                            if not _done:
-                                yield ": keep-alive\n\n"
-                        ev = _task.result()
-                    except StopAsyncIteration:
-                        break
-                    if isinstance(ev, dict):
-                        runner_state = ev
-                tasks = runner_state.get("plan", plan)
+                tasks = state.get("plan", plan)
                 sandbox_job = state.get("sandbox_job")
-                runner_exe = runner_state.get("execute_sandbox") or {}
+                runner_exe = state.get("execute_sandbox") or {}
                 for t in tasks:
                     if t.get("status") == "failed":
                         continue
@@ -918,17 +904,7 @@ class BrainChatService:
                     )
                     mg.execution.complete_task(runner_log.id)
 
-                # Mark session as "deploying" (not "done" yet — deploy runs in background)
-                if mg:
-                    import asyncio as _asyncio4
-                    try:
-                        _asyncio4.get_event_loop().create_task(
-                            mg.session.update_workflow_state("deploying", "RunnerAgent")
-                        )
-                    except RuntimeError:
-                        pass
-
-                runner_status = runner_state.get("status", "deploying")
+                runner_status = state.get("status", "deploying")
                 final_payload = {
                     "execute_sandbox": {
                         "sandbox_job": sandbox_job,
@@ -939,7 +915,7 @@ class BrainChatService:
                     },
                     "plan": tasks,
                     "status": runner_status,
-                    "report": runner_state.get("run_report"),
+                    "report": state.get("run_report"),
                 }
                 yield f"data: {json.dumps({'final_report': _sanitize_for_json(final_payload)})}\n\n"
 
@@ -958,28 +934,9 @@ class BrainChatService:
                     if success:
                         deducted_credits = target_credits
 
-                report = runner_state.get("run_report") or ""
-                metadata = {
-                    "planContent": state.get("project_plan"),
-                    "agentStep": "final_report",
-                    "planApproved": True,
-                    "current_task_index": len(tasks),
-                }
-                conversation_service.save_message(
-                    conv_id, "ASSISTANT", report,
-                    todo_list=list(tasks),
-                    sandbox_job=sandbox_job,
-                    metadata=metadata,
-                    credits_deducted=deducted_credits
-                )
-                if mg:
-                    import asyncio
-                    try:
-                        asyncio.get_event_loop().create_task(
-                            mg.short_term.append("assistant", report or "", "final_report")
-                        )
-                    except RuntimeError:
-                        pass
+                report = state.get("run_report") or ""
+                # Note: final message is saved by the background builder task
+                # itself (common path for connected + disconnected clients).
 
         except Exception as e:
             # Final deduction check on error
