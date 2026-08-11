@@ -200,6 +200,12 @@ Respond ONLY in JSON.
                 parsed = self._format_json_response(last_content) if isinstance(last_content, str) else None
                 if isinstance(parsed, dict) and "files" in parsed:
                     break
+                # First empty/malformed response → switch to fallback model permanently
+                if not fallback_tried:
+                    print(f"[BACKEND] ↻ Empty/malformed response — switching to deepseek-v4-flash permanently", flush=True)
+                    active_llm = self.fallback_llm
+                    fallback_tried = True
+                    continue
                 print(f"[BACKEND] Empty response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
                 msgs.append(SystemMessage(
                     content="Your previous response was empty or invalid. You MUST respond by calling the "
