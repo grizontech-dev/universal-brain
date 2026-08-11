@@ -145,6 +145,37 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                     }
                 } else if (data.type === 'workspace_op') {
                     enqueueOps([data]);
+                } else if (data.type === 'task_orchestrator' && data.task_orchestrator) {
+                    const orch = data.task_orchestrator;
+                    let pm = orch.progress_msg || '{}';
+                    if (orch.current_task_index !== undefined) {
+                        if (typeof pm === 'string' && pm.startsWith('{')) {
+                            try {
+                                const pmObj = JSON.parse(pm);
+                                pmObj.taskId = orch.current_task_index;
+                                pm = JSON.stringify(pmObj);
+                            } catch {}
+                        } else if (typeof pm === 'string') {
+                            pm = JSON.stringify({ taskId: orch.current_task_index, type: 'task_started', text: pm });
+                        }
+                    }
+                    window.dispatchEvent(
+                        new CustomEvent('updateSandboxProgress', {
+                            detail: {
+                                progressMsg: pm,
+                                todoList: orch.plan
+                            }
+                        })
+                    );
+                } else if (data.type === 'task_failed' || data.type === 'build_error') {
+                    window.dispatchEvent(
+                        new CustomEvent('updateSandboxProgress', {
+                            detail: {
+                                progressMsg: JSON.stringify({ error: data.reason || data.error, taskId: data.task_index }),
+                                todoList: data.plan
+                            }
+                        })
+                    );
                 } else if (data.type === 'file_change') {
                     window.dispatchEvent(new CustomEvent('refreshBrainFiles'));
                 } else if (data.type === 'sandbox_ready' || data.type === 'tunnel_ready') {
