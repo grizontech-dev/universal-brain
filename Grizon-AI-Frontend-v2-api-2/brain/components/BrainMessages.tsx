@@ -724,7 +724,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         temperature: 0.3,
                         question_rounds: questionRounds,
                     },
-                    (event) => {
+                    (event) => { 
                         if (!event || typeof event !== 'object') return;
                         ingestSandboxStreamEvent(event as Record<string, unknown>);
                     },

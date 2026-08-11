@@ -53,11 +53,17 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
             const apiBase = (process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
             const wsBase = apiBase.replace(/^http/, 'ws');
             const urlObj = new URL(syncUrl);
+            
             if (urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1') {
                 const baseObj = new URL(wsBase);
                 urlObj.hostname = baseObj.hostname;
                 urlObj.port = baseObj.port || (baseObj.protocol === 'wss:' ? '443' : '80');
                 urlObj.protocol = baseObj.protocol;
+                wsUrl = urlObj.toString();
+            } else if (wsBase.startsWith('wss:') && urlObj.protocol === 'ws:') {
+                // Force WSS to prevent mixed content on GCP/Vercel
+                urlObj.protocol = 'wss:';
+                if (urlObj.port === '80') urlObj.port = '443';
                 wsUrl = urlObj.toString();
             }
         } catch { /* keep original syncUrl */ }
@@ -72,14 +78,29 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                 const data = JSON.parse(event.data);
                 if (data.type === 'workspace_ops' && data.ops) {
                     enqueueOps(data.ops);
-                    if (data.progress_msg || data.todoList) {
+                    const todoList = data.todoList || data.plan;
+                    
+                    if (data.progress_msg || todoList) {
                         const parsed = data.progress_msg ? parseProgressToActivity(String(data.progress_msg)) : null;
-                        if (parsed || data.todoList) {
+                        if (parsed || todoList) {
+                            let pm = data.progress_msg;
+                            // If backend sent current_task_index, inject it so BrainMessages can pick it up
+                            if (data.current_task_index !== undefined) {
+                                if (typeof pm === 'string' && pm.startsWith('{')) {
+                                    try {
+                                        const pmObj = JSON.parse(pm);
+                                        pmObj.taskId = data.current_task_index;
+                                        pm = JSON.stringify(pmObj);
+                                    } catch {}
+                                } else if (!pm) {
+                                    pm = JSON.stringify({ taskId: data.current_task_index });
+                                }
+                            }
                             window.dispatchEvent(
                                 new CustomEvent('updateSandboxProgress', {
                                     detail: { 
-                                        progressMsg: data.progress_msg,
-                                        todoList: data.todoList
+                                        progressMsg: pm,
+                                        todoList: todoList
                                     },
                                 })
                             );
@@ -89,6 +110,19 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                         window.dispatchEvent(
                             new CustomEvent('brainBuildActivity', { detail: { activities: data.activities } })
                         );
+                    }
+                    if (data.sandbox_job) {
+                        // Backend detached runner has updated the sandbox job (e.g. tunnel_url is ready)
+                        const jobData = {
+                            jobId: data.sandbox_job.job_id || data.sandbox_job.jobId || jobId,
+                            syncUrl: data.sandbox_job.sync_url || data.sandbox_job.syncUrl || syncUrl,
+                            streamUrl: data.sandbox_job.tunnel_url || data.sandbox_job.stream_url || data.sandbox_job.streamUrl,
+                            framework: data.sandbox_job.framework,
+                            todoList: todoList,
+                            runtime: data.sandbox_job.runtime || 'sandbox_mcp',
+                        };
+                        // Dispatch openBrainEditor to update the buildJob state in BrainMessages
+                        window.dispatchEvent(new CustomEvent('openBrainEditor', { detail: jobData }));
                     }
                     if (data.activities?.length) {
                         for (const act of data.activities) {
