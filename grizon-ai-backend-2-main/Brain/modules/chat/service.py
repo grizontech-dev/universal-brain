@@ -808,6 +808,14 @@ class BrainChatService:
                 print(f"[CHAT-SERVICE]   [{i+1}/{len(plan)}] {cat}: {title}", flush=True)
             print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
             if plan and state.get("plan_approved", False):
+                # Inject company Supabase credentials into backend/.env BEFORE
+                # the builder runs, so its deploy archive includes them.
+                try:
+                    from Brain.services.template_service import inject_company_supabase_to_workspace
+                    inject_company_supabase_to_workspace(conv_id, user_id=state.get("user_id"))
+                except Exception as e:
+                    print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
+
                 # Run builder in background task to survive client disconnect
                 import asyncio as _bgio
                 _builder_task = _bgio.get_event_loop().create_task(
@@ -881,12 +889,6 @@ class BrainChatService:
                 # its final state to the client (no second race-y deploy).
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
                 print(f"[CHAT-SERVICE] Phase 3: reporting builder result (deploy already triggered)", flush=True)
-
-                try:
-                    from Brain.services.template_service import inject_company_supabase_to_workspace
-                    inject_company_supabase_to_workspace(conv_id, user_id=state.get("user_id"))
-                except Exception as e:
-                    print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
 
                 print(f"[CHAT-SERVICE] \n-------------------------------------------------------------", flush=True)
                 tasks = state.get("plan", plan)
