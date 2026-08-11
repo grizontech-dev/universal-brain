@@ -11,7 +11,8 @@ export type DbTxClient = {
 };
 
 function toIso(value: unknown): string {
-  return new Date(String(value)).toISOString();
+  const d = new Date(String(value));
+  return Number.isNaN(d.getTime()) ? new Date(0).toISOString() : d.toISOString();
 }
 
 function mapMessage(row: Row): Message {

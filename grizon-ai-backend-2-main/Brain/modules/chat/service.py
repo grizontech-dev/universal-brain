@@ -827,7 +827,7 @@ class BrainChatService:
                 # The background task sends updates via websocket (ws_manager)
                 yield "data: " + json.dumps({"status": "building", "plan": _sanitize_for_json(plan)}) + "\n\n"
 
-                if stopped or conv_id in self.STOP_REGISTRY:
+                if conv_id in self.STOP_REGISTRY:
                     # Final deduction check on stop
                     current_tokens = tokens_data["total_tokens"]
                     target_credits = calculate_credits(current_tokens)
