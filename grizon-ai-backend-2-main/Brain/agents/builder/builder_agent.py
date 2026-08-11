@@ -1053,6 +1053,26 @@ class BuilderAgent(BaseAgent):
             progress_msg = json.dumps({"type": "task_started", "taskId": str(index), "title": task_title, "timestamp": str(int(time.time() * 1000))})
             async for ev in self._emit(workspace_id, activities=[start_act], progress_msg=progress_msg):
                 yield ev
+            # Broadcast task_orchestrator so frontend shows "executing" status
+            try:
+                orch_plan = []
+                for i, t in enumerate(tasks):
+                    orch_plan.append({
+                        "title": t.get("title", f"Task {i+1}"),
+                        "category": t.get("category", ""),
+                        "status": "completed" if i < index else ("executing" if i == index else "pending"),
+                    })
+                await ws_manager.broadcast_to_sandbox(str(workspace_id), {
+                    "type": "task_orchestrator",
+                    "task_orchestrator": {
+                        "plan": orch_plan,
+                        "status": "executing_task",
+                        "current_task_index": index,
+                        "progress_msg": f"Executing task {index + 1}/{len(tasks)}: {task_title}",
+                    },
+                })
+            except Exception:
+                pass
 
         # ═══ DELEGATE TO SUB-AGENTS ═══
         if category in ("frontend", "backend", "database"):
@@ -1140,6 +1160,27 @@ class BuilderAgent(BaseAgent):
                     done_msg = json.dumps({"type": "task_completed", "taskId": str(index), "title": task_title, "timestamp": str(int(time.time() * 1000))})
                     async for ev in self._emit(workspace_id, activities=[done_act], progress_msg=done_msg):
                         yield ev
+                    # Broadcast task_orchestrator so frontend updates task progress
+                    try:
+                        next_index = index + 1
+                        orch_plan = []
+                        for i, t in enumerate(state.get("plan", [])):
+                            orch_plan.append({
+                                "title": t.get("title", f"Task {i+1}"),
+                                "category": t.get("category", ""),
+                                "status": "completed" if i < next_index else ("executing" if i == next_index else "pending"),
+                            })
+                        await ws_manager.broadcast_to_sandbox(str(session_id), {
+                            "type": "task_orchestrator",
+                            "task_orchestrator": {
+                                "plan": orch_plan,
+                                "status": "executing_task",
+                                "current_task_index": next_index,
+                                "progress_msg": f"Starting task {next_index + 1}/{len(state.get('plan', []))}...",
+                            },
+                        })
+                    except Exception:
+                        pass
                 current_task["status"] = "completed"
                 state["current_task_index"] = index + 1
                 executed_tasks.append({"title": task_title, "status": "completed", "output": output_content[:500]})
@@ -1438,6 +1479,27 @@ class BuilderAgent(BaseAgent):
             progress_msg = json.dumps({"type": "task_completed", "taskId": str(index), "title": task_title, "timestamp": int(time.time() * 1000)})
             async for ev in self._emit(session_id, activities=[end_act], progress_msg=progress_msg):
                 yield ev
+            # Broadcast task_orchestrator so frontend updates task progress
+            try:
+                next_index = index + 1
+                orch_plan = []
+                for i, t in enumerate(state.get("plan", [])):
+                    orch_plan.append({
+                        "title": t.get("title", f"Task {i+1}"),
+                        "category": t.get("category", ""),
+                        "status": "completed" if i < next_index else ("executing" if i == next_index else "pending"),
+                    })
+                await ws_manager.broadcast_to_sandbox(str(session_id), {
+                    "type": "task_orchestrator",
+                    "task_orchestrator": {
+                        "plan": orch_plan,
+                        "status": "executing_task",
+                        "current_task_index": next_index,
+                        "progress_msg": f"Starting task {next_index + 1}/{len(state.get('plan', []))}...",
+                    },
+                })
+            except Exception:
+                pass
 
         print(f"{LOG} ✓ Task {index+1} complete → next index: {index+1}", flush=True)
         yield state
