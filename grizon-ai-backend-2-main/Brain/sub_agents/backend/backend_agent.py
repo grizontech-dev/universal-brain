@@ -18,10 +18,10 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+            model_id="Qwen/Qwen3-235B-A22B-Instruct-2507"
         )
         self.skill_resolver = SkillResolver()
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-235B-A22B-Instruct-2507", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
         self.fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools([client_save_code, read_skill_file])
 
@@ -164,7 +164,7 @@ Respond ONLY in JSON.
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[BACKEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] model=Qwen/Qwen3-235B-A22B-Instruct-2507 | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         files_saved = set()
         max_iterations = 3

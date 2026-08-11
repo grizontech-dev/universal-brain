@@ -140,7 +140,7 @@ class BuilderAgent(BaseAgent):
         super().__init__(
             name="Builder",
             description="Coordinates sub-agents to execute tasks and build the application.",
-            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+            model_id="Qwen/Qwen3-235B-A22B-Instruct-2507"
         )
         self.llm = ProviderRouter.get_model(os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"), temperature=0.0)
 
@@ -262,8 +262,8 @@ class BuilderAgent(BaseAgent):
         start_time = time.time()
 
         _cat_models = {
-            "frontend": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
-            "backend": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
+            "frontend": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+            "backend": "Qwen/Qwen3-235B-A22B-Instruct-2507",
             "database": "deepseek-v4-flash",
             "runner": "deepseek-v4-pro",
         }
