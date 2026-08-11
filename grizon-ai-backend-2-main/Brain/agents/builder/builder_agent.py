@@ -251,7 +251,7 @@ class BuilderAgent(BaseAgent):
             return '\n'.join(fixed_lines)
         return code
 
-    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend", user_id: str = None) -> str:
+    async def _run_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int = 90, category: str = "backend", user_id: str = None, task_index: int = 0, tasks: list = None) -> str:
         """
         Multi-file agent loop.
         Each LLM call generates MULTIPLE files (2-5 files per call).
@@ -317,6 +317,13 @@ class BuilderAgent(BaseAgent):
             # Emit progress
             if session_id and not str(session_id).startswith("error:"):
                 try:
+                    orch_plan = []
+                    for ti, tt in enumerate(tasks):
+                        orch_plan.append({
+                            "title": tt.get("title", f"Task {ti+1}"),
+                            "category": tt.get("category", ""),
+                            "status": "completed" if ti < task_index else ("executing" if ti == task_index else "pending"),
+                        })
                     await ws_manager.broadcast_to_sandbox(str(session_id), {
                         "type": "workspace_ops",
                         "ops": [],
@@ -332,8 +339,11 @@ class BuilderAgent(BaseAgent):
                             "type": "llm_thinking",
                             "files_done": len(files_saved),
                             "task_title": task_title,
+                            "current_task_index": task_index,
                             "timestamp": str(int(time.time() * 1000))
                         }),
+                        "todoList": orch_plan,
+                        "current_task_index": task_index,
                     })
                 except Exception:
                     pass
@@ -352,11 +362,12 @@ class BuilderAgent(BaseAgent):
                 err_str = str(e)
                 is_rate_limit = ("429" in err_str or "RateLimit" in type(e).__name__
                                  or "engine_overloaded" in err_str or "Model busy" in err_str)
-                if is_rate_limit and not _fallback_active:
-                    print(f"{LOG} ↻ Qwen rate-limited — switching to deepseek-v4-flash permanently", flush=True)
+                is_reasoning_error = "reasoning_content" in err_str
+                if (is_rate_limit or is_reasoning_error) and not _fallback_active:
+                    print(f"{LOG} ↻ LLM error ({'rate limit' if is_rate_limit else 'reasoning_content'}) — switching to deepseek-v4-flash permanently", flush=True)
                     bound_llm = _fallback_llm
                     _fallback_active = True
-                    continue  # retry immediately with fallback model
+                    continue
                 print(f"{LOG} ✖ LLM ERROR: {type(e).__name__}: {e}", flush=True)
                 import traceback as _tb
                 _tb.print_exc()
@@ -1425,7 +1436,7 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} Starting agent loop with {overall_timeout}s overall timeout...", flush=True)
         try:
             output_content = await asyncio.wait_for(
-                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id),
+                self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id, task_index=index, tasks=tasks),
                 timeout=overall_timeout
             )
         except asyncio.TimeoutError:

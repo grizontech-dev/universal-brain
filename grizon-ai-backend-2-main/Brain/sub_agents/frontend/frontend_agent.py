@@ -198,9 +198,9 @@ Otherwise DO NOT generate App.jsx — just create the component files.
 
         for iteration in range(max_iterations):
             try:
-                response = await asyncio.wait_for(active_llm.ainvoke(list(msgs)), timeout=60)
+                response = await asyncio.wait_for(active_llm.ainvoke(list(msgs)), timeout=120)
             except asyncio.TimeoutError:
-                print(f"[FRONTEND] Timeout after 60s (iteration {iteration+1})", flush=True)
+                print(f"[FRONTEND] Timeout after 120s (iteration {iteration+1})", flush=True)
                 if not fallback_tried:
                     print(f"[FRONTEND] ↻ Timeout — switching to deepseek-v4-flash permanently", flush=True)
                     active_llm = self.fallback_llm
@@ -211,11 +211,12 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                 err_str = str(e)
                 is_rate_limit = ("429" in err_str or "RateLimit" in type(e).__name__
                                  or "engine_overloaded" in err_str or "Model busy" in err_str)
-                if is_rate_limit and not fallback_tried:
-                    print(f"[FRONTEND] ↻ Qwen rate-limited — switching to deepseek-v4-flash permanently", flush=True)
+                is_reasoning_error = "reasoning_content" in err_str
+                if (is_rate_limit or is_reasoning_error) and not fallback_tried:
+                    print(f"[FRONTEND] ↻ LLM error ({'rate limit' if is_rate_limit else 'reasoning_content'}) — switching to fallback permanently", flush=True)
                     active_llm = self.fallback_llm
                     fallback_tried = True
-                    continue  # retry immediately with fallback model
+                    continue
                 print(f"[FRONTEND] LLM error: {e}", flush=True)
                 break
 
