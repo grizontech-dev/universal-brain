@@ -1187,8 +1187,8 @@ class BuilderAgent(BaseAgent):
                                 "progress_msg": f"Starting task {next_index + 1}/{len(state.get('plan', []))}...",
                             },
                         })
-                    except Exception:
-                        pass
+                    except Exception as orch_err:
+                        print(f"{LOG} ⚠ task_orchestrator broadcast failed: {orch_err}", flush=True)
                 current_task["status"] = "completed"
                 state["current_task_index"] = index + 1
                 executed_tasks.append({"title": task_title, "status": "completed", "output": output_content[:500]})
@@ -1506,8 +1506,8 @@ class BuilderAgent(BaseAgent):
                         "progress_msg": f"Starting task {next_index + 1}/{len(state.get('plan', []))}...",
                     },
                 })
-            except Exception:
-                pass
+            except Exception as orch_err:
+                print(f"{LOG} ⚠ task_orchestrator broadcast failed: {orch_err}", flush=True)
 
         print(f"{LOG} ✓ Task {index+1} complete → next index: {index+1}", flush=True)
         yield state
