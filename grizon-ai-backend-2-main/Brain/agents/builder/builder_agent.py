@@ -9,7 +9,6 @@ from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
-from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class LLMRateLimitedError(RuntimeError):
@@ -288,6 +287,7 @@ class BuilderAgent(BaseAgent):
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
         _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.7).bind_tools(tools)
+        _fallback_active = False  # Permanently swap to fallback on first 429
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
         start_time = time.time()
         seen_files = set()
@@ -340,15 +340,23 @@ class BuilderAgent(BaseAgent):
 
             try:
                 print(f"{LOG} → Calling LLM (timeout={int(llm_timeout)}s, msgs={len(messages)})...", flush=True)
-                response = await ainvoke_with_retry(
-                    bound_llm, messages, timeout=llm_timeout,
-                    tag="BUILDER", fallback_llm=_fallback_llm,
+                response = await asyncio.wait_for(
+                    bound_llm.ainvoke(list(messages)),
+                    timeout=llm_timeout
                 )
                 print(f"{LOG} ← LLM responded | tool_calls={len(response.tool_calls)} | content_len={len(response.content or '')}", flush=True)
             except asyncio.TimeoutError:
                 print(f"{LOG} ✖ LLM TIMEOUT ({int(llm_timeout)}s)", flush=True)
                 break
             except Exception as e:
+                err_str = str(e)
+                is_rate_limit = ("429" in err_str or "RateLimit" in type(e).__name__
+                                 or "engine_overloaded" in err_str or "Model busy" in err_str)
+                if is_rate_limit and not _fallback_active:
+                    print(f"{LOG} ↻ Qwen rate-limited — switching to deepseek-v4-flash permanently", flush=True)
+                    bound_llm = _fallback_llm
+                    _fallback_active = True
+                    continue  # retry immediately with fallback model
                 print(f"{LOG} ✖ LLM ERROR: {type(e).__name__}: {e}", flush=True)
                 import traceback as _tb
                 _tb.print_exc()

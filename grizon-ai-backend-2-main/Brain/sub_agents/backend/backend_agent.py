@@ -9,7 +9,6 @@ from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
-from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
@@ -169,17 +168,24 @@ Respond ONLY in JSON.
 
         files_saved = set()
         max_iterations = 3
+        active_llm = self.bound_llm  # Start with Qwen; permanently switch to fallback on first 429
+        fallback_tried = False
 
         for iteration in range(max_iterations):
             try:
-                response = await ainvoke_with_retry(
-                    self.bound_llm, msgs, timeout=60,
-                    tag="BACKEND", fallback_llm=self.fallback_llm,
-                )
+                response = await asyncio.wait_for(active_llm.ainvoke(list(msgs)), timeout=60)
             except asyncio.TimeoutError:
                 print(f"[BACKEND] Timeout after 60s (iteration {iteration+1})", flush=True)
                 break
             except Exception as e:
+                err_str = str(e)
+                is_rate_limit = ("429" in err_str or "RateLimit" in type(e).__name__
+                                 or "engine_overloaded" in err_str or "Model busy" in err_str)
+                if is_rate_limit and not fallback_tried:
+                    print(f"[BACKEND] ↻ Qwen rate-limited — switching to deepseek-v4-flash permanently", flush=True)
+                    active_llm = self.fallback_llm
+                    fallback_tried = True
+                    continue  # retry immediately with fallback model
                 print(f"[BACKEND] LLM error: {e}", flush=True)
                 break
 
