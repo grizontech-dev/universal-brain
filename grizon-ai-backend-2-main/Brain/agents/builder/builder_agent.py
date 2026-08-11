@@ -1092,8 +1092,14 @@ class BuilderAgent(BaseAgent):
                                 print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
 
                 summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
-                output_content = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}\n{summary}"
-                print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)} via {agent.name}", flush=True)
+                if not files_saved:
+                    # Sub-agent produced no files (e.g. empty LLM response) —
+                    # never mark the task done. Fall back to the builder loop.
+                    print(f"{LOG} ✖ TASK INCOMPLETE: '{task_title}' saved 0 files via {agent.name} — falling back to builder loop", flush=True)
+                    output_content = None
+                else:
+                    output_content = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}\n{summary}"
+                    print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)} via {agent.name}", flush=True)
 
             except asyncio.TimeoutError:
                 print(f"{LOG} ✖ Sub-agent timeout for '{task_title}', falling back to builder loop", flush=True)

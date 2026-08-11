@@ -206,7 +206,20 @@ Otherwise DO NOT generate App.jsx — just create the component files.
             msgs.append(response)
 
             if not response.tool_calls:
-                break
+                # Empty or non-tool response — retry with a corrective message
+                # instead of giving up and producing a 0-file "done" task.
+                last_content = response.content
+                if isinstance(last_content, list):
+                    last_content = str(last_content)
+                parsed = self._format_json_response(last_content) if isinstance(last_content, str) else None
+                if isinstance(parsed, dict) and "files" in parsed:
+                    break
+                print(f"[FRONTEND] Empty response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
+                msgs.append(SystemMessage(
+                    content="Your previous response was empty or invalid. You MUST respond by calling the "
+                           "client_save_code tool for EVERY file. Do not return plain text — make tool calls."
+                ))
+                continue
 
             # Execute tool calls in parallel if multiple save operations
             save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
