@@ -827,6 +827,24 @@ class BrainChatService:
                 # The background task sends updates via websocket (ws_manager)
                 yield "data: " + json.dumps({"status": "building", "plan": _sanitize_for_json(plan)}) + "\n\n"
 
+                # Await builder completion. The builder itself runs the runner
+                # (deploy) AFTER all tasks are written — deploying here would
+                # archive only the scaffold and reset the builder's workspace.
+                while not _builder_task.done():
+                    _done, _ = await asyncio.wait([_builder_task], timeout=15.0)
+                    if not _done:
+                        yield ": keep-alive\n\n"
+                if _builder_task.cancelled():
+                    print(f"[CHAT-SERVICE] WARN: Builder task cancelled for {conv_id}", flush=True)
+                if mg:
+                    import asyncio as _asyncio3
+                    try:
+                        _asyncio3.get_event_loop().create_task(
+                            mg.session.update_workflow_state("deploying", "RunnerAgent")
+                        )
+                    except RuntimeError:
+                        pass
+
                 if conv_id in self.STOP_REGISTRY:
                     # Final deduction check on stop
                     current_tokens = tokens_data["total_tokens"]
