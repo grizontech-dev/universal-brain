@@ -306,7 +306,7 @@ export const messageService = {
     const values: unknown[] = [args.conversationId];
     let idx = 2;
     if (parsed) {
-      filters.push(`(created_at, id) > ($${idx++}::timestamptz, $${idx++}::uuid)`);
+      filters.push(`(created_at, id) > ($${idx++}::timestamptz, $${idx++})`);
       values.push(parsed.createdAt, parsed.id);
     }
     values.push(args.limit + 1);

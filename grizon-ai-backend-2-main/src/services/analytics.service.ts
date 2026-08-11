@@ -134,8 +134,8 @@ export const analyticsService = {
         COALESCE(SUM(ur.input_tokens_cached), 0)::int AS input_tokens_cached,
         COALESCE(SUM(ur.cache_write_tokens), 0)::int AS cache_write_tokens
       FROM usage_records ur
-      LEFT JOIN api_calls ac ON ac.request_id::text = ur.request_id::text
-      WHERE ur.user_id = $1::uuid
+      LEFT JOIN api_calls ac ON ac.request_id::text = ur.request_id
+      WHERE ur.user_id = $1
         AND ur.created_at >= $2::date
         AND ur.created_at < ($3::date + interval '1 day')
     `,
@@ -158,8 +158,8 @@ export const analyticsService = {
         COALESCE(SUM(ur.input_tokens_cached), 0)::int AS input_tokens_cached,
         COALESCE(SUM(ur.cache_write_tokens), 0)::int AS cache_write_tokens
       FROM usage_records ur
-      LEFT JOIN api_calls ac ON ac.request_id::text = ur.request_id::text
-      WHERE ur.user_id = $1::uuid
+      LEFT JOIN api_calls ac ON ac.request_id::text = ur.request_id
+      WHERE ur.user_id = $1
         AND ur.created_at >= current_date - $2::int
       GROUP BY date_trunc('day', ur.created_at)::date
       ORDER BY day ASC
