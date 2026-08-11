@@ -366,6 +366,12 @@ class BuilderAgent(BaseAgent):
             messages.append(response)
 
             if not response.tool_calls:
+                content_len = len(response.content or "")
+                if content_len == 0 and not _fallback_active:
+                    print(f"{LOG} ↻ Empty response from LLM — switching to deepseek-v4-flash permanently", flush=True)
+                    bound_llm = _fallback_llm
+                    _fallback_active = True
+                    continue
                 print(f"{LOG} ✓ LLM done (no more tool calls) | files_saved={len(files_saved)}", flush=True)
                 break
 
