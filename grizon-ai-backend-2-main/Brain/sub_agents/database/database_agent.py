@@ -93,34 +93,48 @@ Respond ONLY in JSON.
 
         print(f"[DB] model=deepseek-v4-flash | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
-        # Execute with one retry on timeout
+        # Execute with retry on timeout OR parse failure
+        max_attempts = 3
         response_content = None
-        for attempt in range(2):
+        for attempt in range(max_attempts):
             try:
                 response = await asyncio.wait_for(
-                    self.llm.ainvoke(messages, max_tokens=1500),
-                    timeout=60
+                    self.llm.ainvoke(messages, max_tokens=8192),
+                    timeout=120
                 )
                 response_content = response.content if hasattr(response, 'content') else str(response)
-                break
             except asyncio.TimeoutError:
-                print(f"[DB] Timeout attempt {attempt+1}/2", flush=True)
-                if attempt == 0:
+                print(f"[DB] Timeout attempt {attempt+1}/{max_attempts}", flush=True)
+                if attempt < max_attempts - 1:
                     continue
-                response_content = '{"files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation timed out"}], "commands": [], "summary": "Database generation timed out after 2 attempts"}'
+                response_content = '{"files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation timed out"}], "commands": [], "summary": "Database generation timed out"}'
+                break
             except Exception as e:
-                print(f"[DB] LLM error: {e}", flush=True)
+                print(f"[DB] LLM error attempt {attempt+1}: {e}", flush=True)
+                if attempt < max_attempts - 1:
+                    continue
                 response_content = f'{{"files": [{{"path": "backend/supabase/schema.sql", "content": "-- Error: {e}"}}], "commands": [], "summary": "Error: {e}"}}'
                 break
 
-        # Validate parsed JSON
-        generated_json = self._format_json_response(response_content)
-        if not isinstance(generated_json, dict) or "files" not in generated_json:
-            print(f"[DB] Invalid JSON response, using fallback", flush=True)
-            generated_json = {
-                "files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation failed"}],
-                "commands": [],
-                "summary": f"Invalid response: {str(response_content)[:200]}"
-            }
+            # Validate parsed JSON
+            generated_json = self._format_json_response(response_content)
+            if isinstance(generated_json, dict) and "files" in generated_json:
+                return generated_json
 
-        return generated_json
+            # Parse failed — retry with corrective prompt
+            print(f"[DB] Invalid JSON (attempt {attempt+1}/{max_attempts}) — retrying with corrective prompt", flush=True)
+            if attempt < max_attempts - 1:
+                messages.append(SystemMessage(
+                    content="Your previous response was NOT valid JSON. You MUST respond with ONLY a JSON object like: "
+                           '{{"files": [{{"path": "backend/supabase/schema.sql", "content": "CREATE TABLE ..."}}], '
+                           '"commands": [], "summary": "..."}}. '
+                           "Do NOT include markdown, code blocks, or any text outside the JSON."
+                ))
+
+        # All retries failed — return minimal fallback
+        print(f"[DB] All {max_attempts} attempts failed, using minimal fallback", flush=True)
+        return {
+            "files": [{"path": "backend/supabase/schema.sql", "content": "-- Generation failed after retries"}],
+            "commands": [],
+            "summary": f"Database generation failed: {str(response_content)[:200]}"
+        }

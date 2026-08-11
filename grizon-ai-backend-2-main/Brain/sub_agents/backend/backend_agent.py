@@ -176,6 +176,11 @@ Respond ONLY in JSON.
                 response = await asyncio.wait_for(active_llm.ainvoke(list(msgs)), timeout=60)
             except asyncio.TimeoutError:
                 print(f"[BACKEND] Timeout after 60s (iteration {iteration+1})", flush=True)
+                if not fallback_tried:
+                    print(f"[BACKEND] ↻ Timeout — switching to deepseek-v4-flash permanently", flush=True)
+                    active_llm = self.fallback_llm
+                    fallback_tried = True
+                    continue
                 break
             except Exception as e:
                 err_str = str(e)
