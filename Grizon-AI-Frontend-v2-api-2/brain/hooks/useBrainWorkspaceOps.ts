@@ -76,6 +76,17 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
+                if (data.type === 'task_orchestrator' && data.task_orchestrator) {
+                    window.dispatchEvent(
+                        new CustomEvent('updateSandboxProgress', {
+                            detail: {
+                                progressMsg: data.task_orchestrator.progress_msg || '',
+                                todoList: data.task_orchestrator.plan || [],
+                                taskOrchestrator: data.task_orchestrator,
+                            },
+                        })
+                    );
+                }
                 if (data.type === 'workspace_ops' && data.ops) {
                     enqueueOps(data.ops);
                     const todoList = data.todoList || data.plan;
