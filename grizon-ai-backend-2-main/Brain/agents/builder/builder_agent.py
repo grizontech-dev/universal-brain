@@ -1116,6 +1116,7 @@ class BuilderAgent(BaseAgent):
                                 # Verify file exists on disk before skipping
                                 ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
                                 full_check = os.path.join(ws_root, file_path) if ws_root else None
+                                print(f"{LOG} ⚠ Skip empty check: ws_root={ws_root} file={file_path} full={full_check} exists={os.path.isfile(full_check) if full_check else False}", flush=True)
                                 if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
                                     files_saved.append(file_path)
                                     print(f"{LOG} ✓ [{len(files_saved)}] Kept (already saved): {file_path}", flush=True)
@@ -1134,6 +1135,7 @@ class BuilderAgent(BaseAgent):
                                 print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
 
                 summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
+                print(f"{LOG} ⚠ Sub-agent result: files={len(result.get('files', [])) if isinstance(result, dict) else 'N/A'} | files_saved={len(files_saved)} | summary={summary[:100]}", flush=True)
                 if not files_saved:
                     # Sub-agent produced no files (e.g. empty LLM response) —
                     # never mark the task done. Fall back to the builder loop.

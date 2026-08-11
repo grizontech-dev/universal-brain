@@ -254,4 +254,6 @@ Respond ONLY in JSON.
             if isinstance(parsed, dict) and "files" in parsed:
                 return parsed
 
-        return {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        result = {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        print(f"[BACKEND] Result: files={len(result['files'])} paths={[f['path'] for f in result['files']]}", flush=True)
+        return result
