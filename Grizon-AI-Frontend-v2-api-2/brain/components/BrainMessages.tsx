@@ -387,6 +387,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 streamUrl: sj.stream_url || sj.streamUrl,
                                 framework: sj.framework || selectedFramework,
                             };
+                            if (jobData.streamUrl) {
+                                window.dispatchEvent(
+                                    new CustomEvent('brainPreviewReady', { detail: { url: jobData.streamUrl, streamUrl: jobData.streamUrl } })
+                                );
+                            }
                             if (jobData.jobId) {
                                 setBuildJob(prev => {
                                     if (!prev || prev.jobId !== jobData.jobId) return jobData;

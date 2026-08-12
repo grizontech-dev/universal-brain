@@ -237,6 +237,21 @@ class RunnerAgent(BaseAgent):
             _state["run_report"] = run_report
             _state["status"] = exe_status
             _state["tunnel_url"] = tunnel_url
+
+            # Persist tunnel URL to the conversation so polling/reload restores the
+            # preview link even when the WebSocket is missing/disconnected.
+            try:
+                from Brain.modules.conversations.service import conversation_service
+                conversation_service.save_message(
+                    str(_sid), "ASSISTANT", run_report,
+                    todo_list=list(_state.get("plan", [])),
+                    sandbox_job=sandbox_job,
+                    metadata={"agentStep": "final_report", "planApproved": True, "current_task_index": len(_state.get("plan", []))},
+                )
+                print(f"[RUNNER] Persisted tunnel URL to conversation {_sid}")
+            except Exception as _persist_err:
+                print(f"[RUNNER] Persist tunnel URL failed: {_persist_err}")
+
             print(f"[RUNNER] _background_deploy finished | session={_sid} | status={exe_status} | tunnel={tunnel_url}")
 
         print(f"[RUNNER] Spawning detached deploy task | entrypoint={entrypoint}")

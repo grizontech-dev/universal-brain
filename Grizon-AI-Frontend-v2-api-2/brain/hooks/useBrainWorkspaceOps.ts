@@ -45,14 +45,24 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
     }, [enqueueOps]);
 
     useEffect(() => {
-        if (!syncUrl || !jobId) return;
+        if (!jobId) return;
 
-        // Rewrite syncUrl: backend sends ws://localhost:8001 but browser needs real host
+        // Rewrite syncUrl: backend sends ws://localhost:8001 but browser needs real host.
+        // If syncUrl is missing (older conversations stored sync_url=null), build the URL
+        // deterministically from the API base — the WS route is always the same.
         let wsUrl = syncUrl;
+        if (!wsUrl) {
+            try {
+                const apiBase = (process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
+                wsUrl = apiBase.replace(/^http/, 'ws') + `/brain/sandbox/sync/${jobId}`;
+            } catch {
+                return;
+            }
+        }
         try {
             const apiBase = (process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
             const wsBase = apiBase.replace(/^http/, 'ws');
-            const urlObj = new URL(syncUrl);
+            const urlObj = new URL(wsUrl);
             
             if (urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1') {
                 const baseObj = new URL(wsBase);

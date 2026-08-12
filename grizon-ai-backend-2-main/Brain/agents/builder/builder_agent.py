@@ -9,6 +9,7 @@ from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
+from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class LLMRateLimitedError(RuntimeError):
@@ -350,9 +351,13 @@ class BuilderAgent(BaseAgent):
 
             try:
                 print(f"{LOG} → Calling LLM (timeout={int(llm_timeout)}s, msgs={len(messages)})...", flush=True)
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(list(messages)),
-                    timeout=llm_timeout
+                response = await ainvoke_with_retry(
+                    bound_llm, messages, llm_timeout,
+                    tag="BUILDER",
+                    fallback_llm=_fallback_llm if not _fallback_active else None,
+                    max_retries=3,
+                    backoff_base=5.0,
+                    backoff_max=60.0,
                 )
                 print(f"{LOG} ← LLM responded | tool_calls={len(response.tool_calls)} | content_len={len(response.content or '')}", flush=True)
             except asyncio.TimeoutError:

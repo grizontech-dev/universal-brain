@@ -9,6 +9,7 @@ from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
+from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
@@ -183,7 +184,14 @@ Respond ONLY in JSON.
 
         for iteration in range(max_iterations):
             try:
-                response = await asyncio.wait_for(active_llm.ainvoke(list(msgs)), timeout=120)
+                response = await ainvoke_with_retry(
+                    active_llm, msgs, 120,
+                    tag="BACKEND",
+                    fallback_llm=fallback_llm if not fallback_tried else None,
+                    max_retries=3,
+                    backoff_base=5.0,
+                    backoff_max=60.0,
+                )
             except asyncio.TimeoutError:
                 print(f"[BACKEND] Timeout after 120s (iteration {iteration+1})", flush=True)
                 if not fallback_tried:
