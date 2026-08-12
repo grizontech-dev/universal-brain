@@ -126,33 +126,39 @@ class SkillResolver:
         db_kw = any(k in t for k in ["supabase", "database", "postgres", "sql", "query", "vector"])
 
         def relevance(path: str) -> bool:
+            # Paths are relative (e.g. "frontend-design/SKILL.md") — match on path segments,
+            # NOT leading-slash substrings (those never match relative paths).
             p = path.lower().replace("\\", "/")
-            if frontend_kw and any(d in p for d in ["/frontend", "/frontend-design", "/shadcn"]):
+            parts = [seg for seg in p.split("/") if seg]
+            if frontend_kw and any(d in parts for d in ["frontend", "frontend-design", "shadcn"]):
                 return True
-            if backend_kw and any(d in p for d in ["/backend", "/backend-development", "/nodejs-backend"]):
+            if backend_kw and any(d in parts for d in ["backend", "backend-development", "nodejs-backend-patterns"]):
                 return True
-            if db_kw and any(d in p for d in ["/database", "/supabase"]):
+            if db_kw and any(d in parts for d in ["database", "supabase", "supabase-postgres-best-practices"]):
                 return True
             return False
 
         skillss_files = self._collect_local_markdown(skillss_dir, allowed_names={"SKILL.md"})
         skills_files = self._collect_local_markdown(skills_dir)
+        all_files = [(name, text, "skillss") for name, text in skillss_files]
+        all_files += [(name, text, "skills") for name, text in skills_files]
 
-        filtered = [x for x in skillss_files + skills_files if relevance(x[0])]
+        filtered = [x for x in all_files if relevance(x[0])]
 
         if not filtered:
             print(f"[SkillResolver] 🗂️ No relevant skill files found for task.")
             return ""
 
-        # Return ONLY file paths — agent reads on demand via read_file tool
-        paths = [name for name, _ in filtered]
+        # Return ONLY file paths — agent reads on demand via read_skill_file tool.
+        # Paths must be relative to the Brain root so read_skill_file can resolve them.
+        paths = [f"{src}/{name}".replace("\\", "/") for name, _, src in filtered]
         print(f"[SkillResolver] 🗂️ Found {len(paths)} relevant skill files (paths returned, agent reads on demand).")
         
         path_list = "\n".join(f"- {p}" for p in paths)
         return f"""SKILL FILES (read these when you need guidance — do NOT load all at once):
 {path_list}
 
-When you need help with a specific topic, use the read_file MCP tool to read the relevant skill file above. Only read what you need for the current task."""
+When you need help with a specific topic, use the read_skill_file tool to read the relevant skill file above. Only read what you need for the current task."""
 
     def resolve_skills_for_task(self, task_description: str) -> str:
         """End-to-end pipeline to get compiled JSON rules for a task.

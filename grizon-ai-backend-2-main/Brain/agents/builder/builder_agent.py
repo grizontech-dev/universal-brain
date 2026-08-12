@@ -407,7 +407,7 @@ class BuilderAgent(BaseAgent):
                 tool_name = tc["name"]
                 tool_args = tc["args"]
                 file_path = tool_args.get("file_path", "")
-                code_content = tool_args.get("code", "")
+                code_content = tool_args.get("code_content", "")
                 code_len = len(code_content)
 
                 if file_path in seen_files:
@@ -452,6 +452,7 @@ class BuilderAgent(BaseAgent):
                             timeout=tool_timeout
                         )
                         files_saved.append(file_path)
+                        seen_files.add(file_path)
                         consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 

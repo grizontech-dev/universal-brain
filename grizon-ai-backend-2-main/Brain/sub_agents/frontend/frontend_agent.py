@@ -3,7 +3,7 @@ import os
 import json
 import asyncio
 from Brain.shared.agent import BaseAgent
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
 from Brain.services.provider_router import ProviderRouter
@@ -23,8 +23,9 @@ class FrontendAgent(BaseAgent):
         self.skill_resolver = SkillResolver()
         # Cache bound model once — avoid recreating every execute()
         self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
-        self.fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools([client_save_code, read_skill_file])
+        self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
 
     async def _safe_tool_call(self, tool, args, config=None):
         """Execute a tool call with error handling."""
@@ -191,9 +192,18 @@ Otherwise DO NOT generate App.jsx — just create the component files.
 
         print(f"[FRONTEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
+        # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
+        # its iteration budget calling read_skill_file on project files (which the
+        # tool cannot read) and never reaches client_save_code.
+        if skills_content and skills_content != "{}":
+            active_llm = self.bound_llm
+            fallback_llm = self.fallback_llm
+        else:
+            active_llm = self.llm.bind_tools([client_save_code])
+            fallback_llm = self.fallback_model.bind_tools([client_save_code])
+
         files_saved = set()  # Use set to prevent duplicates
-        max_iterations = 3  # Reduced from 8 — most tasks need 1-2 iterations
-        active_llm = self.bound_llm  # Start with Qwen; permanently switch to fallback on first 429
+        max_iterations = 8  # Qwen explores (read_skill_file) before saving — allow budget
         fallback_tried = False
 
         for iteration in range(max_iterations):
@@ -203,7 +213,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                 print(f"[FRONTEND] Timeout after 120s (iteration {iteration+1})", flush=True)
                 if not fallback_tried:
                     print(f"[FRONTEND] ↻ Timeout — switching to deepseek-v4-flash permanently", flush=True)
-                    active_llm = self.fallback_llm
+                    active_llm = fallback_llm
                     fallback_tried = True
                     continue
                 break
@@ -214,7 +224,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                 is_reasoning_error = "reasoning_content" in err_str
                 if (is_rate_limit or is_reasoning_error) and not fallback_tried:
                     print(f"[FRONTEND] ↻ LLM error ({'rate limit' if is_rate_limit else 'reasoning_content'}) — switching to fallback permanently", flush=True)
-                    active_llm = self.fallback_llm
+                    active_llm = fallback_llm
                     fallback_tried = True
                     continue
                 print(f"[FRONTEND] LLM error: {e}", flush=True)
@@ -233,7 +243,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                 if is_empty:
                     print(f"[FRONTEND] ↻ Empty response (iteration {iteration+1}) — switching to fallback permanently", flush=True)
                     if not fallback_tried:
-                        active_llm = self.fallback_llm
+                        active_llm = fallback_llm
                         fallback_tried = True
                     msgs.append(SystemMessage(
                         content="Your previous response was empty. You MUST respond by calling the "
@@ -245,7 +255,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                     break
                 if not fallback_tried:
                     print(f"[FRONTEND] ↻ Malformed response — switching to fallback permanently", flush=True)
-                    active_llm = self.fallback_llm
+                    active_llm = fallback_llm
                     fallback_tried = True
                     continue
                 print(f"[FRONTEND] Malformed response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
@@ -297,12 +307,26 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                             tool_call_id=tc["id"]
                         ))
 
+            # The model explored (read_skill_file etc.) but produced no files this round —
+            # nudge it to save NOW so it doesn't burn the whole iteration budget exploring.
+            if not save_calls and iteration < max_iterations - 1:
+                print(f"[FRONTEND] ↻ No saves this round (tool_calls={len(response.tool_calls)}) — nudging to save files", flush=True)
+                msgs.append(SystemMessage(
+                    content="You explored the workspace, but you did NOT save any files. STOP exploring. "
+                           "Use the client_save_code tool to save the required files NOW — every file, "
+                           "one tool call each. Do not call read_skill_file again."
+                ))
+
         if not files_saved:
-            last_content = msgs[-1].content if msgs else ""
-            if isinstance(last_content, list):
-                last_content = str(last_content)
-            parsed = self._format_json_response(last_content)
-            if isinstance(parsed, dict) and "files" in parsed:
-                return parsed
+            last_msg = msgs[-1] if msgs else None
+            # Only LLM responses can contain JSON; tool result messages never do.
+            if isinstance(last_msg, AIMessage):
+                last_content = last_msg.content
+                if isinstance(last_content, list):
+                    last_content = str(last_content)
+                if isinstance(last_content, str) and last_content.strip():
+                    parsed = self._format_json_response(last_content)
+                    if isinstance(parsed, dict) and "files" in parsed:
+                        return parsed
 
         return {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}

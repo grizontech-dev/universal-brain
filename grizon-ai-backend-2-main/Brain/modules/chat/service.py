@@ -313,7 +313,7 @@ class BrainChatService:
             "runtime": runtime,
             "framework": framework,
             "await_preview": sandbox_available,
-            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}" if sandbox_available else None,
+            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}",
         }
 
         if sandbox_available:
@@ -1182,6 +1182,22 @@ class BrainChatService:
                         pass
 
                 last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
+
+                # Persist per-task progress so polling-based UIs advance too
+                # (WebSocket missing/broken → 5s poll of /brain/conversations/{id}
+                # only sees DB messages; init_sandbox index=0 stays stuck otherwise).
+                new_index = state.get("current_task_index", 0)
+                if new_index > index:
+                    try:
+                        conversation_service.save_message(
+                            conv_id, "ASSISTANT",
+                            f"Task {index + 1}/{len(plan)} complete — moving to task {new_index + 1}.",
+                            todo_list=list(plan),
+                            metadata={"agentStep": "execute_sandbox", "planApproved": True, "current_task_index": new_index},
+                        )
+                        print(f"[CHAT-SERVICE] BG-TASK: Saved progress msg for task {new_index}/{len(plan)}", flush=True)
+                    except Exception as save_progress_err:
+                        print(f"[CHAT-SERVICE] BG-TASK: progress save error: {save_progress_err}", flush=True)
 
                 if mg:
                     try:
