@@ -1,6 +1,9 @@
+import { redirect } from 'next/navigation';
+
 /**
- * New chat route — main UI is composed in `app/chat/layout.tsx` (`MessagesStaticShell`, sidebar, canvas).
+ * New chat route — redirects to /brain
  */
 export default function ChatPage() {
-  return null;
+  redirect('/brain');
 }
+

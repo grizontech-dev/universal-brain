@@ -13,7 +13,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isLoading && user?.email_verified_at) {
-      router.push('/chat');
+      router.push('/brain');
     }
   }, [user, isLoading, router]);
 
@@ -35,8 +35,8 @@ export default function Home() {
       openAuthModal('verify-email');
       return false;
     }
-    // Navigate to chat with the initial message
-    router.push(`/chat?initialMessage=${encodeURIComponent(message)}`);
+    // Navigate to brain with the initial message
+    router.push(`/brain?initialMessage=${encodeURIComponent(message)}`);
     return true;
   };
 

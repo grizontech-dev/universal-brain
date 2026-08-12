@@ -114,7 +114,7 @@ export default function ChatScreen() {
               return;
             }
             setIsSettingsOpen(false);
-            void router.push('/chat');
+            void router.push('/brain');
             setActiveRail('threads');
           }}
           onSettingsClick={() => setIsSettingsOpen(true)}

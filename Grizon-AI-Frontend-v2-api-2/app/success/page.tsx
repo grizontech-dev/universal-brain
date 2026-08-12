@@ -46,7 +46,7 @@ function SuccessScreen() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4">
             <button
-              onClick={() => router.push('/chat')}
+              onClick={() => router.push('/brain')}
               className="group flex items-center justify-center gap-2 bg-white text-gray-950 rounded-2xl py-4 px-6 font-bold hover:bg-gray-200 transition-all active:scale-95 shadow-xl shadow-white/10"
             >
               <LayoutDashboard size={18} />

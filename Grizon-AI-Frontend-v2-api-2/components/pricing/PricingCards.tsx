@@ -157,7 +157,7 @@ export default function PricingCards() {
       <div className="mx-auto max-w-7xl px-6 lg:px-8 pb-10">
         <div className="mb-6 animate-in fade-in duration-700">
           <button
-            onClick={() => router.push('/chat')}
+            onClick={() => router.push('/brain')}
             className="flex items-center gap-2 text-[10px] font-black text-text-faint hover:text-text-primary transition-all group uppercase tracking-[0.3em] bg-surface-2 px-4 py-2 rounded-full border border-border-default"
           >
             <ArrowLeft className="w-3 h-3 transition-transform group-hover:-translate-x-1" strokeWidth={3} />

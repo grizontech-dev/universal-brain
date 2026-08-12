@@ -179,10 +179,8 @@ export const ConversationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const selectConversation = useCallback(
     (id: string | null) => {
-      // Use a more robust check for the current module
       const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
-      const isBrain = currentPath.startsWith('/brain');
-      const prefix = isBrain ? '/brain' : '/chat';
+      const prefix = '/brain';
       
       if (id) {
         const target = `${prefix}/${id}`;

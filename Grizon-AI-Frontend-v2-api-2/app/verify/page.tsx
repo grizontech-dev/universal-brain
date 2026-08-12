@@ -36,7 +36,7 @@ function VerifyWithToken({ token }: { token: string }) {
         }
         const hasSession =
           typeof window !== 'undefined' && !!localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-        router.replace(hasSession ? '/chat' : '/');
+        router.replace(hasSession ? '/brain' : '/');
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof ApiError ? e.message : 'Verification failed');

@@ -75,8 +75,8 @@ export default function VerifyEmailRequestPage() {
           </>
         ) : null}
 
-        <Link href="/chat" className="mt-8 block text-center text-sm text-accent hover:text-accent-hover">
-          Back to chat
+        <Link href="/brain" className="mt-8 block text-center text-sm text-accent hover:text-accent-hover">
+          Back to app
         </Link>
       </div>
     </div>

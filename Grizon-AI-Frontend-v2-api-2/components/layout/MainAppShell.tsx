@@ -35,18 +35,10 @@ function MainChromeInner({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isAuthenticated, openAuthModal]);
 
-  const activeMode = pathname.startsWith('/settings') ? 'settings' : pathname.startsWith('/brain') ? 'brain' : 'chat';
-  const isChatRoute = pathname.startsWith('/chat');
+  const activeMode = pathname.startsWith('/settings') ? 'settings' : 'brain';
 
   const handleChatClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (e.detail === 2) {
-      e.preventDefault();
-      if (isChatRoute) {
-        toggleThreadList();
-      }
-      return;
-    }
-    router.push('/chat');
+    router.push('/brain');
     setThreadListOpen(true);
   };
 

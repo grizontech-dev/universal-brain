@@ -87,7 +87,7 @@ export default function SubscriptionPage() {
             <p className="text-text-muted font-medium">Manage your plan, billing history, and payment methods.</p>
           </div>
           <button
-            onClick={() => router.push('/chat')}
+            onClick={() => router.push('/brain')}
             className="flex items-center justify-center gap-2 bg-indigo-500 text-text-primary rounded-xl py-3 px-6 font-bold hover:bg-indigo-400 transition-all active:scale-95 shadow-xl shadow-indigo-500/20"
           >
             <LayoutDashboard size={18} />

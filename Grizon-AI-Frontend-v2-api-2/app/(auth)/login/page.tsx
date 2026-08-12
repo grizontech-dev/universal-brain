@@ -18,7 +18,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isLoading && user?.email_verified_at) {
-      router.push('/chat');
+      router.push('/brain');
     }
   }, [user, isLoading, router]);
 
@@ -44,7 +44,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await login({ email: email.trim(), password });
-      router.push('/chat');
+      router.push('/brain');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed');
     } finally {
@@ -60,7 +60,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await register({ email: email.trim(), password, name: name.trim() });
-      router.push('/chat');
+      router.push('/brain');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Registration failed');
     } finally {

@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 
 interface IconRailProps {
   activeMode: 'chat' | 'settings' | 'brain';
-  onChatClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onChatClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onSettingsClick: () => void;
   onBrainClick: () => void;
 }
@@ -32,6 +32,7 @@ export default function IconRail({
       <div
         className='relative mb-6 cursor-pointer hover:opacity-80 transition-opacity'
         title='Grizon AI'
+        onClick={onBrainClick}
       >
         <img
           src='/Logo.svg'
@@ -39,25 +40,6 @@ export default function IconRail({
           className='w-10 h-10 object-contain'
         />
       </div>
-
-      <button
-        type='button'
-        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all mb-1 group relative ${
-          activeMode === 'chat'
-            ? 'bg-surface-3 text-text-primary font-semibold'
-            : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
-        }`}
-        onClick={onChatClick}
-        aria-label='Chats'
-      >
-        <MessageSquare
-          size={20}
-          className='transition-transform duration-200 group-active:scale-95'
-        />
-        <div className='absolute left-full ml-3 px-2 py-1 bg-elevated border border-border-default text-text-primary text-[11px] font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg'>
-          Chats
-        </div>
-      </button>
 
       <button
         type='button'

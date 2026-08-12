@@ -77,7 +77,7 @@ export default function CheckoutForm() {
           </div>
           <div className="pt-4 space-y-3">
             <button 
-              onClick={() => router.push('/chat')}
+              onClick={() => router.push('/brain')}
               className="w-full bg-white text-gray-950 h-12 rounded-xl font-black text-sm hover:bg-gray-200 transition-all active:scale-95"
             >
               Go to Dashboard

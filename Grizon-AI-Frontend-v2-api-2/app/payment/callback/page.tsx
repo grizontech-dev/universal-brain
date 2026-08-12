@@ -152,7 +152,7 @@ function CallbackScreen() {
             </div>
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
-                onClick={() => router.push('/chat')}
+                onClick={() => router.push('/brain')}
                 className="flex items-center justify-center gap-2 py-3 bg-white text-gray-950 rounded-xl font-black text-sm hover:bg-gray-200 transition-all active:scale-95"
               >
                 <LayoutDashboard size={15} />
@@ -186,7 +186,7 @@ function CallbackScreen() {
             </div>
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
-                onClick={() => router.push('/chat')}
+                onClick={() => router.push('/brain')}
                 className="flex items-center justify-center gap-2 py-3 bg-white text-gray-950 rounded-xl font-black text-sm hover:bg-gray-200 transition-all active:scale-95"
               >
                 <LayoutDashboard size={15} />
@@ -224,7 +224,7 @@ function CallbackScreen() {
                 Try Again
               </button>
               <button
-                onClick={() => router.push('/chat')}
+                onClick={() => router.push('/brain')}
                 className="flex items-center justify-center gap-2 py-3 bg-white/5 text-white/70 rounded-xl font-black text-sm hover:bg-white/10 transition-all border border-white/10 active:scale-95"
               >
                 Go Home
@@ -253,7 +253,7 @@ function CallbackScreen() {
                 Check Status
               </button>
               <button
-                onClick={() => router.push('/chat')}
+                onClick={() => router.push('/brain')}
                 className="flex items-center justify-center gap-2 py-3 bg-white/5 text-white/70 rounded-xl font-black text-sm hover:bg-white/10 transition-all border border-white/10 active:scale-95"
               >
                 Go Home

@@ -62,7 +62,7 @@ function ResetPasswordForm() {
       const bundle = await authPasswordReset(token, password);
       await applySessionFromTokenBundle(bundle);
       setSuccess(true);
-      setTimeout(() => router.push('/chat'), 1500);
+      setTimeout(() => router.push('/brain'), 1500);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Reset failed');
     } finally {

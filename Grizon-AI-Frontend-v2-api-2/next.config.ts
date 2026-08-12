@@ -10,6 +10,20 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  async redirects() {
+    return [
+      {
+        source: '/chat',
+        destination: '/brain',
+        permanent: false,
+      },
+      {
+        source: '/chat/:path*',
+        destination: '/brain/:path*',
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     const backendTarget = process.env.BACKEND_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:4000";
     return [

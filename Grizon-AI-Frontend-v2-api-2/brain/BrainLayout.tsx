@@ -36,10 +36,7 @@ export default function BrainLayout({ children }: { children?: React.ReactNode }
           : '?';
 
     const navButtons = [
-        { id: 'chat', icon: MessageSquare, label: 'Standard Chat', path: '/chat' },
         { id: 'brain', icon: Brain, label: 'Neural Brain', path: '/brain', active: true },
-        { id: 'connectors', icon: Plug, label: 'Connectors', path: '/chat?tab=connectors' },
-        { id: 'database', icon: Database, label: 'Database', path: '/chat?tab=database' },
     ];
 
     return (

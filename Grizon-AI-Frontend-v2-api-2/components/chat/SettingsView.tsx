@@ -276,9 +276,9 @@ export default function SettingsView({ section }: { section: SettingsSectionId }
       <div className='lg:hidden flex items-center justify-between px-4 h-[56px] border-b border-border-subtle bg-sidebar shrink-0 z-50'>
         <div className='flex items-center gap-2'>
           <button
-            onClick={() => router.push('/chat')}
-            title='Back to chat'
-            aria-label='Back to chat'
+            onClick={() => router.push('/brain')}
+            title='Back to brain'
+            aria-label='Back to brain'
             className='w-9 h-9 flex items-center justify-center rounded-xl hover:bg-surface-2 transition-all active:scale-95 shrink-0'
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -792,7 +792,7 @@ export default function SettingsView({ section }: { section: SettingsSectionId }
                     type='button'
                     onClick={() => {
                       void logout();
-                      router.push('/chat');
+                      router.push('/brain');
                     }}
                     className='flex items-center justify-center gap-2 px-4 py-2 bg-surface-2 border border-border-default text-text-primary rounded-lg text-xs font-bold hover:bg-red-500/10 hover:text-red-400'
                   >
@@ -808,7 +808,7 @@ export default function SettingsView({ section }: { section: SettingsSectionId }
                       )
                         return;
                       void logoutAll();
-                      router.push('/chat');
+                      router.push('/brain');
                     }}
                     className='flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-300 rounded-lg text-xs font-bold hover:bg-red-500/20'
                   >

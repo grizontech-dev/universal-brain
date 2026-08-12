@@ -1,6 +1,9 @@
+import { redirect } from 'next/navigation';
+
 /**
- * Existing conversation route — layout loads messages via `ConversationContext` from the URL id.
+ * Existing conversation route — redirects to /brain
  */
 export default function ChatIdPage() {
-  return null;
+  redirect('/brain');
 }
+
