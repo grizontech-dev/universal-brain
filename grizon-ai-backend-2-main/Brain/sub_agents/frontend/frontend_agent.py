@@ -18,11 +18,11 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="Qwen/Qwen3-235B-A22B-Instruct-2507"
+            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
         )
         self.skill_resolver = SkillResolver()
         # Cache bound model once — avoid recreating every execute()
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-235B-A22B-Instruct-2507", temperature=0.1)
+        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
         self.fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools([client_save_code, read_skill_file])
 
@@ -189,7 +189,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         # Initialize messages
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[FRONTEND] model=Qwen/Qwen3-235B-A22B-Instruct-2507 | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[FRONTEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         files_saved = set()  # Use set to prevent duplicates
         max_iterations = 3  # Reduced from 8 — most tasks need 1-2 iterations
