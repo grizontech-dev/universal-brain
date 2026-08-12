@@ -15,6 +15,18 @@ from Brain.services.mcp_service import MCPServiceError, get_mcp_service
 
 LOG = "[MCP_TOOLS]"
 
+# Accumulates file-save details during each task execution.
+# Cleared by _run_builder_background after each task completes.
+_task_file_saves: List[Dict[str, Any]] = []
+
+
+def get_task_file_saves() -> List[Dict[str, Any]]:
+    """Return and clear the accumulated file-save details for the current task."""
+    global _task_file_saves
+    saves = list(_task_file_saves)
+    _task_file_saves.clear()
+    return saves
+
 def _make_activity(act_type: str, label: str, path: str = "", task_title: str = "") -> Dict[str, Any]:
     return {
         "id": f"act-{int(time.time() * 1000)}-{act_type}",
@@ -124,6 +136,15 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     lines_added = max(0, len(new_lines) - len([l for l in old_lines if l in new_set]))
     lines_removed = max(0, len(old_lines) - len([l for l in new_lines if l in old_set]))
     action = "Created" if is_new_file else "Edited"
+
+    # Accumulate for per-task progress message
+    _task_file_saves.append({
+        "path": actual_path,
+        "action": action,
+        "linesAdded": lines_added,
+        "linesRemoved": lines_removed,
+        "chars": len(code_content),
+    })
 
     # Emit WebSocket event
     act = _make_activity("edit_file", f"{action} {actual_path}", path=actual_path, task_title=task_title)

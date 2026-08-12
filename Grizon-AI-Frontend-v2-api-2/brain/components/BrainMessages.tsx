@@ -2589,7 +2589,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                             dateTime={msg.timestamp}
                                                             planContent={msg.planContent}
                                                             sandboxJob={msg.sandboxJob}
-                                                            todoList={(isBuildMode && index === messages.length - 1 && buildTodos.length) ? (buildTodos as any) : msg.todoList}
+                                                            todoList={(isBuildMode && index === messages.length - 1 && buildTodos.length) ? (buildTodos as any) : (msg.metadata?.agentStep === 'create_tasks' ? msg.todoList : undefined)}
                                                             clarificationData={msg.clarificationData}
                                                             thoughts={(isLoading && index === messages.length - 1) ? (liveThoughts || msg.thoughts) : msg.thoughts}
                                                             timeline={(isLoading && index === messages.length - 1) ? (liveTimeline?.length ? liveTimeline : msg.timeline) : msg.timeline}

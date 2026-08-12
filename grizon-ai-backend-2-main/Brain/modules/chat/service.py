@@ -1194,11 +1194,24 @@ class BrainChatService:
                         latest_task = executed_tasks[-1] if executed_tasks else {}
                         task_output = latest_task.get("output", "")
 
+                        # Get detailed file saves from mcp_tools accumulator
+                        from Brain.agents.builder.mcp_tools import get_task_file_saves
+                        file_saves = get_task_file_saves()
+
                         files_str = ""
-                        if "Files saved:" in task_output:
+                        if file_saves:
+                            # Build detailed file list: "Created a.js (+45 lines), Edited b.js (+12, -3 lines)"
+                            parts = []
+                            for fs in file_saves:
+                                detail = f"{fs['action']} {fs['path']}"
+                                if fs['linesAdded'] or fs['linesRemoved']:
+                                    detail += f" (+{fs['linesAdded']}, -{fs['linesRemoved']})"
+                                parts.append(detail)
+                            files_str = "\n" + "\n".join(f"  {p}" for p in parts)
+                        elif "Files saved:" in task_output:
                             files_section = task_output.split("Files saved:")[1].split("\n")[0].strip()
                             if files_section:
-                                files_str = f"\nFiles: {files_section}"
+                                files_str = f"\n  {files_section}"
 
                         task_title = plan[index].get("title", f"Task {index + 1}")
                         task_status = plan[index].get("status", "completed")
