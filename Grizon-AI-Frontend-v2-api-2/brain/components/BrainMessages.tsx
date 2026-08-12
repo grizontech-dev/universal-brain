@@ -2568,13 +2568,25 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                                             const lastPlanMessageId = [...messages].reverse().find(m => m.planContent)?.id;
 
-                                            return messages.map((msg, index) => {
+                                            // Filter out purely task-status messages from being rendered as main chat bubbles
+                                            const displayMessages = messages.filter(m => {
+                                                if (m.role === 'user') return true;
+                                                const c = m.content || '';
+                                                // If it's just a task update and doesn't have a plan, hide it
+                                                if (!m.planContent && (c.includes('✅ Task ') || c.includes('→ Moving to task') || m.metadata?.agentStep === 'task_execution' || m.metadata?.is_task_update)) return false;
+                                                return true;
+                                            });
+
+                                            return displayMessages.map((msg, index) => {
                                                 if (msg.role === 'user') {
                                                     return <BrainUserMessage key={msg.id} content={msg.content} dateTime={msg.timestamp} />;
                                                 }
 
                                                 const isLatestPlan = msg.id === lastPlanMessageId;
                                                 const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
+                                                const isLastDisplayMessage = index === displayMessages.length - 1;
+                                                const shouldShowBuildUI = isBuildMode && (isLatestPlan || (!lastPlanMessageId && isLastDisplayMessage));
+                                                const shouldShowLiveThoughts = isLoading && isLastDisplayMessage;
 
                                                 // For the latest plan, give it all previous versions (excluding its own)
                                                 const dynamicPlanVersions = isLatestPlan
@@ -2589,16 +2601,16 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                             dateTime={msg.timestamp}
                                                             planContent={msg.planContent}
                                                             sandboxJob={msg.sandboxJob}
-                                                            todoList={(isBuildMode && index === messages.length - 1 && buildTodos.length) ? (buildTodos as any) : (msg.metadata?.agentStep === 'create_tasks' ? msg.todoList : undefined)}
+                                                            todoList={(shouldShowBuildUI && buildTodos.length) ? (buildTodos as any) : (msg.metadata?.agentStep === 'create_tasks' ? msg.todoList : undefined)}
                                                             clarificationData={msg.clarificationData}
-                                                            thoughts={(isLoading && index === messages.length - 1) ? (liveThoughts || msg.thoughts) : msg.thoughts}
-                                                            timeline={(isLoading && index === messages.length - 1) ? (liveTimeline?.length ? liveTimeline : msg.timeline) : msg.timeline}
+                                                            thoughts={shouldShowLiveThoughts ? (liveThoughts || msg.thoughts) : msg.thoughts}
+                                                            timeline={shouldShowLiveThoughts ? (liveTimeline?.length ? liveTimeline : msg.timeline) : msg.timeline}
                                                             planApproved={msg.planApproved}
                                                             planSuperseded={isSuperseded}
-                                                            agentStep={(isLoading && index === messages.length - 1) ? agentStep : undefined}
-                                                            buildActivities={isBuildMode && index === messages.length - 1 ? buildActivities : undefined}
-                                                            buildTodos={(isBuildMode && msg.metadata?.agentStep === 'create_tasks' && buildTodos.length) ? buildTodos : undefined}
-                                                            isBuildSyncing={isBuildMode && index === messages.length - 1 ? isBuildSyncing : undefined}
+                                                            agentStep={shouldShowLiveThoughts ? agentStep : undefined}
+                                                            buildActivities={shouldShowBuildUI ? buildActivities : undefined}
+                                                            buildTodos={(shouldShowBuildUI && buildTodos.length) ? buildTodos : undefined}
+                                                            isBuildSyncing={shouldShowBuildUI ? isBuildSyncing : undefined}
                                                             onClarifySelect={handleClarificationAnswer}
                                                             onClarifySkip={handleClarificationSkip}
                                                             onRegenerate={() => handleRegenerate(msg.id)}
