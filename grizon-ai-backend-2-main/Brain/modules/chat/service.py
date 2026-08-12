@@ -1209,9 +1209,11 @@ class BrainChatService:
                         else:
                             msg_content = f"✅ Task {index + 1}/{len(plan)}: {task_title}{files_str}\n→ Moving to task {new_index + 1}/{len(plan)}."
 
+                        # NOTE: todo_list intentionally OMITTED here — the plan/task-list
+                        # widget should only render inside the original plan message (Phase 1),
+                        # not inside every per-task progress entry.
                         conversation_service.save_message(
                             conv_id, "ASSISTANT", msg_content,
-                            todo_list=list(plan),
                             metadata={"agentStep": "execute_sandbox", "planApproved": True, "current_task_index": new_index},
                         )
                         print(f"[CHAT-SERVICE] BG-TASK: Saved progress msg for task {new_index}/{len(plan)}", flush=True)
