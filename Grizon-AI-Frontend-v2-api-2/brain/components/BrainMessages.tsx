@@ -2569,11 +2569,33 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                             const lastPlanMessageId = [...messages].reverse().find(m => m.planContent)?.id;
 
                                             // Filter out purely task-status messages from being rendered as main chat bubbles
-                                            const displayMessages = messages.filter(m => {
+                                            const displayMessages = messages.filter((m, idx) => {
                                                 if (m.role === 'user') return true;
+                                                if (m.planContent) return true; // Never hide plans
+
+                                                // Keep the actively streaming message
+                                                const isActivelyStreaming = (isLoading || isBuildMode) && idx === messages.length - 1;
+                                                if (isActivelyStreaming) return true;
+
+                                                // Keep messages with substantial thoughts
+                                                if (m.thoughts && m.thoughts.length > 20) return true;
+
                                                 const c = m.content || '';
-                                                // If it's just a task update and doesn't have a plan, hide it
-                                                if (!m.planContent && (c.includes('✅ Task ') || c.includes('→ Moving to task') || m.metadata?.agentStep === 'task_execution' || m.metadata?.is_task_update)) return false;
+                                                
+                                                // Hide known backend status update messages
+                                                if (m.metadata?.agentStep === 'task_execution' || m.metadata?.is_task_update) return false;
+                                                
+                                                // If it's a short message containing known status phrases, it's a backend injection
+                                                if (c.length < 300 && (
+                                                    c.includes('✅ Task ') || 
+                                                    c.includes('→ Moving to task') || 
+                                                    c.includes('Sandbox workspace ready') || 
+                                                    c.includes("I've broken down the project") ||
+                                                    c.includes("Starting the build process now")
+                                                )) {
+                                                    return false;
+                                                }
+
                                                 return true;
                                             });
 
