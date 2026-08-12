@@ -363,6 +363,25 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                     return prev;
                                 });
                             }
+
+                            // Sync messages state so left-side conversation list
+                            // shows per-task progress entries (saved by backend BG-TASK).
+                            setMessages((prev) => {
+                                const prevIds = new Set(prev.map((m: any) => m.id));
+                                const newMsgs = (data.messages || []).filter((m: any) => !prevIds.has(m.id));
+                                if (newMsgs.length > 0) {
+                                    return [...prev, ...newMsgs.map((m: any) => ({
+                                        id: m.id,
+                                        role: m.role,
+                                        content: m.content || '',
+                                        timestamp: m.createdAt,
+                                        todoList: m.todoList,
+                                        sandboxJob: m.sandboxJob,
+                                        metadata: m.metadata,
+                                    }))];
+                                }
+                                return prev;
+                            });
                         }
                         const actData = metadata.activities || metadata.buildActivities;
                         if (Array.isArray(actData) && actData.length > 0) {
