@@ -76,6 +76,7 @@ interface Message {
     thoughts?: string;
     timeline?: any[];
     exploreGroups?: any[];
+    metadata?: any;
 }
 
 interface BrainMessagesProps {
@@ -2596,7 +2597,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                             planSuperseded={isSuperseded}
                                                             agentStep={(isLoading && index === messages.length - 1) ? agentStep : undefined}
                                                             buildActivities={isBuildMode && index === messages.length - 1 ? buildActivities : undefined}
-                                                            buildTodos={(isBuildMode && index === messages.length - 1) ? (buildTodos.length ? buildTodos : msg.todoList) : undefined}
+                                                            buildTodos={(isBuildMode && msg.metadata?.agentStep === 'create_tasks' && buildTodos.length) ? buildTodos : undefined}
                                                             isBuildSyncing={isBuildMode && index === messages.length - 1 ? isBuildSyncing : undefined}
                                                             onClarifySelect={handleClarificationAnswer}
                                                             onClarifySkip={handleClarificationSkip}
