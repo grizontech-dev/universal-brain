@@ -19,11 +19,11 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+            model_id="qwen/qwen3-coder"
         )
         self.skill_resolver = SkillResolver()
         # Cache bound model once — avoid recreating every execute()
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
@@ -191,7 +191,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         # Initialize messages
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[FRONTEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[FRONTEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
         # its iteration budget calling read_skill_file on project files (which the

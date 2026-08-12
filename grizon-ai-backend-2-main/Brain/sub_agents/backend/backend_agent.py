@@ -19,10 +19,10 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+            model_id="qwen/qwen3-coder"
         )
         self.skill_resolver = SkillResolver()
-        self.llm = ProviderRouter.get_model("Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo", temperature=0.1)
+        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
@@ -166,7 +166,7 @@ Respond ONLY in JSON.
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[BACKEND] model=Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
         # its iteration budget calling read_skill_file on project files (which the

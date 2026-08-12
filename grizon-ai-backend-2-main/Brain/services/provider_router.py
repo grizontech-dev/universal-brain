@@ -24,6 +24,8 @@ class ProviderRouter:
         deepinfra_base = os.getenv("DEEPINFRA_BASE_URL", "").strip() or "https://api.deepinfra.com/v1/openai"
         groq_key = os.getenv("GROQ_API_KEY", "").strip() or None
         groq_base = os.getenv("GROQ_BASE_URL", "").strip() or "https://api.groq.com/openai/v1"
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip() or None
+        openrouter_base = os.getenv("OPENROUTER_BASE_URL", "").strip() or "https://openrouter.ai/api/v1"
 
         # DeepInfra model IDs differ from Groq/OpenRouter style IDs
         _deepinfra_aliases = {
@@ -62,11 +64,6 @@ class ProviderRouter:
 
         def _make_deepinfra(model: str):
             extra = {}
-            # Qwen3-Coder: temperature + top_p only (DeepInfra doesn't support top_k, repetition_penalty)
-            if "qwen" in model.lower():
-                extra = {
-                    "top_p": 0.8,
-                }
             return ChatOpenAI(
                 model=model,
                 api_key=deepinfra_key,
@@ -79,6 +76,18 @@ class ProviderRouter:
                 **extra,
             )
 
+        def _make_openrouter(model: str):
+            return ChatOpenAI(
+                model=model,
+                api_key=openrouter_key,
+                base_url=openrouter_base,
+                temperature=temperature,
+                max_retries=1,
+                timeout=120,
+                request_timeout=120,
+                **({"max_tokens": max_tokens} if max_tokens else {})
+            )
+
         # Decide the universal fallback — DeepSeek first, then OpenAI
         def get_fallback_model():
             if deepseek_key:
@@ -88,7 +97,7 @@ class ProviderRouter:
             return _make_openai("gpt-4o")
 
         # Handle UUIDs/Database IDs by defaulting to fallback
-        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi", "deepinfra", "qwen", "gemma"])
+        is_known_id = any(prefix in model_id.lower() for prefix in ["gpt", "claude", "gemini", "grok", "llama", "deepseek", "kimi", "deepinfra", "qwen", "gemma", "openrouter"])
 
         print(f"{LOG} get_model(id='{model_id}', temp={temperature}) | known={is_known_id}", flush=True)
 
@@ -99,8 +108,15 @@ class ProviderRouter:
                 return _make_deepseek(model_id)
             return get_fallback_model()
 
-        # DeepInfra Models (Qwen, Llama, etc.)
-        elif "deepinfra" in model_id.lower() or "qwen" in model_id.lower():
+        # Qwen Models -> OpenRouter
+        elif "qwen" in model_id.lower() or "openrouter" in model_id.lower():
+            if openrouter_key:
+                print(f"{LOG} → OpenRouter '{model_id}' (base={openrouter_base})", flush=True)
+                return _make_openrouter(model_id)
+            return get_fallback_model()
+
+        # DeepInfra Models
+        elif "deepinfra" in model_id.lower():
             if deepinfra_key:
                 print(f"{LOG} → DeepInfra '{model_id}' (base={deepinfra_base})", flush=True)
                 return _make_deepinfra(model_id)
