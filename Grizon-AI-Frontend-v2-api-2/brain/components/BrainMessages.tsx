@@ -2607,7 +2607,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                 const isLatestPlan = msg.id === lastPlanMessageId;
                                                 const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
                                                 const isLastDisplayMessage = index === displayMessages.length - 1;
-                                                const shouldShowBuildUI = isBuildMode && (isLatestPlan || (!lastPlanMessageId && isLastDisplayMessage));
+                                                const shouldShowBuildUI = isBuildMode && isLastDisplayMessage;
                                                 const shouldShowLiveThoughts = isLoading && isLastDisplayMessage;
 
                                                 // For the latest plan, give it all previous versions (excluding its own)
