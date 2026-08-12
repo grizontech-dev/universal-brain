@@ -1189,9 +1189,28 @@ class BrainChatService:
                 new_index = state.get("current_task_index", 0)
                 if new_index > index:
                     try:
+                        # Extract file list from executed_tasks for left-side narration
+                        executed_tasks = state.get("executed_tasks", [])
+                        latest_task = executed_tasks[-1] if executed_tasks else {}
+                        task_output = latest_task.get("output", "")
+
+                        files_str = ""
+                        if "Files saved:" in task_output:
+                            files_section = task_output.split("Files saved:")[1].split("\n")[0].strip()
+                            if files_section:
+                                files_str = f"\nFiles: {files_section}"
+
+                        task_title = plan[index].get("title", f"Task {index + 1}")
+                        task_status = plan[index].get("status", "completed")
+
+                        if task_status == "failed":
+                            result_msg = plan[index].get("result", "Unknown error")
+                            msg_content = f"❌ Task {index + 1}/{len(plan)}: {task_title} — FAILED: {result_msg[:120]}"
+                        else:
+                            msg_content = f"✅ Task {index + 1}/{len(plan)}: {task_title}{files_str}\n→ Moving to task {new_index + 1}/{len(plan)}."
+
                         conversation_service.save_message(
-                            conv_id, "ASSISTANT",
-                            f"Task {index + 1}/{len(plan)} complete — moving to task {new_index + 1}.",
+                            conv_id, "ASSISTANT", msg_content,
                             todo_list=list(plan),
                             metadata={"agentStep": "execute_sandbox", "planApproved": True, "current_task_index": new_index},
                         )
