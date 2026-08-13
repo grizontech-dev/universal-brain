@@ -718,8 +718,9 @@ class ValidationGate:
                     [node_path, "server.js"],
                     cwd=backend_dir,
                     env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
                     shell=False
                 )
                 health_ok = False
@@ -736,9 +737,33 @@ class ValidationGate:
                     print(f"{LOG} [OK] Backend smoke test PASSED — GET /health returned 200", flush=True)
                 else:
                     print(f"{LOG} [ERROR] Backend smoke test FAILED: /health did not return 200 within 8s (port={smoke_port})", flush=True)
+
+                    if smoke_proc and smoke_proc.poll() is None:
+                        smoke_proc.terminate()
+                        try:
+                            smoke_proc.wait(timeout=3)
+                        except Exception:
+                            smoke_proc.kill()
+                            try:
+                                smoke_proc.wait(timeout=2)
+                            except Exception:
+                                pass
+
+                    stdout_text = ""
+                    stderr_text = ""
+                    try:
+                        stdout_text, stderr_text = smoke_proc.communicate(timeout=2)
+                    except Exception:
+                        pass
+
+                    startup_output = (stderr_text or stdout_text or "").strip()
                     errors.append(ValidationError(
                         stage="runtime",
-                        message="Backend server did not respond to GET /health within 8s — server crashes on startup. Ensure server.js has: app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));",
+                        message=(
+                            "Backend /health check failed. "
+                            f"Process exit={smoke_proc.poll()}. "
+                            f"Startup output:\n{startup_output[-3000:]}"
+                        ),
                         file_path="backend/server.js"
                     ))
             except Exception as bse:
@@ -1160,6 +1185,22 @@ class ValidationGate:
             except Exception:
                 pass
 
+        # Inject current server.js for runtime backend errors
+        for err in errors:
+            if err.stage == "runtime" and err.file_path and "server.js" in err.file_path:
+                server_abs = os.path.join(self.workspace_dir, err.file_path)
+                if os.path.isfile(server_abs):
+                    try:
+                        with open(server_abs, "r", encoding="utf-8") as f:
+                            server_content = f.read()
+                        rel = os.path.relpath(server_abs, self.workspace_dir).replace("\\", "/")
+                        file_content_block += (
+                            f"\nCURRENT CONTENT of `{rel}` (runtime error — fix while preserving all existing code):\n"
+                            f"```js\n{server_content[:12000]}\n```\n"
+                        )
+                    except Exception:
+                        pass
+
         pkg_json_content = ""
         pkg_path = os.path.join(self.frontend_dir, "package.json")
         if any(e.stage == "dependencies" for e in errors) and os.path.isfile(pkg_path):
@@ -1177,13 +1218,15 @@ class ValidationGate:
             + pkg_json_content + "\n"
             "RULES FOR REPAIR:\n"
             "1. Fix ONLY the specific files mentioned in the errors using `client_save_code`.\n"
-            "2. When a file is missing exports, READ its current content above and ADD all missing exports in ONE save call.\n"
-            "3. Do NOT rewrite unrelated working code.\n"
-            "4. If an import path or exported name is wrong, fix the import/export declaration.\n"
-            "5. If a dependency is missing from package.json, add it to dependencies.\n"
-            "6. Preserve plain JSX format (do NOT convert to TypeScript/TSX unless requested).\n"
-            "7. Make one tool call per file fix — but fix ALL missing exports for a file in a SINGLE call.\n"
-            "8. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save."
+            "2. CRITICAL: `client_save_code` replaces the ENTIRE file. You MUST provide the complete file content, including all existing code plus your fix. Do NOT provide only a snippet or partial file.\n"
+            "3. When a file is missing exports, READ its current content above and ADD all missing exports in ONE save call with the complete file.\n"
+            "4. Do NOT rewrite unrelated working code.\n"
+            "5. If an import path or exported name is wrong, fix the import/export declaration.\n"
+            "6. If a dependency is missing from package.json, add it to dependencies.\n"
+            "7. Preserve plain JSX format (do NOT convert to TypeScript/TSX unless requested).\n"
+            "8. Make one tool call per file fix — but fix ALL issues for a file in a SINGLE call.\n"
+            "9. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save.\n"
+            "10. For backend runtime errors (e.g. /health not responding), READ the current server.js content if provided above and fix the issue while preserving all existing routes and middleware."
         )
 
         if not self.llm:
@@ -1193,7 +1236,7 @@ class ValidationGate:
         try:
             bound_llm = self.llm.bind_tools([client_save_code])
             messages = [
-                SystemMessage(content="You are an expert React Debug & Repair Agent. Fix build/import errors with minimal targeted edits."),
+                SystemMessage(content="You are the Grizon Brain Validation Repair Agent. You repair React frontend AND Node.js/Express backend projects. Make the smallest possible targeted fix. Never remove existing working functionality. When repairing an existing file, preserve all existing routes, middleware, imports, database logic, configuration, and exports unless the validation error specifically requires changing them."),
                 HumanMessage(content=repair_prompt)
             ]
 
@@ -1207,6 +1250,38 @@ class ValidationGate:
                 if tc.get("name") == "client_save_code":
                     tool_args = tc.get("args", {})
                     file_path = tool_args.get("file_path", "")
+                    new_content = tool_args.get("code_content", "")
+
+                    if not file_path or not new_content:
+                        print(f"{LOG} [BLOCKED] Empty repair payload: {file_path}", flush=True)
+                        continue
+
+                    full_path = os.path.abspath(os.path.join(self.workspace_dir, file_path))
+                    workspace_root = os.path.abspath(self.workspace_dir)
+                    if os.path.commonpath([workspace_root, full_path]) != workspace_root:
+                        print(
+                            f"{LOG} [BLOCKED] Repair path escapes workspace: {file_path}",
+                            flush=True
+                        )
+                        continue
+
+                    if os.path.isfile(full_path):
+                        try:
+                            with open(full_path, "r", encoding="utf-8") as f:
+                                old_content = f.read()
+                        except Exception:
+                            old_content = ""
+                        if len(old_content) >= 300:
+                            min_allowed = max(150, int(len(old_content) * 0.35))
+                            if len(new_content) < min_allowed:
+                                print(
+                                    f"{LOG} [BLOCKED] Suspicious repair rewrite: "
+                                    f"{file_path} old={len(old_content)} new={len(new_content)} "
+                                    f"minimum={min_allowed}",
+                                    flush=True
+                                )
+                                continue
+
                     try:
                         await asyncio.wait_for(
                             client_save_code.ainvoke(
