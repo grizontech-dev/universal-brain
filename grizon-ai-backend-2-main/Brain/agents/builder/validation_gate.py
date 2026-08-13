@@ -44,6 +44,7 @@ BACKEND_APPROVED_PACKAGES = {
     "@supabase/supabase-js": "^2.45.0",
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
+    "ws": "^8.18.0",
 }
 
 
@@ -160,6 +161,26 @@ class ValidationGate:
             return h.hexdigest()
         except Exception:
             return None
+
+    def _extract_runtime_files(self, message: str) -> List[str]:
+        """Extract workspace-relative source files from Node/Python stack traces."""
+        found: List[str] = []
+        patterns = [
+            r'[/\\]backend[/\\][^:\s]+\.js',
+            r'[/\\]frontend[/\\][^:\s]+\.(?:js|jsx|ts|tsx)',
+        ]
+        for pattern in patterns:
+            for match in re.findall(pattern, message or ""):
+                normalized = match.replace("\\", "/")
+                backend_idx = normalized.find("backend/")
+                frontend_idx = normalized.find("frontend/")
+                if backend_idx >= 0:
+                    normalized = normalized[backend_idx:]
+                elif frontend_idx >= 0:
+                    normalized = normalized[frontend_idx:]
+                if normalized not in found:
+                    found.append(normalized)
+        return found
 
     def _run_package_manager_install_for_dir(self, pkg_dir: str, marker_path: str) -> Tuple[bool, str]:
         """Execute package manager install only when package.json/lockfile changed or node_modules missing."""
@@ -757,14 +778,17 @@ class ValidationGate:
                         pass
 
                     startup_output = (stderr_text or stdout_text or "").strip()
+                    runtime_message = (
+                        "Backend /health check failed. "
+                        f"Process exit={smoke_proc.poll()}. "
+                        f"Startup output:\n{startup_output[-5000:]}"
+                    )
+                    runtime_files = self._extract_runtime_files(runtime_message)
+                    primary_file = runtime_files[0] if runtime_files else "backend/server.js"
                     errors.append(ValidationError(
                         stage="runtime",
-                        message=(
-                            "Backend /health check failed. "
-                            f"Process exit={smoke_proc.poll()}. "
-                            f"Startup output:\n{startup_output[-3000:]}"
-                        ),
-                        file_path="backend/server.js"
+                        message=runtime_message,
+                        file_path=primary_file
                     ))
             except Exception as bse:
                 errors.append(
@@ -1004,7 +1028,12 @@ class ValidationGate:
                 continue
 
             # Step 2: LLM Repair Agent for remaining errors
-            repair_success = await self._run_targeted_repair(all_errors, attempt, stagnant_errors)
+            repair_items = all_errors + [
+                ValidationError("imports", w.message, w.file_path)
+                for w in all_warnings
+                if "Named export" in w.message
+            ]
+            repair_success = await self._run_targeted_repair(repair_items, attempt, stagnant_errors)
             if not repair_success:
                 print(f"{LOG} [WARN] Repair agent produced no file changes -- stopping early to save LLM credits", flush=True)
                 state["status"] = "validation_failed"
@@ -1185,21 +1214,27 @@ class ValidationGate:
             except Exception:
                 pass
 
-        # Inject current server.js for runtime backend errors
+        # Inject current server.js and stack-trace source files for runtime backend errors
+        runtime_files_to_inject: Set[str] = set()
         for err in errors:
-            if err.stage == "runtime" and err.file_path and "server.js" in err.file_path:
-                server_abs = os.path.join(self.workspace_dir, err.file_path)
-                if os.path.isfile(server_abs):
-                    try:
-                        with open(server_abs, "r", encoding="utf-8") as f:
-                            server_content = f.read()
-                        rel = os.path.relpath(server_abs, self.workspace_dir).replace("\\", "/")
-                        file_content_block += (
-                            f"\nCURRENT CONTENT of `{rel}` (runtime error — fix while preserving all existing code):\n"
-                            f"```js\n{server_content[:12000]}\n```\n"
-                        )
-                    except Exception:
-                        pass
+            if err.stage == "runtime":
+                if err.file_path:
+                    runtime_files_to_inject.add(err.file_path)
+                runtime_files_to_inject.update(self._extract_runtime_files(err.message))
+
+        for rel_path in runtime_files_to_inject:
+            abs_path = os.path.join(self.workspace_dir, rel_path)
+            if not os.path.isfile(abs_path):
+                continue
+            try:
+                with open(abs_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                file_content_block += (
+                    f"\nCURRENT CONTENT of `{rel_path}` (runtime stack-trace file — inspect and fix if necessary):\n"
+                    f"```js\n{content[:12000]}\n```\n"
+                )
+            except Exception:
+                pass
 
         pkg_json_content = ""
         pkg_path = os.path.join(self.frontend_dir, "package.json")
@@ -1226,7 +1261,7 @@ class ValidationGate:
             "7. Preserve plain JSX format (do NOT convert to TypeScript/TSX unless requested).\n"
             "8. Make one tool call per file fix — but fix ALL issues for a file in a SINGLE call.\n"
             "9. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save.\n"
-            "10. For backend runtime errors (e.g. /health not responding), READ the current server.js content if provided above and fix the issue while preserving all existing routes and middleware."
+            "10. For backend runtime errors, inspect ALL provided runtime stack-trace source files, especially the file identified by `File:` and the files extracted from the stack trace. Fix the actual root cause while preserving all existing routes, middleware, imports, database logic, configuration, and exports."
         )
 
         if not self.llm:
