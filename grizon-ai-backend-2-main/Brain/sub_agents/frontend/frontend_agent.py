@@ -84,6 +84,8 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
     - Style EVERYTHING with Tailwind classes. Zero dependency on ui/ subdirectory.
 12. ALL packages MUST be in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding deps.
 13. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
+14. CRITICAL: Do NOT include `"type": "module"` in frontend/package.json. Vite handles ESM natively. 
+    Config files like postcss.config.js MUST use CommonJS: `module.exports = ...` (NOT `export default`).
 
 ═══ PREMIUM UI (NON-NEGOTIABLE) ═══
 - Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.

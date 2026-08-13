@@ -274,6 +274,10 @@ class ValidationGate:
                 errors.append(ValidationError("dependencies", f"Invalid package.json format: {e}", "frontend/package.json"))
                 return errors, warnings, patched_packages
 
+        if pkg_data.get("type") == "module":
+            del pkg_data["type"]
+            modified_pkg = True
+
         # Scan all .jsx, .js, .tsx, .ts files for imports
         imported_packages: Set[str] = set()
         for root, _, files in os.walk(self.frontend_src):
@@ -1289,6 +1293,7 @@ class ValidationGate:
             "9. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save.\n"
             "10. For backend runtime errors, inspect ALL provided runtime stack-trace source files, especially the file identified by `File:` and the files extracted from the stack trace. Fix the actual root cause while preserving all existing routes, middleware, imports, database logic, configuration, and exports."
             "11. If the error is a Supabase WebSocket/Node compatibility error across multiple controllers, CREATE `backend/supabase/client.js` as the shared Supabase client helper with ws transport, then UPDATE ALL affected controllers to use it. Do NOT fix each controller individually."
+            "12. If there is a PostCSS/ESM error (`module is not defined in ES module scope`), REMOVE `\"type\": \"module\"` from frontend/package.json. Vite handles ESM natively and CommonJS configs like postcss.config.js require `module.exports`."
         )
 
         if not self.llm:

@@ -2,7 +2,6 @@
   "name": "grizon-frontend",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 9999",
     "build": "vite build",
