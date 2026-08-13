@@ -34,7 +34,8 @@ Create `backend/supabase/client.js` as the single shared helper:
 ```js
 require('dotenv').config();
 const ws = require('ws');
-const { createClient } = require('@supabase/supabase-js');
+const supabaseLib = require('@supabase/supabase-js');
+const createClient = supabaseLib.createClient || supabaseLib;
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {

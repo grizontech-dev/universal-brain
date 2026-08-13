@@ -448,6 +448,18 @@ class ValidationGate:
                     file_path="backend/package.json"
                 ))
 
+        for pkg, approved_ver in BACKEND_APPROVED_PACKAGES.items():
+            for dep_section in ("dependencies", "devDependencies"):
+                if pkg in pkg_data.get(dep_section, {}):
+                    current_ver = pkg_data[dep_section][pkg]
+                    approved_major = re.match(r'[~^>=<]*\s*(\d+)', approved_ver)
+                    current_major = re.match(r'[~^>=<]*\s*(\d+)', current_ver)
+                    if not approved_major or not current_major or approved_major.group(1) != current_major.group(1):
+                        pkg_data[dep_section][pkg] = approved_ver
+                        modified_pkg = True
+                        patched_packages.append(pkg)
+                        print(f"{LOG} [OK] Corrected backend package version: {pkg} {current_ver} -> {approved_ver}", flush=True)
+
         node_modules_exist = os.path.isdir(os.path.join(backend_dir, "node_modules"))
         if modified_pkg or not node_modules_exist:
             try:

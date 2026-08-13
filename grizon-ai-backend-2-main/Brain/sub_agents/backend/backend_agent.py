@@ -67,12 +67,13 @@ class BackendAgent(BaseAgent):
   10. Use the Shared Table + JSONB Data Matrix Pattern. Each entity uses tenant_id + JSONB payload for flexibility.
        Example via proxy: GET /api/connector/query?tenant_id=...&schema_name=users&record_data->>name=John
        Example direct: supabase.from("tenant_connector_vault").select("*").eq("tenant_id", id).eq("schema_name", "users")
-  11. CRITICAL: Create `backend/supabase/client.js` as the SINGLE shared Supabase client helper. 
-       If Node.js < 22, configure ws transport: 
-       const ws = require('ws');
-       const { createClient } = require('@supabase/supabase-js');
-       module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{ global: {{ fetch }}, realtime: {{ transport: ws }} }});
-       ALL controllers must require('./supabase/client') instead of creating their own client.
+   11. CRITICAL: Create `backend/supabase/client.js` as the SINGLE shared Supabase client helper. 
+        If Node.js < 22, configure ws transport: 
+        const ws = require('ws');
+        const supabaseLib = require('@supabase/supabase-js');
+        const createClient = supabaseLib.createClient || supabaseLib;
+        module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{ global: {{ fetch }}, realtime: {{ transport: ws }} }});
+        ALL controllers must require('./supabase/client') instead of creating their own client.
   12. Schema as backend/supabase/*.sql files only. No Supabase CLI.
   13. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
   14. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return {{ "success": true, "data": [] }} instead of HTTP 500!
