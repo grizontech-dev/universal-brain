@@ -127,19 +127,19 @@ class ValidationGate:
             return False, "frontend directory missing"
 
         # Detect package manager
-        pm_cmd = ["npm", "install"]
+        pm_cmd = ["npm", "install", "--include=dev"]
         if os.path.isfile(os.path.join(self.frontend_dir, "pnpm-lock.yaml")):
             pnpm_path = shutil.which("pnpm") or shutil.which("pnpm.cmd")
             if pnpm_path:
-                pm_cmd = [pnpm_path, "install"]
+                pm_cmd = [pnpm_path, "install", "--prod=false"]
         elif os.path.isfile(os.path.join(self.frontend_dir, "yarn.lock")):
             yarn_path = shutil.which("yarn") or shutil.which("yarn.cmd")
             if yarn_path:
-                pm_cmd = [yarn_path, "install"]
+                pm_cmd = [yarn_path, "install", "--production=false"]
         else:
             npm_path = shutil.which("npm") or shutil.which("npm.cmd")
             if npm_path:
-                pm_cmd = [npm_path, "install"]
+                pm_cmd = [npm_path, "install", "--include=dev"]
 
         print(f"{LOG} Running package manager install: {' '.join(pm_cmd)}...", flush=True)
         try:
@@ -366,13 +366,16 @@ class ValidationGate:
         if not os.path.isdir(self.frontend_dir):
             return errors, warnings
 
+        local_vite = os.path.join(self.frontend_dir, "node_modules", ".bin", "vite.cmd" if os.name == "nt" else "vite")
         npx_full = shutil.which("npx.cmd" if os.name == "nt" else "npx")
-        if not npx_full:
-            warnings.append(ValidationWarning("compilation", "npx executable not found on host — skipping build check"))
-            return errors, warnings
 
-        # Safe vite build command without auto-fetching --yes flags
-        cmd = [npx_full, "vite", "build", "--outDir", "temp_validation_build"]
+        if os.path.isfile(local_vite):
+            cmd = [local_vite, "build", "--outDir", "temp_validation_build"]
+        elif npx_full:
+            cmd = [npx_full, "vite", "build", "--outDir", "temp_validation_build"]
+        else:
+            warnings.append(ValidationWarning("compilation", "vite executable not found on host — skipping build check"))
+            return errors, warnings
         try:
             process = subprocess.run(
                 cmd,
@@ -639,7 +642,7 @@ class ValidationGate:
                 HumanMessage(content=repair_prompt)
             ]
 
-            response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=120)
+            response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=180)
             if not response or not hasattr(response, "tool_calls") or not response.tool_calls:
                 print(f"{LOG} [WARN] Repair LLM returned no tool calls", flush=True)
                 return False
