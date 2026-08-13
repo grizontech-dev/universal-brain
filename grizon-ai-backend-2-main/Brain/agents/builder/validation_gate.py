@@ -214,6 +214,26 @@ class ValidationGate:
         modified_pkg = False
         if "dependencies" not in pkg_data:
             pkg_data["dependencies"] = {}
+        if "devDependencies" not in pkg_data:
+            pkg_data["devDependencies"] = {}
+
+        # Ensure essential React & Vite build packages exist in package.json
+        if "react" not in installed_deps:
+            pkg_data["dependencies"]["react"] = "^18.2.0"
+            installed_deps.add("react")
+            modified_pkg = True
+        if "react-dom" not in installed_deps:
+            pkg_data["dependencies"]["react-dom"] = "^18.2.0"
+            installed_deps.add("react-dom")
+            modified_pkg = True
+        if "vite" not in installed_deps:
+            pkg_data["devDependencies"]["vite"] = "^5.0.0"
+            installed_deps.add("vite")
+            modified_pkg = True
+        if "@vitejs/plugin-react" not in installed_deps:
+            pkg_data["devDependencies"]["@vitejs/plugin-react"] = "^4.2.0"
+            installed_deps.add("@vitejs/plugin-react")
+            modified_pkg = True
 
         for pkg in imported_packages:
             if pkg in CORE_PACKAGES or pkg in installed_deps:
