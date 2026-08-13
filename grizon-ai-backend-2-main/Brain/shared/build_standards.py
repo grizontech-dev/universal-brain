@@ -65,17 +65,17 @@ FRONTEND_BUILD_STANDARDS = """
 - If you create 5 components, App.jsx imports and renders exactly 5.
 
 ### Port & Config
-- Vite dev server MUST run on port 9999 (not 5173).
-- In vite.config.js: `server: { port: 9999 }`
+- Vite dev server MUST run on port 9999 (for external web preview).
+- Express backend API runs on port 3001 (internal).
+- In vite.config.js: `server: { port: 9999 }` and proxy `/api` → `http://localhost:3001`.
 - API calls: `import { apiGet, apiPost } from './lib/api.js'`
-- Vite proxies `/api` → Express :3001.
 
 ### Task Failures (Immediate Fail)
 - Using `<Switch>` instead of `<Routes>`
 - Using `component={Home}` instead of `element={<Home />}`
 - Creating orphan components not imported in App.jsx
 - Home.jsx containing only `<h1>Home Page</h1>`
-- Not including FULL updated App.jsx in response
+- Not including FULL updated App.jsx in response (when App.jsx is modified by task)
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -112,9 +112,9 @@ BACKEND_BUILD_STANDARDS = """
 - Return `"commands": ["cd backend && npm install"]` when adding dependencies.
 
 ### Port & Config
-- Express port 3001 (internal). Vite proxies to it.
-- All web servers MUST run on port 9999 for tunnel URL.
-- Bind to 0.0.0.0 for sandbox compatibility.
+- Express backend runs on port 3001 (internal API server).
+- Vite dev server runs on port 9999 and proxies `/api/*` → Express `:3001`.
+- Bind Express to `0.0.0.0` for sandbox compatibility.
 """
 
 # ═══════════════════════════════════════════════════════════════

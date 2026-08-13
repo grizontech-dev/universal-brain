@@ -1242,13 +1242,25 @@ class BrainChatService:
                     except RuntimeError:
                         pass
 
+            # Check if validation passed before triggering Runner phase
+            if state.get("status") == "validation_failed":
+                print(f"[CHAT-SERVICE] BG-TASK: Build Validation FAILED — skipping runner execution", flush=True)
+                report = state.get("run_report") or "Build validation failed after 5 repair attempts."
+                conversation_service.save_message(
+                    conv_id, "ASSISTANT", report,
+                    todo_list=list(plan),
+                    sandbox_job=state.get("sandbox_job"),
+                    metadata={"agentStep": "validation_failed", "planApproved": True, "current_task_index": len(plan)}
+                )
+                return
+
             # Mark all remaining tasks as completed
             for t in plan:
                 if t.get("status") not in ("completed", "failed"):
                     t["status"] = "completed"
 
             # Runner phase
-            print(f"[CHAT-SERVICE] BG-TASK: All tasks done — running runner", flush=True)
+            print(f"[CHAT-SERVICE] BG-TASK: All tasks & validation passed — running runner", flush=True)
             runner = RunnerAgent()
             runner_state = state
             async for ev in runner.execute(state):

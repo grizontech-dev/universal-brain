@@ -498,36 +498,15 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         print(f"{LOG} ═══ VALIDATION: Scanning for broken imports + backend routes ═══", flush=True)
         
-        # Run both validations in parallel
-        import_validation_task = self._validate_and_fix_imports(
-            session_id, task_title, files_saved, start_time, timeout_sec
-        )
-        backend_validation_task = self._validate_backend_routes(session_id)
-        
-        fixed_files, _ = await asyncio.gather(
-            import_validation_task,
-            backend_validation_task,
-            return_exceptions=True
-        )
-        
-        if isinstance(fixed_files, list):
-            files_saved.extend(fixed_files)
+        # Quick backend route mounting validation (lightweight)
+        await self._validate_backend_routes(session_id)
 
         # Summary
-        print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
-        print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)}", flush=True)
+        print(f"{LOG} ===============================================================", flush=True)
+        print(f"{LOG} [OK] TASK DONE: '{task_title}' | files_saved={len(files_saved)}", flush=True)
         print(f"{LOG}   Files: {files_saved}", flush=True)
-        print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
-        # ═══════════════════════════════════════════════════════════════
-        # Skip Phase 1 (import validation) since _validate_and_fix_imports already ran
-        # Quick esbuild check first - skip repair if build passes
-        if not files_saved or category == "database":
-            print(f"{LOG} ⏭ Skipping esbuild check (no frontend files or database task)", flush=True)
-        else:
-            files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+        print(f"{LOG}   (Full validation & repair deferred to ValidationGate after all tasks complete)", flush=True)
+        print(f"{LOG} ===============================================================", flush=True)
 
         if llm_failed and not files_saved:
             raise LLMRateLimitedError(
@@ -1053,11 +1032,24 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
 
         if index >= len(tasks):
-            print(f"{LOG} ✓ All {len(tasks)} tasks done — handing off to runner", flush=True)
+            print(f"{LOG} ✓ All {len(tasks)} tasks generated — starting Validation Gate", flush=True)
             ProjectIndex.clear_cache()  # Cleanup cache after build
             print(f"{LOG} 🧹 Cleared ProjectIndex cache after build completion", flush=True)
-            state["status"] = "building_complete"
-            state["next_agent"] = "runner"
+
+            from Brain.agents.builder.validation_gate import ValidationGate
+            val_gate = ValidationGate(self.llm, session_id, user_id=user_id)
+            val_result = await val_gate.run_validation_and_repair(state)
+
+            if val_result.get("passed"):
+                print(f"{LOG} ✓ Validation Gate PASSED — handing off to runner", flush=True)
+                state["status"] = "validation_passed"
+                state["next_agent"] = "runner"
+            else:
+                print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
+                state["status"] = "validation_failed"
+                state["next_agent"] = None
+                state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_result.get('errors')}"
+
             yield state
             return
 

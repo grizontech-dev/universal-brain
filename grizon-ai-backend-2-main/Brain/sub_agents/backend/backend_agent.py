@@ -224,10 +224,7 @@ Respond ONLY in JSON.
                     or (isinstance(last_content, str) and not last_content.strip())
                 )
                 if is_empty:
-                    print(f"[BACKEND] ↻ Empty response (iteration {iteration+1}) — switching to fallback permanently", flush=True)
-                    if not fallback_tried:
-                        active_llm = fallback_llm
-                        fallback_tried = True
+                    print(f"[BACKEND] ↻ Empty response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
                     msgs.append(SystemMessage(
                         content="Your previous response was empty. You MUST respond by calling the "
                                "client_save_code tool for EVERY file. Do not return plain text — make tool calls."
@@ -236,11 +233,6 @@ Respond ONLY in JSON.
                 parsed = self._format_json_response(last_content) if isinstance(last_content, str) else None
                 if isinstance(parsed, dict) and "files" in parsed:
                     break
-                if not fallback_tried:
-                    print(f"[BACKEND] ↻ Malformed response — switching to fallback permanently", flush=True)
-                    active_llm = fallback_llm
-                    fallback_tried = True
-                    continue
                 print(f"[BACKEND] Malformed response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
                 msgs.append(SystemMessage(
                     content="Your previous response was invalid JSON. You MUST respond by calling the "

@@ -18,8 +18,6 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from Brain.config.database import Base, SessionLocal
-from Brain.modules.connectors.supabase.service import Connector
-
 import uuid
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
@@ -190,6 +188,7 @@ class GitHubConnectorService:
             return response.json()
 
     def save_github_connection(self, user_id: str, installation_id: str, metadata: Optional[Dict[str, Any]] = None):
+        from Brain.modules.connectors.supabase.service import Connector
         db = SessionLocal()
         try:
             connector = db.query(Connector).filter(Connector.userId == user_id, Connector.type == "github").first()
@@ -210,7 +209,8 @@ class GitHubConnectorService:
         finally:
             db.close()
 
-    def get_connection(self, user_id: str) -> Optional[Connector]:
+    def get_connection(self, user_id: str) -> Optional[Any]:
+        from Brain.modules.connectors.supabase.service import Connector
         db = SessionLocal()
         try:
             return db.query(Connector).filter(Connector.userId == user_id, Connector.type == "github").first()

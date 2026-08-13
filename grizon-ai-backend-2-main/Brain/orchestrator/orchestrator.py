@@ -44,17 +44,17 @@ class BrainOrchestrator:
             state = await self.todo.execute(state)
             # Todo automatically sets next_agent to 'builder'
             
-        # 5. Handle Building phase (Builder coordinates sub-agents)
-        if state.get("next_agent") == "builder" or state.get("status") == "building":
+        # 5. Handle Building & Validation phase (Builder coordinates sub-agents & ValidationGate)
+        if state.get("next_agent") == "builder" or state.get("status") in ["building", "validating", "repairing"]:
             async for ev in self.builder.execute(state):
                 if isinstance(ev, dict):
                     state = ev
-            # Builder will loop itself until tasks are done
-            if state.get("status") == "building":
-                return state # Continue building in next iteration or await
+            # Builder will loop itself until tasks & validation are done
+            if state.get("status") in ["building", "validating", "repairing"]:
+                return state # Continue building/validating in next iteration or await
 
-        # 6. Handle Execution phase
-        if state.get("status") == "building_complete" or state.get("next_agent") == "runner":
+        # 6. Handle Execution phase (Runner)
+        if state.get("status") in ["building_complete", "validation_passed"] or state.get("next_agent") == "runner":
             async for ev in self.runner.execute(state):
                 if isinstance(ev, dict):
                     state = ev
