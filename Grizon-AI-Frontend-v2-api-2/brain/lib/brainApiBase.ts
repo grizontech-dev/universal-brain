@@ -11,19 +11,27 @@ export function getBrainApiUrl(path: string): string {
     return `${base}/brain/${normalized}`;
 }
 
-export async function brainApiFetch(path: string, init?: RequestInit): Promise<Response | null> {
-    try {
-        const res = await fetch(getBrainApiUrl(path), {
-            ...init,
-            cache: 'no-store',
-            signal: init?.signal,
-        });
-        return res;
-    } catch (err: any) {
-        if (err?.name === 'AbortError') {
-            throw err;
+export async function brainApiFetch(path: string, init?: RequestInit, retries = 2): Promise<Response | null> {
+    let lastErr: any;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const res = await fetch(getBrainApiUrl(path), {
+                ...init,
+                cache: 'no-store',
+                signal: init?.signal,
+            });
+            return res;
+        } catch (err: any) {
+            if (err?.name === 'AbortError') {
+                throw err;
+            }
+            lastErr = err;
+            if (attempt < retries) {
+                // Backend can briefly block (e.g. a long sandbox deploy) — retry with backoff.
+                await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+            }
         }
-        console.error(`[brainApiFetch] ${path} failed:`, err?.constructor?.name, err);
-        return null;
     }
+    console.error(`[brainApiFetch] ${path} failed:`, lastErr?.constructor?.name, lastErr);
+    return null;
 }

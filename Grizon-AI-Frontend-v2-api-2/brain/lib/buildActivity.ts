@@ -117,6 +117,8 @@ export interface BuildActivity {
     reason?: string;
     expectedResult?: string;
     isGroup?: boolean;
+    isNew?: boolean;
+    diff?: string;
 }
 
 let activityCounter = 0;
@@ -203,14 +205,22 @@ export function parseProgressToActivity(progressMsg: string): BuildActivity | nu
                     return { id: `prog-narr-${safeMsg}`, type: 'narration', label: event.message, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
                 case 'thinking':
                     return { id: `prog-think-${safeMsg}`, type: 'thinking', label: event.message, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
-                case 'task_started':
-                    return { id: `prog-start-${safeMsg}`, type: 'explore', label: `Exploring — ${event.title}`, taskTitle: event.title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'running' };
+                case 'task_started': {
+                    const rawTitle = (event as any).title;
+                    let title = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : '';
+                    if (!title && typeof (event as any).text === 'string') {
+                        const m = String((event as any).text).match(/:\s*([^:]+?)\s*$/);
+                        title = m ? m[1].trim() : '';
+                    }
+                    if (!title) title = 'Next task';
+                    return { id: `prog-start-${safeMsg}`, type: 'explore', label: `Exploring — ${title}`, taskTitle: title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'running' };
+                }
                 case 'task_completed':
                     return { id: `prog-task-${safeMsg}`, type: 'task_done', label: event.title, taskTitle: event.title, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
                 case 'file_created':
-                    return { id: `prog-file-${safeMsg}`, type: 'write_file', label: `Generated \`${event.file}\``, path: event.file, reason: event.reason, expectedResult: event.expectedResult, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done', linesAdded: (event as any).linesAdded, linesRemoved: (event as any).linesRemoved };
+                    return { id: `prog-file-${safeMsg}`, type: 'write_file', label: `Generated \`${event.file}\``, path: event.file, reason: event.reason, expectedResult: event.expectedResult, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done', linesAdded: (event as any).linesAdded, linesRemoved: (event as any).linesRemoved, isNew: true, diff: (event as any).diff };
                 case 'file_updated':
-                    return { id: `prog-edit-${safeMsg}`, type: 'edit_file', label: `Modified \`${event.file}\``, path: event.file, reason: event.reason, expectedResult: event.expectedResult, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done', linesAdded: (event as any).linesAdded, linesRemoved: (event as any).linesRemoved };
+                    return { id: `prog-edit-${safeMsg}`, type: 'edit_file', label: `Modified \`${event.file}\``, path: event.file, reason: event.reason, expectedResult: event.expectedResult, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done', linesAdded: (event as any).linesAdded, linesRemoved: (event as any).linesRemoved, isNew: (event as any).isNew, diff: (event as any).diff };
                 case 'dependency_installed':
                     return { id: `prog-dep-${safeMsg}`, type: 'run_command', label: `Installing dependency... npm install ${event.packageName}`, detail: event.packageName, timestamp: parseInt(event.timestamp) || Date.now(), status: 'done' };
                 case 'tool_action':
@@ -261,7 +271,7 @@ export function parseProgressToActivity(progressMsg: string): BuildActivity | nu
         return summarizeTerminalOutput(msg.replace('[OUTPUT]', '').trim());
     }
     if (msg.startsWith('[TASK_START]')) {
-        const title = msg.replace('[TASK_START]', '').trim();
+        const title = msg.replace('[TASK_START]', '').trim() || 'Next task';
         return {
             id: `prog-start-${safeMsg}`,
             type: 'explore',
@@ -402,6 +412,8 @@ export function mapBackendActivity(raw: Record<string, unknown>): BuildActivity 
         timestamp: (raw.timestamp as number) || Date.now(),
         linesAdded: raw.linesAdded as number | undefined,
         linesRemoved: raw.linesRemoved as number | undefined,
+        isNew: raw.isNew as boolean | undefined,
+        diff: raw.diff as string | undefined,
     };
 }
 

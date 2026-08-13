@@ -44,6 +44,7 @@ import {
     isReloadPreviewActivity,
 } from '../lib/buildActivity';
 import { saveBuildSession, resolveBuildSessionForReload } from '../lib/buildSession';
+import { setFileDiff } from '../lib/brainFileDiffStore';
 import {
     fetchResumePayload,
     normalizeTodosForResume,
@@ -386,6 +387,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         }
                         const actData = metadata.activities || metadata.buildActivities;
                         if (Array.isArray(actData) && actData.length > 0) {
+                            for (const a of actData) {
+                                if (a.path && (a.diff || a.isNew)) {
+                                    setFileDiff(a.path, {
+                                        diff: a.diff,
+                                        isNew: a.isNew,
+                                        linesAdded: a.linesAdded,
+                                        linesRemoved: a.linesRemoved,
+                                        label: a.label,
+                                    });
+                                }
+                            }
                             setBuildActivities(prev => {
                                 if (prev.length === 0 || prev.length < actData.length) {
                                     return actData.map((a: any, i: number) => ({
@@ -519,9 +531,41 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 ) {
                     continue;
                 }
+                // Dedup file operations by path — keep the latest version of each file
+                if (
+                    (item.type === 'write_file' || item.type === 'edit_file' || item.type === 'mkdir') &&
+                    item.path
+                ) {
+                    const existingIdx = next.findIndex(
+                        (a) =>
+                            a.path === item.path &&
+                            (a.type === 'write_file' || a.type === 'edit_file' || a.type === 'mkdir')
+                    );
+                    if (existingIdx >= 0) {
+                        const prev = next[existingIdx];
+                        const merged = { ...prev, ...item, id: prev.id };
+                        if (!merged.diff && prev.diff) merged.diff = prev.diff;
+                        if (!merged.linesAdded && prev.linesAdded) merged.linesAdded = prev.linesAdded;
+                        if (!merged.linesRemoved && prev.linesRemoved) merged.linesRemoved = prev.linesRemoved;
+                        if (merged.isNew === undefined && prev.isNew !== undefined) merged.isNew = prev.isNew;
+                        if (!merged.path && prev.path) merged.path = prev.path;
+                        next[existingIdx] = merged;
+                        ids.add(item.id);
+                        continue;
+                    }
+                }
                 next.push(item);
                 ids.add(item.id);
                 recentLabels.push(item.label);
+                if (item.path && (item.diff || item.isNew)) {
+                    setFileDiff(item.path, {
+                        diff: item.diff,
+                        isNew: item.isNew,
+                        linesAdded: item.linesAdded,
+                        linesRemoved: item.linesRemoved,
+                        label: item.label,
+                    });
+                }
             }
             return dedupeReloadActivities(next.slice(-200));
         });
@@ -1296,7 +1340,19 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             );
                             if (restored) {
                                 setBuildTodos(restored.todos);
-                                setBuildActivities(dedupeReloadActivities(restored.activities));
+                                const restoredActs = dedupeReloadActivities(restored.activities);
+                                setBuildActivities(restoredActs);
+                                for (const a of restoredActs) {
+                                    if (a.path && (a.diff || a.isNew)) {
+                                        setFileDiff(a.path, {
+                                            diff: a.diff,
+                                            isNew: a.isNew,
+                                            linesAdded: a.linesAdded,
+                                            linesRemoved: a.linesRemoved,
+                                            label: a.label,
+                                        });
+                                    }
+                                }
                                 if (restored.buildStartedAt) {
                                     setBuildStartedAt(restored.buildStartedAt);
                                 } else if (isBuildTodosComplete(restored.todos)) {

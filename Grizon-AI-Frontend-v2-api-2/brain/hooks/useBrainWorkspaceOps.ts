@@ -182,7 +182,9 @@ export function useBrainWorkspaceOps(jobId: string | null, syncUrl: string | nul
                                 pm = JSON.stringify(pmObj);
                             } catch {}
                         } else if (typeof pm === 'string') {
-                            pm = JSON.stringify({ taskId: orch.current_task_index, type: 'task_started', text: pm });
+                            const titleMatch = pm.match(/:\s*([^:]+?)\s*$/);
+                            const title = titleMatch ? titleMatch[1].trim() : `Task ${(orch.current_task_index ?? 0) + 1}`;
+                            pm = JSON.stringify({ taskId: orch.current_task_index, type: 'task_started', title, text: pm });
                         }
                     }
                     window.dispatchEvent(

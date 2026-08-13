@@ -2,6 +2,7 @@ import os
 import json
 import time
 import base64
+import difflib
 import tarfile
 import io
 import httpx
@@ -137,6 +138,18 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     lines_removed = max(0, len(old_lines) - len([l for l in new_lines if l in old_set]))
     action = "Created" if is_new_file else "Edited"
 
+    # Compute a compact unified diff so the frontend can render actual code changes
+    diff_text = None
+    if not is_new_file:
+        diff_text = "".join(
+            difflib.unified_diff(
+                old_lines, new_lines,
+                fromfile=f"a/{actual_path}",
+                tofile=f"b/{actual_path}",
+                lineterm="",
+            )
+        )
+
     # Accumulate for per-task progress message
     _task_file_saves.append({
         "path": actual_path,
@@ -151,10 +164,13 @@ async def client_save_code(code_content: str, config: RunnableConfig, file_path:
     act["linesAdded"] = lines_added
     act["linesRemoved"] = lines_removed
     act["isNew"] = is_new_file
+    act["diff"] = diff_text
     progress_msg = json.dumps({
         "type": "file_updated",
         "file": actual_path,
-        "timestamp": str(int(time.time() * 1000))
+        "timestamp": str(int(time.time() * 1000)),
+        "diff": diff_text,
+        "isNew": is_new_file,
     })
     
     write_op = workspace_manager.build_op_write_file(actual_path, code_content)

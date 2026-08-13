@@ -14,6 +14,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../../../.env'))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set in .env")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Ensure the database has the pgvector extension enabled
 print("Connecting to DB to ensure pgvector extension is enabled...")

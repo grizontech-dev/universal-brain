@@ -92,7 +92,7 @@ class SandboxMCPService:
             await self.initialize()
         if not self._initialized:
             raise RuntimeError(
-                "MCP Sandbox is not initialized or configured (SANDBOX_MCP_URL / SANDBOX_MCP_TOKEN are missing or invalid)"
+                f"MCP Sandbox server connection failed or uninitialized. Check SANDBOX_MCP_URL: '{self._url or 'NOT_SET'}'"
             )
 
         call_start_time = time.time()

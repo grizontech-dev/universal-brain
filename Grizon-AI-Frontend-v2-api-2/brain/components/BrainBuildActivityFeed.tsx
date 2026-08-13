@@ -9,6 +9,7 @@ import {
 import type { BuildActivity, BuildActivityType, BuildTodoItem } from '../lib/buildActivity';
 import { isBuildTodosComplete, isNoisyTerminalLine, normalizeTodoStatus } from '../lib/buildActivity';
 import { getBrainApiUrl } from '../lib/brainApiBase';
+import BrainDiffViewer from './BrainDiffViewer';
 
 export type { BuildTodoItem };
 
@@ -107,12 +108,13 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
     const dirPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
     const isFolder = filePath.endsWith('/');
     const isNew = singleAct.isNew;
+    const hasDiff = typeof singleAct.diff === 'string' && singleAct.diff.length > 0;
     const actionLabel = isNew ? 'Created' : 'Edited';
     const actionColor = isNew ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 border-amber-500/20';
     const hasLines = (singleAct.linesAdded || 0) > 0 || (singleAct.linesRemoved || 0) > 0;
 
     const fetchFileContent = async () => {
-        if (fileContent !== null || !filePath) return;
+        if (fileContent !== null || !filePath || hasDiff) return;
         setLoading(true);
         try {
             const jobId = (window as any).__brainJobId || '';
@@ -136,7 +138,7 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
     const handleToggle = () => {
         const next = !isOpen;
         setIsOpen(next);
-        if (next && fileContent === null) fetchFileContent();
+        if (next && fileContent === null && !hasDiff) fetchFileContent();
     };
 
     const handleFileOpen = () => {
@@ -182,29 +184,35 @@ function FileChangeCard({ singleAct }: { singleAct: any }) {
             </button>
 
             {isOpen && !isFolder && (
-                <div className="ml-6 mt-1 mb-2 rounded-lg border border-border-subtle bg-[#0d0d0d] overflow-hidden">
-                    {loading ? (
-                        <div className="flex items-center gap-2 px-3 py-2.5 text-[11px] text-text-muted">
-                            <Loader2 size={12} className="animate-spin" />
-                            <span>Loading...</span>
-                        </div>
-                    ) : fileContent ? (
-                        <pre className="overflow-x-auto max-h-[300px] overflow-y-auto custom-scrollbar text-[11px] leading-[1.6] font-mono">
-                            <code className="block p-3">
-                                {fileContent.split('\n').map((line, i) => (
-                                    <div key={i} className="flex">
-                                        <span className="inline-block w-7 text-right pr-2 text-text-muted/40 select-none shrink-0">{i + 1}</span>
-                                        <span className={`flex-1 ${line.trim().startsWith('//') || line.trim().startsWith('#') || line.trim().startsWith('/*') ? 'text-text-muted/50 italic' : 'text-text-primary/80'}`}>
-                                            {line || '\u00A0'}
-                                        </span>
-                                    </div>
-                                ))}
-                            </code>
-                        </pre>
-                    ) : (
-                        <div className="px-3 py-2.5 text-[11px] text-text-muted">No content</div>
-                    )}
-                </div>
+                hasDiff ? (
+                    <BrainDiffViewer diff={singleAct.diff} fileName={fileName} />
+                ) : (
+                    <div className="ml-6 mt-1 mb-2 rounded-lg border border-border-subtle bg-[#0d0d0d] overflow-hidden">
+                        {loading ? (
+                            <div className="flex items-center gap-2 px-3 py-2.5 text-[11px] text-text-muted">
+                                <Loader2 size={12} className="animate-spin" />
+                                <span>Loading...</span>
+                            </div>
+                        ) : fileContent ? (
+                            <pre className="overflow-x-auto max-h-[300px] overflow-y-auto custom-scrollbar text-[11px] leading-[1.6] font-mono">
+                                <code className="block p-3">
+                                    {fileContent.split('\n').map((line, i) => (
+                                        <div key={i} className={`flex ${isNew ? 'bg-emerald-500/10' : ''}`}>
+                                            <span className={`inline-block w-7 text-right pr-2 text-zinc-500/70 select-none shrink-0 ${isNew ? 'text-emerald-500/60' : ''}`}>
+                                                {isNew ? '+' : i + 1}
+                                            </span>
+                                            <span className={`flex-1 ${isNew ? 'text-emerald-400/90' : (line.trim().startsWith('//') || line.trim().startsWith('#') || line.trim().startsWith('/*') ? 'text-zinc-400/70 italic' : 'text-zinc-200')}`}>
+                                                {line || '\u00A0'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </code>
+                            </pre>
+                        ) : (
+                            <div className="px-3 py-2.5 text-[11px] text-text-muted">No content</div>
+                        )}
+                    </div>
+                )
             )}
         </div>
     );
@@ -251,12 +259,33 @@ export default function BrainBuildActivityFeed({
             }
         }
 
+        // 2b. Dedup file operations by path — a file should only appear once (latest version wins)
+        const fileOpTypes = ['write_file', 'edit_file', 'mkdir'];
+        const filePathLatest = new Map();
+        for (const a of orderedUnique) {
+            if (fileOpTypes.includes(a.type) && a.path) {
+                filePathLatest.set(a.path, a);
+            }
+        }
+        const fileSeen = new Set();
+        const dedupByPath = [];
+        for (const a of orderedUnique) {
+            if (fileOpTypes.includes(a.type) && a.path) {
+                if (fileSeen.has(a.path)) continue;
+                fileSeen.add(a.path);
+                const latest = filePathLatest.get(a.path);
+                if (latest) dedupByPath.push(latest);
+                continue;
+            }
+            dedupByPath.push(a);
+        }
+
         // 3. Filter out redundant reloads and duplicate narrations/explore tasks
         let sawReload = false;
         let lastExploreLabel: string | null = null;
         const seenNarrations = new Set();
         
-        return orderedUnique.reverse().filter((a) => {
+        return dedupByPath.reverse().filter((a) => {
             const isReload = a.type === 'narration' && a.label.includes('Reloaded — restoring preview');
             if (isReload) {
                 if (sawReload) return false;
@@ -418,7 +447,10 @@ export default function BrainBuildActivityFeed({
 
                         if (act.type === 'explore' || act.type === 'task_start') {
                             const isRunning = act.status === 'running' && !isTaskCompleted(act.taskTitle || '', idx);
-                            const labelText = act.label.replace(/^Exploring\s*[-—]\s*/i, 'Moved to ');
+                            const rawLabel = (act.label || '').toString();
+                            const labelText = (rawLabel.replace(/^Exploring\s*[-—]\s*/i, 'Moved to ')
+                                .replace(/\s*undefined\s*$/i, '')
+                                .trim()) || rawLabel;
                             const matchedTodo = todos.find(t => {
                                 const title = (t.title || t.task || '').toLowerCase();
                                 const taskTitle = (act.taskTitle || '').toLowerCase();
@@ -456,6 +488,26 @@ export default function BrainBuildActivityFeed({
                                             </p>
                                         </div>
                                     </div>
+                                </div>
+                            );
+                        }
+
+                        const isFailed = act.status === 'failed' || (act.label || '').toLowerCase().includes('error');
+
+                        if (isFailed) {
+                            const detailText = act.detail || act.error || (act.label.includes('Sandbox deployment') ? 'Remote sandbox MCP deployment server returned an error or connection timed out. Please check backend SANDBOX_MCP_URL configuration or runner logs.' : null);
+
+                            return (
+                                <div key={act.id} className="animate-in fade-in slide-in-from-bottom-1 duration-200 py-2 px-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 my-1">
+                                    <div className="flex items-center gap-2 font-medium text-[13px]">
+                                        <AlertCircle size={14} className="shrink-0 text-red-400" />
+                                        <span>{act.label}</span>
+                                    </div>
+                                    {detailText && (
+                                        <pre className="mt-1.5 text-[11px] font-mono text-red-300/90 whitespace-pre-wrap break-all bg-black/40 p-2.5 rounded max-h-48 overflow-y-auto custom-scrollbar border border-red-500/10">
+                                            {detailText}
+                                        </pre>
+                                    )}
                                 </div>
                             );
                         }

@@ -155,7 +155,7 @@ class RunnerAgent(BaseAgent):
 
             print(f"[RUNNER] _background_deploy done | status={deploy_result.get('status')} | tunnel={(deploy_result.get('tunnel_url') or 'none')[:80]}")
 
-            execution_output = deploy_result.get("raw") or deploy_result.get("execution_output", "")
+            execution_output = deploy_result.get("raw") or deploy_result.get("execution_output") or deploy_result.get("error") or deploy_result.get("message") or ""
             tunnel_url = deploy_result.get("tunnel_url")
 
             if not tunnel_url and execution_output:
@@ -215,6 +215,13 @@ class RunnerAgent(BaseAgent):
                 "tunnel_url": tunnel_url,
                 "timestamp": str(int(time.time() * 1000))
             }
+            err_detail = str(
+                deploy_result.get("error") or
+                deploy_result.get("message") or
+                deploy_result.get("raw") or
+                execution_output or
+                "Sandbox remote server returned error during workspace deployment"
+            )[:2000]
             await ws_manager.broadcast_to_sandbox(str(_sid), {
                 "type": "workspace_ops",
                 "ops": [],
@@ -224,6 +231,7 @@ class RunnerAgent(BaseAgent):
                         "type": "run_command",
                         "label": f"Sandbox deployment: {status}",
                         "status": "done" if status != "error" else "failed",
+                        "detail": err_detail if status == "error" else "",
                         "timestamp": int(time.time() * 1000),
                     }
                 ],

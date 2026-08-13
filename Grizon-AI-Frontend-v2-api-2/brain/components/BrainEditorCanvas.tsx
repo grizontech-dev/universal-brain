@@ -26,6 +26,8 @@ import { bootstrapDefaultTemplates, applyFrontendTemplate } from '../lib/templat
 import { brainApiFetch } from '../lib/brainApiBase';
 import { sortFileTreeNodes, getFileTreeIcon } from '../lib/fileTreeUtils';
 import { DEFAULT_BRAIN_FRAMEWORK, normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
+import BrainDiffViewer from './BrainDiffViewer';
+import { getFileDiff } from '../lib/brainFileDiffStore';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
 
@@ -179,6 +181,8 @@ export default function BrainEditorCanvas({
 
     const [activeFile, setActiveFile] = useState<FileNode | null>(null);
     const [openFiles, setOpenFiles] = useState<FileNode[]>([]);
+    const [showFileDiff, setShowFileDiff] = useState(false);
+    const [activeFileDiff, setActiveFileDiff] = useState<{ diff?: string; isNew?: boolean; linesRemoved?: number } | undefined>(undefined);
     const [fileTree, setFileTree] = useState<FileNode[]>([]);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -641,6 +645,28 @@ export default function BrainEditorCanvas({
         window.addEventListener('openBrainFile', onOpenFile);
         return () => window.removeEventListener('openBrainFile', onOpenFile);
     }, []);
+
+    useEffect(() => {
+        const syncDiff = () => {
+            if (!activeFile?.path) {
+                setActiveFileDiff(undefined);
+                return;
+            }
+            const diff = getFileDiff(activeFile.path);
+            queueMicrotask(() => {
+                setActiveFileDiff(diff);
+            });
+        };
+        syncDiff();
+        window.addEventListener('brainFileDiffUpdated', syncDiff);
+        return () => window.removeEventListener('brainFileDiffUpdated', syncDiff);
+    }, [activeFile]);
+
+    // Always open a file in Code view so its text is visible.
+    // The user can click "Changes" later to see the green/red diff.
+    useEffect(() => {
+        setShowFileDiff(false);
+    }, [activeFile?.path]);
 
     useEffect(() => {
         const id = jobIdRef.current || jobId;
@@ -1115,54 +1141,87 @@ export default function BrainEditorCanvas({
                         {viewMode === 'code' ? (
                             <div className="flex-1 flex flex-col relative overflow-hidden">
                                 {activeFile ? (
-                                    <Editor
-                                        key={activeFile.path}
-                                        height="100%"
-                                        defaultLanguage={activeFile.language || 'typescript'}
-                                        defaultValue={activeFile.content || ''}
-                                        theme="vs-dark"
-                                        onChange={handleEditorChange}
-                                        options={{
-                                            fontSize: 13,
-                                            fontFamily: "'Geist Mono', 'Fira Code', monospace",
-                                            minimap: { enabled: false },
-                                            scrollBeyondLastLine: false,
-                                            automaticLayout: true,
-                                            padding: { top: 16, bottom: 16 },
-                                            lineNumbers: 'on',
-                                            glyphMargin: false,
-                                            folding: true,
-                                            lineDecorationsWidth: 10,
-                                            lineNumbersMinChars: 3,
-                                            renderLineHighlight: 'all',
-                                            scrollbar: {
-                                                vertical: 'hidden',
-                                                horizontal: 'hidden'
-                                            }
-                                        }}
-                                        onMount={(editor, monaco) => {
-                                            monaco.editor.defineTheme('grizon-dark-editor', {
-                                                base: 'vs-dark',
-                                                inherit: true,
-                                                rules: [
-                                                    { token: 'comment', foreground: '666666' },
-                                                    { token: 'keyword', foreground: 'ffffff', fontStyle: 'bold' },
-                                                    { token: 'string', foreground: 'a1a1a1' },
-                                                    { token: 'number', foreground: 'ffffff' },
-                                                ],
-                                                colors: {
-                                                    'editor.background': '#0d0d0d',
-                                                    'editor.foreground': '#d4d4d4',
-                                                    'editor.lineHighlightBackground': '#ffffff05',
-                                                    'editorLineNumber.foreground': '#333333',
-                                                    'editorLineNumber.activeForeground': '#888888',
-                                                    'editorIndentGuide.background': '#1a1a1a',
-                                                    'editorIndentGuide.activeBackground': '#333333',
-                                                }
-                                            });
-                                            monaco.editor.setTheme('grizon-dark-editor');
-                                        }}
-                                    />
+                                    <>
+                                        {activeFileDiff?.diff && (
+                                            <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 bg-[#0a0a0a] shrink-0">
+                                                <button
+                                                    onClick={() => setShowFileDiff(true)}
+                                                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                                                        showFileDiff
+                                                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                                            : 'text-white/40 hover:text-white/80 border border-transparent'
+                                                    }`}
+                                                >
+                                                    Changes
+                                                    {activeFileDiff.linesRemoved ? ` (-${activeFileDiff.linesRemoved})` : ''}
+                                                </button>
+                                                <button
+                                                    onClick={() => setShowFileDiff(false)}
+                                                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                                                        !showFileDiff
+                                                            ? 'bg-white/10 text-white border border-white/20'
+                                                            : 'text-white/40 hover:text-white/80 border border-transparent'
+                                                    }`}
+                                                >
+                                                    Code
+                                                </button>
+                                            </div>
+                                        )}
+                                        {showFileDiff && activeFileDiff?.diff ? (
+                                            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3">
+                                                <BrainDiffViewer diff={activeFileDiff.diff} fileName={activeFile.name} />
+                                            </div>
+                                        ) : (
+                                            <Editor
+                                                key={activeFile.path}
+                                                height="100%"
+                                                defaultLanguage={activeFile.language || 'typescript'}
+                                                value={activeFile.content || ''}
+                                                theme="vs-dark"
+                                                onChange={handleEditorChange}
+                                                options={{
+                                                    fontSize: 13,
+                                                    fontFamily: "'Geist Mono', 'Fira Code', monospace",
+                                                    minimap: { enabled: false },
+                                                    scrollBeyondLastLine: false,
+                                                    automaticLayout: true,
+                                                    padding: { top: 16, bottom: 16 },
+                                                    lineNumbers: 'on',
+                                                    glyphMargin: false,
+                                                    folding: true,
+                                                    lineDecorationsWidth: 10,
+                                                    lineNumbersMinChars: 3,
+                                                    renderLineHighlight: 'all',
+                                                    scrollbar: {
+                                                        vertical: 'hidden',
+                                                        horizontal: 'hidden'
+                                                    }
+                                                }}
+                                                onMount={(editor, monaco) => {
+                                                    monaco.editor.defineTheme('grizon-dark-editor', {
+                                                        base: 'vs-dark',
+                                                        inherit: true,
+                                                        rules: [
+                                                            { token: 'comment', foreground: '666666' },
+                                                            { token: 'keyword', foreground: 'ffffff', fontStyle: 'bold' },
+                                                            { token: 'string', foreground: 'a1a1a1' },
+                                                            { token: 'number', foreground: 'ffffff' },
+                                                        ],
+                                                        colors: {
+                                                            'editor.background': '#0d0d0d',
+                                                            'editor.foreground': '#d4d4d4',
+                                                            'editor.lineHighlightBackground': '#ffffff05',
+                                                            'editorLineNumber.foreground': '#333333',
+                                                            'editorLineNumber.activeForeground': '#888888',
+                                                            'editorIndentGuide.background': '#1a1a1a',
+                                                            'editorIndentGuide.activeBackground': '#333333',
+                                                        }
+                                                    });
+                                                    monaco.editor.setTheme('grizon-dark-editor');
+                                                }}
+                                            />
+                                        )}
+                                    </>
                                 ) : (
                                     <div className="flex-1 flex flex-col items-center justify-center text-white/10 space-y-4">
                                         <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
