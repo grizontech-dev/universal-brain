@@ -1062,7 +1062,26 @@ class BuilderAgent(BaseAgent):
         if category == "runner" or "runner" in task_title.lower():
             print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
             current_task["status"] = "completed"
-            state["current_task_index"] = index + 1
+            next_idx = index + 1
+            state["current_task_index"] = next_idx
+
+            if next_idx >= len(tasks):
+                print(f"{LOG} ✓ All {len(tasks)} tasks finished (after skipping runner task) — starting Validation Gate", flush=True)
+                ProjectIndex.clear_cache()
+                from Brain.agents.builder.validation_gate import ValidationGate
+                val_gate = ValidationGate(self.llm, session_id, user_id=user_id)
+                val_result = await val_gate.run_validation_and_repair(state)
+
+                if val_result.get("passed"):
+                    print(f"{LOG} ✓ Validation Gate PASSED — handing off to runner", flush=True)
+                    state["status"] = "validation_passed"
+                    state["next_agent"] = "runner"
+                else:
+                    print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
+                    state["status"] = "validation_failed"
+                    state["next_agent"] = None
+                    state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_result.get('errors')}"
+
             yield state
             return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)

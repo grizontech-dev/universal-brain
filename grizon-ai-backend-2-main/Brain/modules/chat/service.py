@@ -1242,6 +1242,18 @@ class BrainChatService:
                     except RuntimeError:
                         pass
 
+            # Execute Validation Gate if not already completed
+            if state.get("status") not in ("validation_passed", "validation_failed"):
+                print(f"[CHAT-SERVICE] BG-TASK: All tasks finished — executing Validation Gate", flush=True)
+                from Brain.agents.builder.validation_gate import ValidationGate
+                val_gate = ValidationGate(agent.llm, conv_id, user_id=state.get("user_id"))
+                val_res = await val_gate.run_validation_and_repair(state)
+                if val_res.get("passed"):
+                    state["status"] = "validation_passed"
+                else:
+                    state["status"] = "validation_failed"
+                    state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_res.get('errors')}"
+
             # Check if validation passed before triggering Runner phase
             if state.get("status") == "validation_failed":
                 print(f"[CHAT-SERVICE] BG-TASK: Build Validation FAILED — skipping runner execution", flush=True)
