@@ -47,17 +47,16 @@ SKILL FILES (reference only):
 
 === RULES (NON-NEGOTIABLE) ===
 1. Output SQL in `backend/supabase/schema.sql` ONLY.
- 2. Generate schema using the Shared Table + JSONB Data Matrix Pattern.
-    Use the shared `tenant_connector_vault` table or create domain-specific shared tables with `tenant_id` + JSONB payload.
-    Example: CREATE TABLE IF NOT EXISTS public.tenant_connector_vault (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{{}}'::jsonb, created_at timestamptz DEFAULT now());
-3. Use standard PostgreSQL column types: uuid, text, boolean, timestamptz, integer.
-4. Always include: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), created_at timestamptz DEFAULT now().
+2. CRITICAL: Use ONLY the shared `tenant_connector_vault` table. NEVER create domain-specific tables like `users`, `tasks`, `messages`, etc. All data lives in `tenant_connector_vault` as JSONB rows, filtered by `tenant_id` + `schema_name`.
+3. Ensure `tenant_connector_vault` exists with: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{{}}'::jsonb, created_at timestamptz DEFAULT now().
+4. Add GIN index on `record_data` and btree index on `(tenant_id, schema_name)` for query performance.
 5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
-   ALTER TABLE public.X ENABLE ROW LEVEL SECURITY;
-   CREATE POLICY "allow_all" ON public.X FOR ALL USING (true) WITH CHECK (true);
-   GRANT ALL ON public.X TO service_role, anon, authenticated;
+   ALTER TABLE public.tenant_connector_vault ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "allow_all" ON public.tenant_connector_vault FOR ALL USING (true) WITH CHECK (true);
+   GRANT ALL ON public.tenant_connector_vault TO service_role, anon, authenticated;
 6. Use IF NOT EXISTS to prevent re-run errors.
-7. commands: always [].
+7. After DDL, append: NOTIFY pgrst, 'reload schema';
+8. commands: always [].
 
 === OUTPUT FORMAT ===
 Respond ONLY in JSON.
