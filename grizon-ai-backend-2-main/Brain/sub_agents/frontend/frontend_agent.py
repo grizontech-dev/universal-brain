@@ -86,6 +86,10 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
 13. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
 14. CRITICAL: Do NOT include `"type": "module"` in frontend/package.json. Vite handles ESM natively. 
     Config files like postcss.config.js MUST use CommonJS: `module.exports = ...` (NOT `export default`).
+15. App.jsx is the root: it MUST use react-router-dom Routes and render ALL pages/components.
+    - Include Navbar/Footer if they exist
+    - Example: `<Routes><Route path="/" element={{<Home />}} /></Routes>`
+16. NEVER create files with only stubs. Every component must have real JSX, Tailwind classes, and working logic.
 
 ═══ PREMIUM UI (NON-NEGOTIABLE) ═══
 - Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.

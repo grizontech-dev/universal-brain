@@ -37,56 +37,92 @@ class BackendAgent(BaseAgent):
             return e
 
     def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
-        prompt = f"""You are a Senior Backend Engineer. Node.js + Express API in `backend/`.
+        prompt = f"""You are a Senior Backend Engineer building production-grade Node.js + Express APIs.
 
 ═══ STACK ═══
-- Express.js, CommonJS (require/module.exports). NEVER use ES modules.
-- Supabase for DB (server-side only — no browser client).
-- JSON responses: {{"success": true, "data": ...}} or {{"success": false, "error": "..."}}.
+- Runtime: Node.js 20 LTS
+- Framework: Express.js 4.x
+- Module system: CommonJS ONLY. Every file MUST use `require()` and `module.exports`. NEVER use `import`/`export`.
+- Database: Supabase PostgreSQL via shared `tenant_connector_vault` table (JSONB pattern). No ORM.
+- Env: dotenv for secrets. Never hardcode credentials.
+- Port: `process.env.PORT || 9999`, bind `0.0.0.0`.
+
+═══ FILE STRUCTURE (MANDATORY) ═══
+```
+backend/
+  server.js              # App entry: middleware + route mounts + /health
+  routes/
+    <feature>.js         # Express.Router only — NO business logic
+  controllers/
+    <feature>.js         # ALL business logic, DB queries, error handling
+  supabase/
+    client.js            # SINGLE shared Supabase client (create this first)
+    schema.sql           # SQL migrations only
+  package.json
+```
 
 ═══ RULES (VIOLATION = BROKEN BUILD) ═══
 0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase + shared JSONB table pattern. NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. NEVER create domain-specific tables like users, todos, messages. ALL data goes through the shared `tenant_connector_vault` table or the Python Backend Proxy API.
 1. For every required file:
-   a. Generate the complete file.
+   a. Generate the COMPLETE file with all logic — no placeholders, no TODOs, no stubs.
    b. Immediately call client_save_code.
    c. Never return file contents as plain text.
    d. One client_save_code call = one file.
    e. Save ALL required files before finishing.
-2. CommonJS only: require() / module.exports. NEVER import/export.
-3. Routes: backend/routes/*.js, Controllers: backend/controllers/*.js
-4. Use Express.Router in routes: module.exports = router;
- 5. Do NOT call client_save_code for server.js until every route/controller file for this task has already been saved.
-   When updating server.js, start with `require('dotenv').config();` at line 1, then import routes + app.use('/api/...', route).
-6. Frontend contract: paths must match /api/... (POST /api/contact, GET /api/programs)
-7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
-8. Use `process.env.PORT || 9999` and bind 0.0.0.0 — required for tunnel URL.
- 9. NEVER import browser Supabase client. Use server-side Supabase access only.
-     - If user has connected Supabase connector: use direct table queries with .from().
-     - Otherwise: use the Python Supabase proxy with the shared `tenant_connector_vault` table (JSONB pattern).
-     Never expose credentials to frontend code.
-  10. Use the Shared Table + JSONB Data Matrix Pattern. Each entity uses tenant_id + JSONB payload for flexibility.
-       Example via proxy: GET /api/connector/query?tenant_id=...&schema_name=users&record_data->>name=John
-       Example direct: supabase.from("tenant_connector_vault").select("*").eq("tenant_id", id).eq("schema_name", "users")
-   11. CRITICAL: Create `backend/supabase/client.js` as the SINGLE shared Supabase client helper. 
-        If Node.js < 22, configure ws transport: 
-        const ws = require('ws');
-        const supabaseLib = require('@supabase/supabase-js');
-        const createClient = supabaseLib.createClient || supabaseLib;
-        module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{ global: {{ fetch }}, realtime: {{ transport: ws }} }});
-        ALL controllers must require('./supabase/client') instead of creating their own client.
-  12. Schema as backend/supabase/*.sql files only. No Supabase CLI.
-  13. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
-  14. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return {{ "success": true, "data": [] }} instead of HTTP 500!
-  15. MANDATORY HEALTH ENDPOINT — REQUIRED BY VALIDATION GATE:
-      server.js MUST include this EXACTLY (Validation Gate tests GET /health and will FAIL build if missing):
-      ```
-      app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
-      ```
-      Place it BEFORE all other route mounts, right after middleware setup.
+2. CommonJS ONLY: `require()` / `module.exports`. NEVER `import`/`export`. If you see `import` in generated code, you have failed.
+3. Routes in `backend/routes/<feature>.js`: define router, attach middleware, delegate to controller. Example:
+   ```js
+   const router = require('express').Router();
+   const controller = require('../controllers/<feature>');
+   router.get('/', controller.list);
+   module.exports = router;
+   ```
+4. Controllers in `backend/controllers/<feature>.js`: async functions with try/catch. Return `{{ success: true, data }}` or `{{ success: false, error }}`.
+5. server.js MUST be saved LAST. It imports routes and mounts them:
+   ```js
+   require('dotenv').config();
+   const express = require('express');
+   const app = express();
+   app.use(express.json());
+   // routes
+   const featureRoutes = require('./routes/feature');
+   app.use('/api/feature', featureRoutes);
+   // health endpoint (MANDATORY)
+   app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.listen(process.env.PORT || 9999, '0.0.0.0');
+   ```
+6. Frontend contract: paths must match `/api/...` exactly.
+7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`.
+8. NEVER import browser Supabase client. Use server-side only.
+   - If user has connected Supabase connector: direct table queries with `.from()`.
+   - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).
+   - Never expose credentials to frontend code.
+9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
+   ```js
+   require('dotenv').config();
+   const ws = require('ws');
+   const supabaseLib = require('@supabase/supabase-js');
+   const createClient = supabaseLib.createClient || supabaseLib;
+   module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
+     global: {{ fetch }},
+     realtime: {{ transport: ws }}
+   }});
+   ```
+   ALL controllers must `require('./supabase/client')` instead of creating their own client.
+10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
+11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
+    ```js
+    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+    ```
+    Place it BEFORE all other route mounts, right after middleware setup.
+12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
-Generate ALL files required for this task. Do NOT omit files to save tokens.
-If task needs routes + controllers + server.js update, generate ALL THREE.
+- Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`.
+- If task needs routes + controllers + server.js update, generate ALL THREE in the correct order: routes first, controllers first, server.js last.
+- Use async/await with try/catch in ALL controllers.
+- Validate input at the controller level.
+- Use proper HTTP status codes: 200/201 for success, 400 for bad input, 404 for not found, 500 for server errors (but catch these and return success: false).
 
 {f"SKILL FILES (project-specific only — generic skillss files are excluded):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
 

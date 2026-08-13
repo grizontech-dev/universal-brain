@@ -1252,7 +1252,8 @@ class BrainChatService:
                     state["status"] = "validation_passed"
                 else:
                     state["status"] = "validation_failed"
-                    state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_res.get('errors')}"
+                    attempts_used = val_res.get("attempts", "?")
+                    state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_res.get('errors')}"
 
             # Check if validation passed before triggering Runner phase
             if state.get("status") == "validation_failed":

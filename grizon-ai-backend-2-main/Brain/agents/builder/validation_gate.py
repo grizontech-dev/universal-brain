@@ -108,7 +108,7 @@ class ValidationGate:
         self.workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or os.path.join(os.getcwd(), "workspaces", session_id)
         self.frontend_dir = os.path.join(self.workspace_dir, "frontend")
         self.frontend_src = os.path.join(self.frontend_dir, "src")
-        self.max_repair_attempts = 3
+        self.max_repair_attempts = 5
 
     def _extract_targeted_snippet(self, full_path: str, target_line: int, window: int = 30) -> str:
         """Extract ±window lines around target_line for LLM context optimization."""
@@ -274,6 +274,7 @@ class ValidationGate:
                 errors.append(ValidationError("dependencies", f"Invalid package.json format: {e}", "frontend/package.json"))
                 return errors, warnings, patched_packages
 
+        modified_pkg = False
         if pkg_data.get("type") == "module":
             del pkg_data["type"]
             modified_pkg = True
@@ -301,7 +302,6 @@ class ValidationGate:
                         pass
 
         # Check imported packages against installed dependencies
-        modified_pkg = False
         if "dependencies" not in pkg_data:
             pkg_data["dependencies"] = {}
         if "devDependencies" not in pkg_data:
@@ -396,7 +396,34 @@ class ValidationGate:
                 errors.append(ValidationError("backend_dependencies", f"Invalid backend/package.json format: {e}", "backend/package.json"))
                 return errors, warnings, patched_packages
 
+        modified_pkg = False
+        if pkg_data.get("type") == "module":
+            del pkg_data["type"]
+            modified_pkg = True
+
         imported_packages: Set[str] = set()
+        server_js_path = os.path.join(backend_dir, "server.js")
+        if os.path.isfile(server_js_path):
+            try:
+                with open(server_js_path, "r", encoding="utf-8") as f:
+                    server_content = f.read()
+                route_requires = re.findall(r"require\(\s*['\"]([^'\"]*route[^'\"]*)['\"]\s*\)", server_content)
+                route_imports = re.findall(r"import\s+.*?\s+from\s+['\"]([^'\"]*route[^'\"]*)['\"]", server_content)
+                for imp in route_requires + route_imports:
+                    route_file = imp.split("?")[0].split("#")[0]
+                    if route_file.endswith(".js"):
+                        route_path = os.path.join(backend_dir, route_file)
+                    else:
+                        route_path = os.path.join(backend_dir, route_file + ".js")
+                    if not os.path.isfile(route_path):
+                        errors.append(ValidationError(
+                            "backend_dependencies",
+                            f"Server imports missing route file: '{route_file}' (resolved to '{route_path}')",
+                            "backend/server.js"
+                        ))
+            except Exception:
+                pass
+
         for root_b, _, files_b in os.walk(backend_dir):
             if "node_modules" in root_b:
                 continue
@@ -419,7 +446,6 @@ class ValidationGate:
                 except Exception:
                     pass
 
-        modified_pkg = False
         if "dependencies" not in pkg_data:
             pkg_data["dependencies"] = {}
         if "devDependencies" not in pkg_data:
@@ -942,7 +968,7 @@ class ValidationGate:
             print(f"{LOG} Failed to emit validation status: {e}", flush=True)
 
     async def run_validation_and_repair(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Core Validation Loop: Generate → Validate → Repair → Validate → Deliver. Max 3 repair attempts."""
+        """Core Validation Loop: Generate → Validate → Repair → Validate → Deliver. Max 5 repair attempts."""
         print(f"\n{LOG} ===============================================================", flush=True)
         print(f"{LOG} START VALIDATION GATE | session={self.session_id}", flush=True)
         print(f"{LOG} ===============================================================", flush=True)
@@ -1306,6 +1332,7 @@ class ValidationGate:
             "10. For backend runtime errors, inspect ALL provided runtime stack-trace source files, especially the file identified by `File:` and the files extracted from the stack trace. Fix the actual root cause while preserving all existing routes, middleware, imports, database logic, configuration, and exports."
             "11. If the error is a Supabase WebSocket/Node compatibility error across multiple controllers, CREATE `backend/supabase/client.js` as the shared Supabase client helper with ws transport, then UPDATE ALL affected controllers to use it. Do NOT fix each controller individually."
             "12. If there is a PostCSS/ESM error (`module is not defined in ES module scope`), REMOVE `\"type\": \"module\"` from frontend/package.json. Vite handles ESM natively and CommonJS configs like postcss.config.js require `module.exports`."
+            "13. If backend fails with `require is not defined in ES module scope` or `Cannot find module 'backend/routes/...'`, check backend/package.json for `\"type\": \"module\"` and REMOVE it. Then fix server.js to only import routes that actually exist under backend/routes/."
         )
 
         if not self.llm:

@@ -1068,7 +1068,8 @@ class BuilderAgent(BaseAgent):
                 print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
                 state["status"] = "validation_failed"
                 state["next_agent"] = None
-                state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_result.get('errors')}"
+                attempts_used = val_result.get("attempts", "?")
+                state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_result.get('errors')}"
 
             yield state
             return
@@ -1100,7 +1101,8 @@ class BuilderAgent(BaseAgent):
                     print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
                     state["status"] = "validation_failed"
                     state["next_agent"] = None
-                    state["run_report"] = f"Build validation failed after 5 repair attempts. Errors: {val_result.get('errors')}"
+                    attempts_used = val_result.get("attempts", "?")
+                    state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_result.get('errors')}"
 
             yield state
             return
@@ -1305,7 +1307,8 @@ class BuilderAgent(BaseAgent):
                 "5. Use react-router-dom Link, NOT <a href>\n"
                 "6. Do NOT import CSS files (Tailwind is global)\n"
                 "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n"
-                "8. Do NOT use images or placeholders for brand logos. Instead, write the brand name in text with beautiful typography and formatting (e.g., gradient text).\n\n"
+                "8. Do NOT use images or placeholders for brand logos. Instead, write the brand name in text with beautiful typography and formatting (e.g., gradient text).\n"
+                "9. CRITICAL: Do NOT include `\"type\": \"module\"` in frontend/package.json. Vite handles ESM natively. Config files like postcss.config.js MUST use CommonJS: `module.exports = ...`\n\n"
                 "═══ OUTPUT FORMAT ═══\n"
                 "Generate ONE file per tool call. After ALL files, respond with a short summary.\n\n"
                 "═══ EXAMPLE: How to generate a component ═══\n"
@@ -1363,14 +1366,18 @@ class BuilderAgent(BaseAgent):
             system_prompt = (
                 "You are a Senior Backend Engineer. Node.js + Express API in `backend/`.\n\n"
                 "═══ CRITICAL RULES ═══\n"
-                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
-                "2. Use client_save_code for EVERY file. One tool call per file.\n"
-                "3. Write server.js LAST with ALL routes mounted.\n"
-                 "4. Every controller starts with: const { supabase } = require('../supabase/client');\n"
-                 "5. Use the Shared Table + JSONB Data Matrix Pattern. Query `tenant_connector_vault` with tenant_id + schema_name + record_data JSONB filters.\n"
-                 "   Example: supabase.from('tenant_connector_vault').select('*').eq('tenant_id', id).eq('schema_name', 'todos').eq('record_data->>status', 'active');\n"
-                 "6. Every route returns JSON: { success: true, data } or { success: false, error }\n"
-                 "7. Try/catch in every route handler\n\n"
+                "1. CommonJS ONLY: use `require()` and `module.exports`. NEVER use `import`/`export`.\n"
+                "2. NEVER include `\"type\": \"module\"` in backend/package.json.\n"
+                "3. Use client_save_code for EVERY file. One tool call per file.\n"
+                "4. Write server.js LAST with ALL routes mounted.\n"
+                "5. Every controller uses: `const { supabase } = require('../supabase/client');`\n"
+                "6. Use the Shared Table + JSONB Data Matrix Pattern. Query `tenant_connector_vault` with tenant_id + schema_name + record_data JSONB filters.\n"
+                "   Example: supabase.from('tenant_connector_vault').select('*').eq('tenant_id', id).eq('schema_name', 'todos').eq('record_data->>status', 'active');\n"
+                "7. Every route returns JSON: `{ success: true, data }` or `{ success: false, error }`\n"
+                "8. Try/catch in EVERY route handler. On DB error, return `{ success: true, data: [] }` instead of 500.\n"
+                "9. MANDATORY: Add `/health` endpoint to server.js BEFORE other routes:\n"
+                "   `app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));`\n"
+                "10. If `backend/supabase/client.js` does not exist, CREATE it FIRST.\n\n"
                 "═══ FILE STRUCTURE ═══\n"
                 "backend/\n"
                 "  ├── server.js          (main entry, mounts all routes)\n"
@@ -1430,9 +1437,11 @@ class BuilderAgent(BaseAgent):
                 "app.use(cors());\n"
                 "app.use(express.json());\n\n"
                 "app.use('/api/todos', require('./routes/todos'));\n\n"
+                "app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));\n\n"
                 "const PORT = process.env.PORT || 3001;\n"
-                "app.listen(PORT, () => console.log(`Server running on port ${PORT}`));\n"
-                "```"
+                "app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));\n"
+                "```\n\n"
+                "Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`."
             )
         elif category == "database":
             system_prompt = (
