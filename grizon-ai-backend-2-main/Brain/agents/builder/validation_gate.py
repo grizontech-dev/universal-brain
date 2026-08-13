@@ -234,13 +234,15 @@ class ValidationGate:
                     file_path="frontend/package.json"
                 ))
 
-        if modified_pkg and os.path.isfile(pkg_json_path):
+        node_modules_exist = os.path.isdir(os.path.join(self.frontend_dir, "node_modules"))
+        if (modified_pkg or not node_modules_exist) and os.path.isfile(pkg_json_path):
             try:
-                with open(pkg_json_path, "w", encoding="utf-8") as f:
-                    json.dump(pkg_data, f, indent=2)
-                print(f"{LOG} [OK] Saved updated frontend/package.json with {len(patched_packages)} patched deps", flush=True)
+                if modified_pkg:
+                    with open(pkg_json_path, "w", encoding="utf-8") as f:
+                        json.dump(pkg_data, f, indent=2)
+                    print(f"{LOG} [OK] Saved updated frontend/package.json with {len(patched_packages)} patched deps", flush=True)
                 
-                # CRITICAL: Trigger package manager install after patching package.json
+                # CRITICAL: Trigger package manager install when dependencies change or node_modules is missing
                 ok_inst, inst_msg = self._run_package_manager_install()
                 if not ok_inst:
                     warnings.append(ValidationWarning("dependencies", f"Package manager install status: {inst_msg}"))
@@ -626,21 +628,26 @@ class ValidationGate:
             "6. Make one tool call per file fix."
         )
 
-        bound_llm = self.llm.bind_tools([client_save_code])
-        messages = [
-            SystemMessage(content="You are an expert React Debug & Repair Agent. Fix build/import errors with minimal targeted edits."),
-            HumanMessage(content=repair_prompt)
-        ]
+        if not self.llm:
+            print(f"{LOG} [ERROR] Repair LLM not provided -- skipping repair pass", flush=True)
+            return False
 
         try:
+            bound_llm = self.llm.bind_tools([client_save_code])
+            messages = [
+                SystemMessage(content="You are an expert React Debug & Repair Agent. Fix build/import errors with minimal targeted edits."),
+                HumanMessage(content=repair_prompt)
+            ]
+
             response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=120)
-            if not response.tool_calls:
+            if not response or not hasattr(response, "tool_calls") or not response.tool_calls:
+                print(f"{LOG} [WARN] Repair LLM returned no tool calls", flush=True)
                 return False
 
             fixed_count = 0
             for tc in response.tool_calls:
-                if tc["name"] == "client_save_code":
-                    tool_args = tc["args"]
+                if tc.get("name") == "client_save_code":
+                    tool_args = tc.get("args", {})
                     file_path = tool_args.get("file_path", "")
                     try:
                         await asyncio.wait_for(
@@ -658,5 +665,6 @@ class ValidationGate:
             return fixed_count > 0
 
         except Exception as e:
-            print(f"{LOG} [ERROR] Repair LLM error: {e}", flush=True)
+            import traceback as _tb
+            print(f"{LOG} [ERROR] Repair LLM error: {e}\n{_tb.format_exc()}", flush=True)
             return False
