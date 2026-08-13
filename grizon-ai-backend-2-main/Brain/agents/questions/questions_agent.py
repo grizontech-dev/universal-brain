@@ -118,13 +118,15 @@ class QuestionsAgent(BaseAgent):
         context_summary = "Recent user messages:\n" + "\n".join(f"- {m}" for m in user_msgs) if user_msgs else f"User request: {prompt[:300]}"
 
         system_prompt = """
-You are the Questions Agent. Phrase the missing details below as clear, concise questions.
+You are the Questions Agent for Grizon AI. Phrase missing details below as clear, concise questions.
 
-RULES:
-1. Do NOT ask about anything the user already provided or decided.
-2. Max 5 questions, one per missing detail.
-3. Each question needs 2-5 concrete options. If more than one option can be selected, set "type": "multi", otherwise "single".
-4. No preamble, no fluff - only the questions.
+SYSTEM DIRECTIVES & PLATFORM BOUNDARIES (STRICT):
+1. Target Platform is ALWAYS a Web Application (React + Vite Web App). NEVER ask about platform choice (mobile, desktop, React Native, Electron, iOS, Android).
+2. Tech Stack is FIXED (React + Express + Supabase + Tailwind CSS). NEVER ask about tech stack or framework choices.
+3. Do NOT ask about anything the user already provided or decided.
+4. Max 3-5 questions, one per missing detail. Focus ONLY on UI/UX preferences and core business feature choices.
+5. Each question needs 2-5 concrete options. If more than one option can be selected, set "type": "multi", otherwise "single".
+6. No preamble, no fluff - only the questions.
 
 Return ONLY JSON:
 {"questions": [{"id": "q1", "text": "Question text", "type": "single", "options": ["A", "B", "C"]}]}

@@ -35,6 +35,17 @@ CORE_PACKAGES = {
     "postcss", "autoprefixer", "express", "cors", "dotenv", "nodemon"
 }
 
+BACKEND_APPROVED_PACKAGES = {
+    "express": "^4.18.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "nodemon": "^3.0.0",
+    "axios": "^1.6.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0",
+}
+
 
 class ValidationError:
     def __init__(self, stage: str, message: str, file_path: str = None, line: int = None, column: int = None, code_snippet: str = None):
@@ -96,7 +107,7 @@ class ValidationGate:
         self.workspace_dir = workspace_manager.resolve_workspace_path(session_id, user_id=user_id) or os.path.join(os.getcwd(), "workspaces", session_id)
         self.frontend_dir = os.path.join(self.workspace_dir, "frontend")
         self.frontend_src = os.path.join(self.frontend_dir, "src")
-        self.max_repair_attempts = 5
+        self.max_repair_attempts = 3
 
     def _extract_targeted_snippet(self, full_path: str, target_line: int, window: int = 30) -> str:
         """Extract ±window lines around target_line for LLM context optimization."""
@@ -121,18 +132,60 @@ class ValidationGate:
         except Exception:
             return ""
 
-    def _run_package_manager_install(self) -> Tuple[bool, str]:
-        """Execute package manager install (respecting lockfiles) after dependency auto-patching."""
-        if not os.path.isdir(self.frontend_dir):
-            return False, "frontend directory missing"
+    def _get_pkg_hash(self) -> Optional[str]:
+        """Return md5 hash of frontend/package.json + lockfile, or None if missing."""
+        return self._get_pkg_hash_for_dir(self.frontend_dir)
 
-        # Detect package manager
+    def _get_install_marker_path(self, pkg_dir: str) -> str:
+        return os.path.join(pkg_dir, ".grizon-install-hash")
+
+    def _get_pkg_hash_for_dir(self, pkg_dir: str) -> Optional[str]:
+        """Return md5 hash of package.json + lockfile in given directory, or None if missing."""
+        import hashlib
+        pkg_path = os.path.join(pkg_dir, "package.json")
+        lock_paths = [
+            os.path.join(pkg_dir, "package-lock.json"),
+            os.path.join(pkg_dir, "pnpm-lock.yaml"),
+            os.path.join(pkg_dir, "yarn.lock"),
+        ]
+        try:
+            h = hashlib.md5()
+            if os.path.isfile(pkg_path):
+                with open(pkg_path, "rb") as f:
+                    h.update(f.read())
+            for lp in lock_paths:
+                if os.path.isfile(lp):
+                    with open(lp, "rb") as f:
+                        h.update(f.read())
+            return h.hexdigest()
+        except Exception:
+            return None
+
+    def _run_package_manager_install_for_dir(self, pkg_dir: str, marker_path: str) -> Tuple[bool, str]:
+        """Execute package manager install only when package.json/lockfile changed or node_modules missing."""
+        if not os.path.isdir(pkg_dir):
+            return False, f"{pkg_dir} directory missing"
+
+        node_modules_exist = os.path.isdir(os.path.join(pkg_dir, "node_modules"))
+        current_hash = self._get_pkg_hash_for_dir(pkg_dir)
+
+        if node_modules_exist and current_hash:
+            try:
+                if os.path.isfile(marker_path):
+                    with open(marker_path, "r", encoding="utf-8") as f:
+                        cached_hash = f.read().strip()
+                    if cached_hash == current_hash:
+                        print(f"{LOG} [OK] Skipping npm install in {pkg_dir} — unchanged (hash={current_hash[:8]})", flush=True)
+                        return True, "Skipped (no changes)"
+            except Exception:
+                pass
+
         pm_cmd = ["npm", "install", "--include=dev"]
-        if os.path.isfile(os.path.join(self.frontend_dir, "pnpm-lock.yaml")):
+        if os.path.isfile(os.path.join(pkg_dir, "pnpm-lock.yaml")):
             pnpm_path = shutil.which("pnpm") or shutil.which("pnpm.cmd")
             if pnpm_path:
                 pm_cmd = [pnpm_path, "install", "--prod=false"]
-        elif os.path.isfile(os.path.join(self.frontend_dir, "yarn.lock")):
+        elif os.path.isfile(os.path.join(pkg_dir, "yarn.lock")):
             yarn_path = shutil.which("yarn") or shutil.which("yarn.cmd")
             if yarn_path:
                 pm_cmd = [yarn_path, "install", "--production=false"]
@@ -141,29 +194,40 @@ class ValidationGate:
             if npm_path:
                 pm_cmd = [npm_path, "install", "--include=dev"]
 
-        print(f"{LOG} Running package manager install: {' '.join(pm_cmd)}...", flush=True)
+        print(f"{LOG} Running package manager install in {pkg_dir}: {' '.join(pm_cmd)}...", flush=True)
         try:
             res = subprocess.run(
                 pm_cmd,
-                cwd=self.frontend_dir,
+                cwd=pkg_dir,
                 capture_output=True,
                 text=True,
                 timeout=120,
-                shell=os.name == "nt"
+                shell=False
             )
             if res.returncode == 0:
-                print(f"{LOG} [OK] Package manager install completed successfully.", flush=True)
+                print(f"{LOG} [OK] Package manager install completed successfully in {pkg_dir}.", flush=True)
+                if current_hash:
+                    try:
+                        with open(marker_path, "w", encoding="utf-8") as f:
+                            f.write(current_hash)
+                    except Exception:
+                        pass
                 return True, "Success"
             else:
                 err_msg = (res.stderr or res.stdout or "npm install failed")[:500]
-                print(f"{LOG} [WARN] Package manager install returned non-zero exit code: {err_msg}", flush=True)
+                print(f"{LOG} [WARN] Package manager install returned non-zero exit code in {pkg_dir}: {err_msg}", flush=True)
                 return False, err_msg
         except subprocess.TimeoutExpired:
-            print(f"{LOG} [WARN] Package manager install timed out after 120s.", flush=True)
+            print(f"{LOG} [WARN] Package manager install timed out after 120s in {pkg_dir}.", flush=True)
             return False, "Timeout"
         except Exception as e:
-            print(f"{LOG} [WARN] Package manager install exception: {e}", flush=True)
+            print(f"{LOG} [WARN] Package manager install exception in {pkg_dir}: {e}", flush=True)
             return False, str(e)
+
+    def _run_package_manager_install(self) -> Tuple[bool, str]:
+        """Execute package manager install only when package.json/lockfile changed or node_modules missing."""
+        marker_path = self._get_install_marker_path(self.frontend_dir)
+        return self._run_package_manager_install_for_dir(self.frontend_dir, marker_path)
 
     def _check_and_patch_dependencies(self) -> Tuple[List[ValidationError], List[ValidationWarning], List[str]]:
         """Scan imports in frontend/src. Auto-patch ONLY if package is in approved whitelist and run npm install."""
@@ -198,9 +262,10 @@ class ValidationGate:
                     try:
                         with open(full_path, "r", encoding="utf-8") as f:
                             content = f.read()
-                        # Match import ... from 'package' or require('package')
+                        # Match import ... from 'package', require('package'), or import('package')
                         matches = re.findall(r"(?:import\s+.*?\s+from\s+|require\()\s*['\"]([^'\".\n][^'\"]*)['\"]", content)
-                        for imp in matches:
+                        dynamic_matches = re.findall(r"import\(\s*['\"]([^'\".\n][^'\"]*)['\"]\s*\)", content)
+                        for imp in matches + dynamic_matches:
                             if imp.startswith("@"):
                                 parts = imp.split("/")
                                 pkg_name = "/".join(parts[:2]) if len(parts) >= 2 else imp
@@ -239,8 +304,8 @@ class ValidationGate:
             if pkg in CORE_PACKAGES or pkg in installed_deps:
                 continue
             
-            # Check whitelist
-            if pkg in APPROVED_PACKAGES:
+            # Check whitelist — only add if not already present to avoid version downgrade
+            if pkg in APPROVED_PACKAGES and pkg not in installed_deps:
                 pkg_data["dependencies"][pkg] = APPROVED_PACKAGES[pkg]
                 installed_deps.add(pkg)
                 patched_packages.append(pkg)
@@ -255,9 +320,13 @@ class ValidationGate:
                 ))
 
         node_modules_exist = os.path.isdir(os.path.join(self.frontend_dir, "node_modules"))
-        if (modified_pkg or not node_modules_exist) and os.path.isfile(pkg_json_path):
+        if modified_pkg or not node_modules_exist:
             try:
-                if modified_pkg:
+                if modified_pkg or not os.path.isfile(pkg_json_path):
+                    if not os.path.isfile(pkg_json_path):
+                        pkg_data["name"] = "frontend"
+                        pkg_data["version"] = "1.0.0"
+                        pkg_data["private"] = True
                     with open(pkg_json_path, "w", encoding="utf-8") as f:
                         json.dump(pkg_data, f, indent=2)
                     print(f"{LOG} [OK] Saved updated frontend/package.json with {len(patched_packages)} patched deps", flush=True)
@@ -265,9 +334,118 @@ class ValidationGate:
                 # CRITICAL: Trigger package manager install when dependencies change or node_modules is missing
                 ok_inst, inst_msg = self._run_package_manager_install()
                 if not ok_inst:
-                    warnings.append(ValidationWarning("dependencies", f"Package manager install status: {inst_msg}"))
+                    errors.append(
+                        ValidationError(
+                            "dependencies",
+                            f"Package manager install failed: {inst_msg}",
+                            "frontend/package.json"
+                        )
+                    )
             except Exception as e:
                 errors.append(ValidationError("dependencies", f"Failed to save package.json: {e}", "frontend/package.json"))
+
+        return errors, warnings, patched_packages
+
+    def _check_backend_dependencies(self) -> Tuple[List[ValidationError], List[ValidationWarning], List[str]]:
+        """Scan require() in backend/. Auto-patch ONLY if package is in approved whitelist and run npm install."""
+        errors = []
+        warnings = []
+        patched_packages = []
+
+        backend_dir = os.path.join(self.workspace_dir, "backend")
+        if not os.path.isdir(backend_dir):
+            return errors, warnings, patched_packages
+
+        pkg_json_path = os.path.join(backend_dir, "package.json")
+        installed_deps: Set[str] = set()
+        pkg_data = {}
+        if os.path.isfile(pkg_json_path):
+            try:
+                with open(pkg_json_path, "r", encoding="utf-8") as f:
+                    pkg_data = json.load(f)
+                deps = pkg_data.get("dependencies", {})
+                dev_deps = pkg_data.get("devDependencies", {})
+                installed_deps.update(deps.keys())
+                installed_deps.update(dev_deps.keys())
+            except Exception as e:
+                errors.append(ValidationError("backend_dependencies", f"Invalid backend/package.json format: {e}", "backend/package.json"))
+                return errors, warnings, patched_packages
+
+        imported_packages: Set[str] = set()
+        for root_b, _, files_b in os.walk(backend_dir):
+            if "node_modules" in root_b:
+                continue
+            for fname in files_b:
+                if not fname.endswith(".js"):
+                    continue
+                full_path = os.path.join(root_b, fname)
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    matches = re.findall(r"require\(\s*['\"]([^'\".\n][^'\"]*)['\"]\s*\)", content)
+                    esm_matches = re.findall(r"(?:import\s+.*?\s+from\s+|import\()\s*['\"]([^'\".\n][^'\"]*)['\"]", content)
+                    for imp in matches + esm_matches:
+                        if imp.startswith("@"):
+                            parts = imp.split("/")
+                            pkg_name = "/".join(parts[:2]) if len(parts) >= 2 else imp
+                        else:
+                            pkg_name = imp.split("/")[0]
+                        imported_packages.add(pkg_name)
+                except Exception:
+                    pass
+
+        modified_pkg = False
+        if "dependencies" not in pkg_data:
+            pkg_data["dependencies"] = {}
+        if "devDependencies" not in pkg_data:
+            pkg_data["devDependencies"] = {}
+
+        essential_backend = {"express", "cors", "dotenv"}
+        for pkg in essential_backend:
+            if pkg not in installed_deps:
+                pkg_data["dependencies"][pkg] = BACKEND_APPROVED_PACKAGES.get(pkg, "^1.0.0")
+                installed_deps.add(pkg)
+                modified_pkg = True
+
+        for pkg in imported_packages:
+            if pkg in installed_deps:
+                continue
+            if pkg in BACKEND_APPROVED_PACKAGES:
+                pkg_data["dependencies"][pkg] = BACKEND_APPROVED_PACKAGES[pkg]
+                installed_deps.add(pkg)
+                patched_packages.append(pkg)
+                modified_pkg = True
+                print(f"{LOG} [OK] Auto-patched backend whitelist package: {pkg} -> {BACKEND_APPROVED_PACKAGES[pkg]}", flush=True)
+            else:
+                errors.append(ValidationError(
+                    stage="backend_dependencies",
+                    message=f"Imported backend package '{pkg}' is missing from backend/package.json and not in approved whitelist.",
+                    file_path="backend/package.json"
+                ))
+
+        node_modules_exist = os.path.isdir(os.path.join(backend_dir, "node_modules"))
+        if modified_pkg or not node_modules_exist:
+            try:
+                if modified_pkg or not os.path.isfile(pkg_json_path):
+                    if not os.path.isfile(pkg_json_path):
+                        pkg_data["name"] = "backend"
+                        pkg_data["version"] = "1.0.0"
+                    with open(pkg_json_path, "w", encoding="utf-8") as f:
+                        json.dump(pkg_data, f, indent=2)
+                    print(f"{LOG} [OK] Saved updated backend/package.json with {len(patched_packages)} patched deps", flush=True)
+
+                marker_path = self._get_install_marker_path(backend_dir)
+                ok_inst, inst_msg = self._run_package_manager_install_for_dir(backend_dir, marker_path)
+                if not ok_inst:
+                    errors.append(
+                        ValidationError(
+                            "backend_dependencies",
+                            f"Backend package manager install failed: {inst_msg}",
+                            "backend/package.json"
+                        )
+                    )
+            except Exception as e:
+                errors.append(ValidationError("backend_dependencies", f"Failed to save backend/package.json: {e}", "backend/package.json"))
 
         return errors, warnings, patched_packages
 
@@ -309,14 +487,42 @@ class ValidationGate:
                         file_path=f"frontend/src/{rel_p}"
                     ))
 
-                # Extract relative imports: import { X } from './Header' or import Header from './Header'
-                import_matches = re.finditer(r"import\s+(?:(\{[^}]+\})|([a-zA-Z0-9_$]+))\s+from\s+['\"](\.\/[^'\"]+|\.\.\/[^'\"]+)['\"]", content)
+                # Extract relative imports: multiple forms supported
+                # 1. Static imports: import { X } from './Header', import Header from './Header',
+                #                    import React, { useState } from './something', import * as Utils from './utils'
+                # 2. Side-effect: import './styles.css'
+                # 3. Dynamic: import('./components/Chart')
+                # 4. require(): require('./utils')
+                static_imports = list(re.finditer(
+                    r"import\s+(?:(\{[^}]+\})|([a-zA-Z0-9_$]+)|(\*\s+as\s+[a-zA-Z0-9_$]+))\s+from\s+['\"](\.\/[^'\"]+|\.\.\/[^'\"]+)['\"]",
+                    content
+                ))
+                side_effect_imports = list(re.finditer(
+                    r"import\s+['\"](\.\/[^'\"]+|\.\.\/[^'\"]+)['\"]\s*;",
+                    content
+                ))
+                dynamic_imports = list(re.finditer(
+                    r"import\(\s*['\"](\.\/[^'\"]+|\.\.\/[^'\"]+)['\"]\s*\)",
+                    content
+                ))
+                require_imports = list(re.finditer(
+                    r"require\(\s*['\"](\.\/[^'\"]+|\.\.\/[^'\"]+)['\"]\s*\)",
+                    content
+                ))
+                all_rel_imports = static_imports + side_effect_imports + dynamic_imports + require_imports
                 file_dir = os.path.dirname(full_p)
 
-                for m in import_matches:
-                    named_imports_str = m.group(1)
-                    default_import = m.group(2)
-                    imp_path = m.group(3)
+                for m in all_rel_imports:
+                    if m in static_imports:
+                        imp_path = m.group(4)
+                        named_imports_str = m.group(1)
+                        is_namespace = m.group(3) is not None
+                    else:
+                        imp_path = m.group(1)
+                        named_imports_str = None
+                        is_namespace = False
+                    if not imp_path:
+                        continue
 
                     target_base = os.path.normpath(os.path.join(file_dir, imp_path))
                     found_target_path = None
@@ -336,20 +542,17 @@ class ValidationGate:
                             file_path=f"frontend/src/{rel_p}"
                         ))
                     else:
-                        # Check named exports if imported using { X, Y }
-                        if named_imports_str:
+                        # Check named exports if imported using { X, Y } but not namespace or side-effect
+                        if named_imports_str and not is_namespace:
                             try:
                                 with open(found_target_path, "r", encoding="utf-8") as tf:
                                     target_content = tf.read()
                                 names = [n.strip() for n in named_imports_str.strip("{}").split(",") if n.strip()]
                                 for name in names:
-                                    # Clean alias if present (e.g. A as B)
                                     export_name = name.split(" as ")[0].strip()
-                                    # Check for export const X, export function X, export class X, export { X }
                                     export_patterns = [
                                         rf"export\s+(?:const|function|class|let|var)\s+{export_name}\b",
                                         rf"export\s+\{{[^}}]*\b{export_name}\b[^}}]*\}}",
-                                        rf"export\s+default\b"
                                     ]
                                     if not any(re.search(p, target_content) for p in export_patterns):
                                         warnings.append(ValidationWarning(
@@ -363,13 +566,18 @@ class ValidationGate:
             except Exception as e:
                 errors.append(ValidationError("structure", f"Failed to read file: {e}", f"frontend/src/{rel_p}"))
 
-        # Check for orphan components -> WARNING (non-blocking)
-        components_dir = os.path.join(self.frontend_src, "components")
-        if os.path.isdir(components_dir):
-            for f in os.listdir(components_dir):
-                if f.endswith((".jsx", ".js", ".tsx", ".ts")):
-                    rel_comp = f"components/{f}"
-                    if rel_comp not in all_imported_targets and f != "App.jsx":
+        # FIX: Recursive orphan detection across components/ AND pages/ subdirectories
+        for scan_subdir in ("components", "pages"):
+            scan_dir = os.path.join(self.frontend_src, scan_subdir)
+            if not os.path.isdir(scan_dir):
+                continue
+            for root_w, _, files_w in os.walk(scan_dir):
+                for f in files_w:
+                    if not f.endswith((".jsx", ".js", ".tsx", ".ts")):
+                        continue
+                    full_comp = os.path.join(root_w, f)
+                    rel_comp = os.path.relpath(full_comp, self.frontend_src).replace("\\", "/")
+                    if rel_comp not in all_imported_targets and f not in ("App.jsx", "main.jsx", "index.jsx"):
                         warnings.append(ValidationWarning(
                             stage="structure",
                             message=f"Component '{f}' is not imported by any other file (orphan component).",
@@ -394,7 +602,13 @@ class ValidationGate:
         elif npx_full:
             cmd = [npx_full, "vite", "build", "--outDir", "temp_validation_build"]
         else:
-            warnings.append(ValidationWarning("compilation", "vite executable not found on host — skipping build check"))
+            errors.append(
+                ValidationError(
+                    "compilation",
+                    "Vite executable not found — cannot validate frontend build.",
+                    "frontend/package.json"
+                )
+            )
             return errors, warnings
         try:
             process = subprocess.run(
@@ -403,7 +617,7 @@ class ValidationGate:
                 capture_output=True,
                 text=True,
                 timeout=90,
-                shell=os.name == "nt"
+                shell=False
             )
 
             temp_out = os.path.join(self.frontend_dir, "temp_validation_build")
@@ -462,7 +676,7 @@ class ValidationGate:
         if npx_full and eslint_cfg:
             try:
                 cmd = [npx_full, "eslint", "src", "--ext", ".js,.jsx,.ts,.tsx", "--format", "json"]
-                res = subprocess.run(cmd, cwd=self.frontend_dir, capture_output=True, text=True, timeout=30, shell=os.name == "nt")
+                res = subprocess.run(cmd, cwd=self.frontend_dir, capture_output=True, text=True, timeout=30, shell=False)
                 if res.stdout:
                     try:
                         eslint_results = json.loads(res.stdout)
@@ -486,11 +700,147 @@ class ValidationGate:
 
         return errors, warnings
 
-    def _check_runtime_execution(self) -> Tuple[List[ValidationError], List[ValidationWarning]]:
-        """Extensible hook for runtime error capture / dev server smoke testing."""
+    def _run_backend_smoke_test(self, backend_dir: str) -> Tuple[List[ValidationError], List[ValidationWarning]]:
+        """Start backend server, GET /health, verify 200, kill."""
         errors = []
         warnings = []
+
+        server_js = os.path.join(backend_dir, "server.js") if os.path.isdir(backend_dir) else None
+        node_path = shutil.which("node") or shutil.which("node.exe")
+        if server_js and os.path.isfile(server_js) and node_path:
+            smoke_port = self._find_free_port(19000, 19099)
+            smoke_proc = None
+            try:
+                env = os.environ.copy()
+                env["PORT"] = str(smoke_port)
+                env["NODE_ENV"] = "test"
+                smoke_proc = subprocess.Popen(
+                    [node_path, "server.js"],
+                    cwd=backend_dir,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False
+                )
+                health_ok = False
+                health_url = f"http://127.0.0.1:{smoke_port}/health"
+                for _ in range(16):
+                    time.sleep(0.5)
+                    if self._http_get(health_url) == 200:
+                        health_ok = True
+                        break
+                    if smoke_proc.poll() is not None:
+                        break
+
+                if health_ok:
+                    print(f"{LOG} [OK] Backend smoke test PASSED — GET /health returned 200", flush=True)
+                else:
+                    print(f"{LOG} [ERROR] Backend smoke test FAILED: /health did not return 200 within 8s (port={smoke_port})", flush=True)
+                    errors.append(ValidationError(
+                        stage="runtime",
+                        message="Backend server did not respond to GET /health within 8s — server crashes on startup. Ensure server.js has: app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));",
+                        file_path="backend/server.js"
+                    ))
+            except Exception as bse:
+                errors.append(
+                    ValidationError(
+                        "runtime",
+                        f"Backend smoke test exception: {bse}",
+                        "backend/server.js"
+                    )
+                )
+            finally:
+                if smoke_proc and smoke_proc.poll() is None:
+                    smoke_proc.terminate()
+                    try:
+                        smoke_proc.wait(timeout=3)
+                    except Exception:
+                        smoke_proc.kill()
+        elif backend_dir and os.path.isdir(backend_dir) and not node_path:
+            warnings.append(ValidationWarning("runtime", "node not found on PATH — backend smoke test skipped"))
+
         return errors, warnings
+
+    def _run_frontend_smoke_test(self) -> Tuple[List[ValidationError], List[ValidationWarning]]:
+        """Start Vite dev server, GET /, verify HTTP response."""
+        errors = []
+        warnings = []
+
+        local_vite = os.path.join(self.frontend_dir, "node_modules", ".bin",
+                                  "vite.cmd" if os.name == "nt" else "vite")
+        vite_exec = local_vite if os.path.isfile(local_vite) else shutil.which("npx.cmd" if os.name == "nt" else "npx")
+        if vite_exec and os.path.isdir(self.frontend_dir):
+            vite_port = self._find_free_port(19100, 19199)
+            vite_proc = None
+            try:
+                vite_cmd = ([vite_exec, "--port", str(vite_port), "--host", "127.0.0.1"]
+                            if os.path.isfile(local_vite)
+                            else [vite_exec, "vite", "--port", str(vite_port), "--host", "127.0.0.1"])
+                vite_proc = subprocess.Popen(
+                    vite_cmd,
+                    cwd=self.frontend_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False
+                )
+                vite_ok = False
+                vite_url = f"http://127.0.0.1:{vite_port}/"
+                for _ in range(24):
+                    time.sleep(0.5)
+                    status = self._http_get(vite_url)
+                    if status in (200, 304):
+                        vite_ok = True
+                        break
+                    if vite_proc.poll() is not None:
+                        break
+
+                if vite_ok:
+                    print(f"{LOG} [OK] Frontend smoke test PASSED — Vite dev server responded on port {vite_port}", flush=True)
+                else:
+                    print(f"{LOG} [ERROR] Frontend smoke test FAILED: Vite did not serve / within 12s (port={vite_port})", flush=True)
+                    errors.append(ValidationError(
+                        stage="runtime",
+                        message="Vite dev server did not respond to GET / within 12s — frontend may not start. Check main.jsx, App.jsx, and vite.config.js for startup errors.",
+                        file_path="frontend/src/main.jsx"
+                    ))
+            except Exception as fse:
+                errors.append(
+                    ValidationError(
+                        "runtime",
+                        f"Frontend smoke test exception: {fse}",
+                        "frontend/src/main.jsx"
+                    )
+                )
+            finally:
+                if vite_proc and vite_proc.poll() is None:
+                    vite_proc.terminate()
+                    try:
+                        vite_proc.wait(timeout=3)
+                    except Exception:
+                        vite_proc.kill()
+
+        return errors, warnings
+
+    def _find_free_port(self, start: int = 19000, end: int = 19999) -> int:
+        """Find a free TCP port in [start, end] range for smoke test servers."""
+        import socket
+        for port in range(start, end):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("127.0.0.1", port))
+                    return port
+            except OSError:
+                continue
+        return start
+
+    def _http_get(self, url: str, timeout: float = 2.0) -> int:
+        """Make a plain HTTP GET and return status code, or -1 on failure."""
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return resp.status
+        except Exception:
+            return -1
 
     async def _emit_status(self, status: str, attempt: int = 0, errors: List[ValidationError] = None, warnings: List[ValidationWarning] = None):
         """Emit WebSocket progress message to frontend."""
@@ -527,7 +877,7 @@ class ValidationGate:
             print(f"{LOG} Failed to emit validation status: {e}", flush=True)
 
     async def run_validation_and_repair(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Core Validation Loop: Generate → Validate → Repair → Validate → Deliver. Max 5 repair attempts."""
+        """Core Validation Loop: Generate → Validate → Repair → Validate → Deliver. Max 3 repair attempts."""
         print(f"\n{LOG} ===============================================================", flush=True)
         print(f"{LOG} START VALIDATION GATE | session={self.session_id}", flush=True)
         print(f"{LOG} ===============================================================", flush=True)
@@ -539,15 +889,41 @@ class ValidationGate:
             state["status"] = "validating"
             await self._emit_status("validating", attempt=attempt)
 
-            # Run 5 Validation Checks
+            # Run validation checks in tiers: dependencies first, then parallel static checks,
+            # then runtime smoke tests only if static checks pass.
             dep_errors, dep_warns, patched = self._check_and_patch_dependencies()
-            imp_errors, imp_warns = self._check_imports_and_structure()
-            build_errors, build_warns = self._check_static_compilation()
-            quality_errors, quality_warns = self._check_eslint_quality()
-            runtime_errors, runtime_warns = self._check_runtime_execution()
+            backend_dep_errors, backend_dep_warns, backend_patched = self._check_backend_dependencies()
 
-            all_errors = dep_errors + imp_errors + build_errors + quality_errors + runtime_errors
-            all_warnings = dep_warns + imp_warns + build_warns + quality_warns + runtime_warns
+            static_errors = []
+            static_warnings = []
+            if not dep_errors and not backend_dep_errors:
+                imp_result, build_result, quality_result = await asyncio.gather(
+                    asyncio.to_thread(self._check_imports_and_structure),
+                    asyncio.to_thread(self._check_static_compilation),
+                    asyncio.to_thread(self._check_eslint_quality),
+                )
+                imp_errors, imp_warns = imp_result
+                build_errors, build_warns = build_result
+                quality_errors, quality_warns = quality_result
+                static_errors = imp_errors + build_errors + quality_errors
+                static_warnings = imp_warns + build_warns + quality_warns
+            else:
+                imp_errors, imp_warns = [], []
+                build_errors, build_warns = [], []
+                quality_errors, quality_warns = [], []
+
+            runtime_errors, runtime_warns = [], []
+            if not static_errors:
+                backend_dir = os.path.join(self.workspace_dir, "backend")
+                runtime_backend, runtime_frontend = await asyncio.gather(
+                    asyncio.to_thread(self._run_backend_smoke_test, backend_dir),
+                    asyncio.to_thread(self._run_frontend_smoke_test),
+                )
+                runtime_errors = runtime_backend[0] + runtime_frontend[0]
+                runtime_warns = runtime_backend[1] + runtime_frontend[1]
+
+            all_errors = dep_errors + backend_dep_errors + static_errors + runtime_errors
+            all_warnings = dep_warns + backend_dep_warns + static_warnings + runtime_warns
 
             current_fingerprints = {e.fingerprint() for e in all_errors}
             stagnant_errors = current_fingerprints.intersection(previous_fingerprints)
@@ -595,6 +971,14 @@ class ValidationGate:
             state["status"] = "repairing"
             await self._emit_status("repairing", attempt=attempt, errors=all_errors)
 
+            # Step 1: Deterministic pre-repair (missing exports — no LLM needed)
+            pre_fixed = await self._deterministic_export_repair(all_errors + [ValidationError("imports WARNING", w.message, w.file_path) for w in all_warnings])
+            if pre_fixed:
+                print(f"{LOG} [OK] Deterministic pre-repair fixed {pre_fixed} file(s) — re-running validation", flush=True)
+                previous_fingerprints = current_fingerprints
+                continue
+
+            # Step 2: LLM Repair Agent for remaining errors
             repair_success = await self._run_targeted_repair(all_errors, attempt, stagnant_errors)
             if not repair_success:
                 print(f"{LOG} [WARN] Repair agent produced no file changes -- stopping early to save LLM credits", flush=True)
@@ -611,12 +995,132 @@ class ValidationGate:
         state["status"] = "validation_failed"
         return {"passed": False, "errors": [e.to_dict() for e in all_errors]}
 
+    async def _deterministic_export_repair(self, all_errors_and_warnings: List) -> int:
+        """
+        LLM-free repair: scan all errors/warnings for 'X is not exported by Y' pattern,
+        group missing exports by source file, read+append ALL missing stubs in ONE write.
+        Returns count of files fixed.
+        """
+        import re as _re
+
+        # Collect: source_file_abs -> set of missing export names
+        missing: dict[str, set] = {}
+
+        for item in all_errors_and_warnings:
+            msg = getattr(item, "message", "") or ""
+            # Vite compilation: "X" is not exported by "src/lib/api.js"
+            m = _re.search(r'"([^"]+)" is not exported by "([^"]+)"', msg)
+            if m:
+                export_name, src_rel = m.group(1), m.group(2)
+                # src_rel is relative to frontend dir (e.g. src/lib/api.js)
+                src_abs = os.path.join(self.frontend_dir, src_rel)
+                if not os.path.isfile(src_abs):
+                    src_abs = os.path.join(self.workspace_dir, src_rel)
+                if os.path.isfile(src_abs):
+                    missing.setdefault(src_abs, set()).add(export_name)
+                    continue
+
+            # Import warnings: "Named export 'X' might be missing in '../lib/api'"
+            m2 = _re.search(r"Named export '([^']+)' might be missing in '([^']+)'", msg)
+            if m2:
+                export_name, import_path = m2.group(1), m2.group(2)
+                src_file = getattr(item, "file_path", None)
+                if src_file:
+                    src_abs = os.path.join(self.workspace_dir, src_file)
+                    if os.path.isfile(src_abs):
+                        src_dir = os.path.dirname(src_abs)
+                        candidate = os.path.normpath(os.path.join(src_dir, import_path))
+                    else:
+                        candidate = os.path.normpath(os.path.join(self.frontend_src, import_path))
+                else:
+                    candidate = os.path.normpath(os.path.join(self.frontend_src, import_path))
+                for ext in (".js", ".jsx", ".ts", ".tsx"):
+                    if os.path.isfile(candidate + ext):
+                        missing.setdefault(candidate + ext, set()).add(export_name)
+                        break
+
+        if not missing:
+            return 0
+
+        fixed = 0
+        for abs_path, export_names in missing.items():
+            try:
+                with open(abs_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                # SAFETY: Skip CommonJS files — appending ESM `export { ... }` would
+                # conflict with `module.exports` / `exports.` and break the module.
+                if "module.exports" in content or "exports." in content:
+                    rel = os.path.relpath(abs_path, self.workspace_dir).replace("\\", "/")
+                    print(f"{LOG} [AUTO-REPAIR] Skipping CommonJS file {rel} — ESM re-export would conflict", flush=True)
+                    continue
+
+                # SAFETY: Only repair things that are MECHANICALLY safe.
+                # Strategy: if the function already EXISTS in the file but is NOT exported,
+                # add the export keyword. If the function doesn't exist at all, leave it
+                # for the LLM repair agent (don't invent fake logic).
+
+                re_export_additions = []   # names we can safely re-export
+                truly_absent = []          # names that don't exist at all (LLM must handle)
+
+                for name in export_names:
+                    # Already exported? Skip.
+                    already_exported = bool(_re.search(
+                        rf'export\s+(?:const|function|class|let|var)\s+{_re.escape(name)}\b'
+                        rf'|export\s+\{{[^}}]*\b{_re.escape(name)}\b[^}}]*\}}',
+                        content
+                    ))
+                    if already_exported:
+                        continue
+
+                    # Exists as un-exported function/const/class?
+                    exists_unexported = bool(_re.search(
+                        rf'(?:^|\n)\s*(?:const|async\s+function|function|class|let|var)\s+{_re.escape(name)}\b',
+                        content
+                    ))
+
+                    if exists_unexported:
+                        re_export_additions.append(name)
+                    else:
+                        truly_absent.append(name)
+
+                if truly_absent:
+                    rel = os.path.relpath(abs_path, self.workspace_dir).replace("\\", "/")
+                    print(
+                        f"{LOG} [AUTO-REPAIR] Skipping {len(truly_absent)} absent symbol(s) in {rel} "
+                        f"(no implementation found \u2014 delegating to LLM): {truly_absent}",
+                        flush=True
+                    )
+
+                if not re_export_additions:
+                    continue
+
+                rel = os.path.relpath(abs_path, self.workspace_dir).replace("\\", "/")
+                print(f"{LOG} [AUTO-REPAIR] Re-exporting {len(re_export_additions)} existing symbol(s) in {rel}: {re_export_additions}", flush=True)
+
+                # Append a safe re-export block (existing functions only)
+                export_block = "\n// Re-exported by Validation Gate (symbols existed but were not exported)\n"
+                export_block += f"export {{ {', '.join(re_export_additions)} }};\n"
+
+                new_content = content.rstrip() + "\n" + export_block
+                with open(abs_path, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                print(f"{LOG} [AUTO-REPAIR] \u2713 Saved {rel} with {len(re_export_additions)} re-exported symbol(s)", flush=True)
+                fixed += 1
+            except Exception as e:
+                print(f"{LOG} [AUTO-REPAIR] Error patching {abs_path}: {e}", flush=True)
+
+        return fixed
+
     async def _run_targeted_repair(self, errors: List[ValidationError], attempt: int, stagnant_errors: Set[str] = None) -> bool:
         """Call LLM Repair Agent with TARGETED context & stagnant error warnings."""
         print(f"{LOG} → Repair Agent invoked for {len(errors)} errors (attempt {attempt})...", flush=True)
 
         error_contexts = []
-        for i, err in enumerate(errors[:3]):  # Max 3 errors per repair pass
+        # Track which source files we need to inject content for
+        files_to_inject: dict[str, list[str]] = {}  # source_file -> [missing_exports]
+
+        for i, err in enumerate(errors[:6]):  # Max 6 errors per repair pass
             is_stagnant = stagnant_errors and err.fingerprint() in stagnant_errors
             stagnant_warning = " ⚠️ UNRESOLVED FROM PREVIOUS ATTEMPT" if is_stagnant else ""
             snippet_block = f"```jsx\n{err.code_snippet}\n```" if err.code_snippet else ""
@@ -627,6 +1131,34 @@ class ValidationGate:
                 + f"\n{snippet_block}\n"
             )
             error_contexts.append(ctx)
+
+            # Detect "not exported by" pattern and track source file
+            import re as _re
+            m = _re.search(r'"(.+?)" is not exported by "([^"]+)"', err.message or "")
+            if m:
+                export_name, src_rel = m.group(1), m.group(2)
+                # Resolve src_rel (e.g. src/lib/api.js) to absolute path
+                src_abs = os.path.join(self.frontend_dir, src_rel)
+                if not os.path.isfile(src_abs):
+                    # Try relative to workspace root
+                    src_abs = os.path.join(self.workspace_dir, src_rel)
+                if os.path.isfile(src_abs):
+                    files_to_inject.setdefault(src_abs, []).append(export_name)
+
+        # Inject current content of files that need new exports
+        file_content_block = ""
+        for abs_path, missing_exports in files_to_inject.items():
+            rel = os.path.relpath(abs_path, self.workspace_dir).replace("\\", "/")
+            try:
+                with open(abs_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                file_content_block += (
+                    f"\nCURRENT CONTENT of `{rel}` (missing exports: {missing_exports}):\n"
+                    f"```js\n{content[:3000]}\n```\n"
+                    f"→ ADD the missing export(s) {missing_exports} to this file.\n"
+                )
+            except Exception:
+                pass
 
         pkg_json_content = ""
         pkg_path = os.path.join(self.frontend_dir, "package.json")
@@ -641,14 +1173,17 @@ class ValidationGate:
             f"The project validation failed with {len(errors)} error(s).\n\n"
             "=== TARGETED ERROR CONTEXT ===\n"
             + "\n".join(error_contexts)
+            + file_content_block
             + pkg_json_content + "\n"
             "RULES FOR REPAIR:\n"
             "1. Fix ONLY the specific files mentioned in the errors using `client_save_code`.\n"
-            "2. Do NOT rewrite unrelated working code.\n"
-            "3. If an import path or exported name is wrong, fix the import/export declaration.\n"
-            "4. If a dependency is missing from package.json, add it to dependencies.\n"
-            "5. Preserve plain JSX format (do NOT convert to TypeScript/TSX unless requested).\n"
-            "6. Make one tool call per file fix."
+            "2. When a file is missing exports, READ its current content above and ADD all missing exports in ONE save call.\n"
+            "3. Do NOT rewrite unrelated working code.\n"
+            "4. If an import path or exported name is wrong, fix the import/export declaration.\n"
+            "5. If a dependency is missing from package.json, add it to dependencies.\n"
+            "6. Preserve plain JSX format (do NOT convert to TypeScript/TSX unless requested).\n"
+            "7. Make one tool call per file fix — but fix ALL missing exports for a file in a SINGLE call.\n"
+            "8. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save."
         )
 
         if not self.llm:

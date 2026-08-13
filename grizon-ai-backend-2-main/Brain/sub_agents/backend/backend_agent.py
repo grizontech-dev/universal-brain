@@ -6,7 +6,7 @@ import asyncio
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
+from Brain.agents.builder.mcp_tools import client_save_code
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.shared.llm_retry import ainvoke_with_retry
@@ -24,8 +24,8 @@ class BackendAgent(BaseAgent):
         self.skill_resolver = SkillResolver()
         self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
-        self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
-        self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
+        self.bound_llm = self.llm.bind_tools([client_save_code])
+        self.fallback_llm = self.fallback_model.bind_tools([client_save_code])
 
     async def _safe_tool_call(self, tool, args, config=None):
         try:
@@ -45,31 +45,42 @@ class BackendAgent(BaseAgent):
 - JSON responses: {{"success": true, "data": ...}} or {{"success": false, "error": "..."}}.
 
 ═══ RULES (VIOLATION = BROKEN BUILD) ═══
-1. Use client_save_code for EVERY file. One tool call per file.
+1. For every required file:
+   a. Generate the complete file.
+   b. Immediately call client_save_code.
+   c. Never return file contents as plain text.
+   d. One client_save_code call = one file.
+   e. Save ALL required files before finishing.
 2. CommonJS only: require() / module.exports. NEVER import/export.
 3. Routes: backend/routes/*.js, Controllers: backend/controllers/*.js
 4. Use Express.Router in routes: module.exports = router;
-5. ALWAYS update backend/server.js — start with `require('dotenv').config();` at line 1, import route + app.use('/api/...', routes)
+ 5. Do NOT call client_save_code for server.js until every route/controller file for this task has already been saved.
+   When updating server.js, start with `require('dotenv').config();` at line 1, then import routes + app.use('/api/...', route).
 6. Frontend contract: paths must match /api/... (POST /api/contact, GET /api/programs)
 7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
-8. Port 9999, bind 0.0.0.0 — required for tunnel URL
-9. NEVER import browser Supabase client. All DB access is server-side.
-10. Supabase: check user's connected connector first, fallback to Python proxy.
+8. Use `process.env.PORT || 9999` and bind 0.0.0.0 — required for tunnel URL.
+ 9. NEVER import browser Supabase client. Use server-side Supabase access only.
+    - If user has connected Supabase connector: use direct table queries with .from().
+    - Otherwise: use the Python Supabase proxy with the shared `tenant_connector_vault` table (JSONB pattern).
+    Never expose credentials to frontend code.
+ 10. Use the Shared Table + JSONB Data Matrix Pattern. Each entity uses tenant_id + JSONB payload for flexibility.
+     Example via proxy: GET /api/connector/query?tenant_id=...&schema_name=users&record_data->>name=John
+     Example direct: supabase.from("tenant_connector_vault").select("*").eq("tenant_id", id).eq("schema_name", "users")
 11. Schema as backend/supabase/*.sql files only. No Supabase CLI.
 12. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
-13. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return { "success": true, "data": [] } instead of HTTP 500!
-
-═══ SUPABASE PATTERNS ═══
-- Shared Table + JSONB: one shared tenant-scoped table with JSONB payload, NOT one table per user.
-- Keep payloads sparse, prune large blobs (500 MB free-tier limit).
-- Document server-side env vars only. Never request user Supabase credentials.
+13. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return {{ "success": true, "data": [] }} instead of HTTP 500!
+14. MANDATORY HEALTH ENDPOINT — REQUIRED BY VALIDATION GATE:
+    server.js MUST include this EXACTLY (Validation Gate tests GET /health and will FAIL build if missing):
+    ```
+    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+    ```
+    Place it BEFORE all other route mounts, right after middleware setup.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
 Generate ALL files required for this task. Do NOT omit files to save tokens.
-Batch them in one response (2-5 files). Quality is more important than response length.
 If task needs routes + controllers + server.js update, generate ALL THREE.
 
-{f"SKILL FILES (read via read_skill_file when needed):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+{f"SKILL FILES (reference only — content already injected above):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
 
 ═══ OUTPUT FORMAT ═══
 Respond ONLY in JSON.
@@ -141,7 +152,7 @@ Respond ONLY in JSON.
                         if mounts:
                             parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:8]))
                         parts.append(f"Lines: {len(content.splitlines())}")
-                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nOnly update server.js if this task changes routing. Otherwise leave it unchanged."
+                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nUpdate server.js ONLY if this task changes routing. Otherwise leave it unchanged."
                     except Exception:
                         pass
 
@@ -169,32 +180,25 @@ Respond ONLY in JSON.
 
         print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
-        # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
-        # its iteration budget calling read_skill_file on project files (which the
-        # tool cannot read) and never reaches client_save_code.
-        if skills_content and skills_content != "{}":
-            active_llm = self.bound_llm
-            fallback_llm = self.fallback_llm
-        else:
-            active_llm = self.llm.bind_tools([client_save_code])
-            fallback_llm = self.fallback_model.bind_tools([client_save_code])
+        active_llm = self.bound_llm
+        fallback_llm = self.fallback_llm
 
         files_saved = set()
-        max_iterations = 8  # Qwen explores (read_skill_file) before saving — allow budget
+        max_iterations = 4
         fallback_tried = False
 
         for iteration in range(max_iterations):
             try:
                 response = await ainvoke_with_retry(
-                    active_llm, msgs, 120,
+                    active_llm, msgs, 90,
                     tag="BACKEND",
                     fallback_llm=fallback_llm if not fallback_tried else None,
-                    max_retries=3,
-                    backoff_base=5.0,
-                    backoff_max=60.0,
+                    max_retries=1,
+                    backoff_base=2.0,
+                    backoff_max=10.0,
                 )
             except asyncio.TimeoutError:
-                print(f"[BACKEND] Timeout after 120s (iteration {iteration+1})", flush=True)
+                print(f"[BACKEND] Timeout after 90s (iteration {iteration+1})", flush=True)
                 if not fallback_tried:
                     print(f"[BACKEND] ↻ Timeout — switching to deepseek-v4-flash permanently", flush=True)
                     active_llm = fallback_llm
@@ -242,17 +246,6 @@ Respond ONLY in JSON.
                 continue
 
             save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
-            skill_calls = [tc for tc in response.tool_calls if tc["name"] == "read_skill_file"]
-
-            if skill_calls:
-                skill_results = await asyncio.gather(*[
-                    self._safe_tool_call(read_skill_file, tc["args"]) for tc in skill_calls
-                ], return_exceptions=True)
-                for tc, result in zip(skill_calls, skill_results):
-                    if isinstance(result, Exception):
-                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
-                    else:
-                        msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
             if save_calls:
                 save_configs = [{"configurable": {
@@ -280,14 +273,14 @@ Respond ONLY in JSON.
                             tool_call_id=tc["id"]
                         ))
 
-            # The model explored (read_skill_file etc.) but produced no files this round —
+            # The model produced no files this round —
             # nudge it to save NOW so it doesn't burn the whole iteration budget exploring.
             if not save_calls and iteration < max_iterations - 1:
                 print(f"[BACKEND] ↻ No saves this round (tool_calls={len(response.tool_calls)}) — nudging to save files", flush=True)
                 msgs.append(SystemMessage(
                     content="You explored the workspace, but you did NOT save any files. STOP exploring. "
                            "Use the client_save_code tool to save the required files NOW — every file, "
-                           "one tool call each. Do not call read_skill_file again."
+                           "one tool call each."
                 ))
 
         if not files_saved:

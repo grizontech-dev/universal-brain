@@ -38,25 +38,30 @@ class DatabaseAgent(BaseAgent):
             return "database_general"
 
     def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
-        prompt = f"""You are the Database Agent for Grizon Brain. Supabase schema design.
+        prompt = f"""You are the Database Agent for Grizon Brain. Supabase/PostgreSQL schema design.
 
 {DATABASE_BUILD_STANDARDS}
 
 SKILL FILES (reference only):
 {skills_content}
 
-═══ RULES ═══
-1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql` only.
-2. Shared tenant-scoped table with JSONB: tenant_id, entity_type, entity_key, payload_jsonb, metadata_jsonb.
-3. Include RLS policies, tenant filters, JSONB GIN indexes.
-4. Keep schemas compact (500 MB free-tier limit).
-5. NEVER output user Supabase credentials. Server-side only.
-6. NEVER: Supabase CLI, echo commands, npm install.
+=== RULES (NON-NEGOTIABLE) ===
+1. Output SQL in `backend/supabase/schema.sql` ONLY.
+ 2. Generate schema using the Shared Table + JSONB Data Matrix Pattern.
+    Use the shared `tenant_connector_vault` table or create domain-specific shared tables with `tenant_id` + JSONB payload.
+    Example: CREATE TABLE IF NOT EXISTS public.tenant_connector_vault (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{{}}'::jsonb, created_at timestamptz DEFAULT now());
+3. Use standard PostgreSQL column types: uuid, text, boolean, timestamptz, integer.
+4. Always include: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), created_at timestamptz DEFAULT now().
+5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
+   ALTER TABLE public.X ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "allow_all" ON public.X FOR ALL USING (true) WITH CHECK (true);
+   GRANT ALL ON public.X TO service_role, anon, authenticated;
+6. Use IF NOT EXISTS to prevent re-run errors.
 7. commands: always [].
 
-═══ OUTPUT FORMAT ═══
+=== OUTPUT FORMAT ===
 Respond ONLY in JSON.
-{{"files": [{{"path": "backend/supabase/...", "content": "..."}}, ...], "commands": [], "summary": "..."}}
+{{"files": [{{"path": "backend/supabase/schema.sql", "content": "..."}}], "commands": [], "summary": "..."}}
 """
         return prompt
 

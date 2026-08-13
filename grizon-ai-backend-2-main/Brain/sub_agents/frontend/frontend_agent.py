@@ -69,9 +69,21 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
 7. NO duplicate files: pages in pages/, reusable UI in components/. Never both.
 8. NO TypeScript: use plain JSX, no React.FC types. No App.tsx — use App.jsx only.
 9. EVERY component needs real Tailwind styling — NEVER output <h1>Home Page</h1> as only content.
-10. Connect forms/data to backend via frontend/src/lib/api.js (apiGet, apiPost, apiPut, apiDelete). NEVER import browser Supabase client.
-11. ALL packages MUST be in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding deps.
-12. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
+10. `frontend/src/lib/api.js` is the ONLY place for API calls. Export ALL functions used anywhere by name:
+    - `export const getUsers = async () => ...`
+    - `export const sendMessage = async (data) => ...`
+    - `export const getUserProfile = async (id) => ...`
+    - `export const getChats = async () => ...`
+    - RULE: When generating api.js, scan task description for ALL function names any page might need and export them ALL.
+11. BANNED IMPORTS — NEVER USE:
+    - `import ... from '../components/ui/Button'` ← DOES NOT EXIST, use Tailwind button instead
+    - `import ... from '../components/ui/Card'` ← DOES NOT EXIST, use Tailwind div instead
+    - `import ... from '../components/ui/Switch'` ← DOES NOT EXIST, use Tailwind toggle instead
+    - `import ... from '@/...'` ← path alias not configured
+    - `import ... from 'shadcn/ui'` ← not installed
+    - Style EVERYTHING with Tailwind classes. Zero dependency on ui/ subdirectory.
+12. ALL packages MUST be in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding deps.
+13. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
 
 ═══ PREMIUM UI (NON-NEGOTIABLE) ═══
 - Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.
