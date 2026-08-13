@@ -57,6 +57,8 @@ SKILL FILES (reference only):
 6. Use IF NOT EXISTS to prevent re-run errors.
 7. After DDL, append: NOTIFY pgrst, 'reload schema';
 8. commands: always [].
+9. UNIVERSAL DATA CONTRACT: For each requested feature/resource, store rows in `tenant_connector_vault` with `schema_name = '<canonical_resource>'` using lowercase snake_case or kebab-derived snake_case (for example `projects`, `invoices`, `contact_messages`). Do NOT create physical domain tables for any app feature.
+10. AUTH DATA CONTRACT (ONLY WHEN REQUESTED): Do NOT create a `users` table for login/register. Auth rows are stored with `schema_name = 'auth_users'` and JSONB keys such as email, name, passwordHash, role, createdAt. Add expression indexes only when useful, for example lower(record_data->>'email') where schema_name = 'auth_users'.
 
 === OUTPUT FORMAT ===
 Respond ONLY in JSON.

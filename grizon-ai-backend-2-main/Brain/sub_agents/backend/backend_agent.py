@@ -45,12 +45,12 @@ class BackendAgent(BaseAgent):
 - Module system: CommonJS ONLY. Every file MUST use `require()` and `module.exports`. NEVER use `import`/`export`.
 - Database: Supabase PostgreSQL via shared `tenant_connector_vault` table (JSONB pattern). No ORM.
 - Env: dotenv for secrets. Never hardcode credentials.
-- Port: `process.env.PORT || 9999`, bind `0.0.0.0`.
+- Port: `process.env.PORT || 3001`, bind `0.0.0.0`. Vite uses 9999; Express API uses 3001.
 
 ═══ FILE STRUCTURE (MANDATORY) ═══
 ```
 backend/
-  server.js              # App entry: middleware + route mounts + /health
+  server.js              # App entry: middleware + route mounts + /health + /api/health
   routes/
     <feature>.js         # Express.Router only — NO business logic
   controllers/
@@ -84,14 +84,23 @@ backend/
    const express = require('express');
    const app = express();
    app.use(express.json());
+   // health endpoint (MANDATORY)
+   app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
    // routes
    const featureRoutes = require('./routes/feature');
    app.use('/api/feature', featureRoutes);
-   // health endpoint (MANDATORY)
-   app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
-   app.listen(process.env.PORT || 9999, '0.0.0.0');
+   app.listen(process.env.PORT || 3001, '0.0.0.0');
    ```
-6. Frontend contract: paths must match `/api/...` exactly.
+6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
+   - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
+   - Backend MUST mount the route in `server.js` and frontend MUST call the exact same path through `frontend/src/lib/api.js`.
+   - Do not invent alternate paths for the same feature (`/api/task`, `/api/tasks`, `/api/todo-items`) across files.
+   If, and only if, the task needs login/register/auth, create and mount:
+   - `POST /api/auth/register`
+   - `POST /api/auth/login`
+   - optional `GET /api/auth/me`
+   Never mount auth at only `/auth`, `/api/users/login`, or `/api/user/register`; those cause 404s.
 7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`.
 8. NEVER import browser Supabase client. Use server-side only.
    - If user has connected Supabase connector: direct table queries with `.from()`.
@@ -103,19 +112,24 @@ backend/
    const ws = require('ws');
    const supabaseLib = require('@supabase/supabase-js');
    const createClient = supabaseLib.createClient || supabaseLib;
+   const SUPABASE_URL = process.env.SUPABASE_URL;
+   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
    module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
      global: {{ fetch }},
      realtime: {{ transport: ws }}
    }});
    ```
-   ALL controllers must `require('./supabase/client')` instead of creating their own client.
+   From controllers use `require('../supabase/client')`. From files inside `backend/routes/` use `require('../supabase/client')`.
 10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
 11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
     ```js
     app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+    app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
     ```
     Place it BEFORE all other route mounts, right after middleware setup.
 12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
+13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated.
+14. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
 - Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`.

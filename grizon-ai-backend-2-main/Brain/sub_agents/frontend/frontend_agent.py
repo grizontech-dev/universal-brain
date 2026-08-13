@@ -1,6 +1,7 @@
 from typing import Any, Dict
 import os
 import json
+import re
 import asyncio
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
@@ -63,8 +64,9 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
 1. Use client_save_code for EVERY file. One tool call per file.
 2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)
 3. Import EVERY component at top of file. Do NOT re-declare imported names.
-4. Use react-router-dom Link, NOT <a href>. Routes NOT Switch. element={{<X />}} NOT component={{X}}.
-5. Do NOT import CSS files (Tailwind is global). Do NOT use brand icons (Github, Google, Twitter).
+   4. Use react-router-dom Link, NOT <a href>. Routes NOT Switch. element={{<X />}} NOT component={{X}}.
+   5. ROUTER OWNERSHIP (ABSOLUTE, NON-NEGOTIABLE): `frontend/src/App.jsx` is the ONLY file allowed to render `<BrowserRouter>`. `frontend/src/main.jsx` must render `<App />` only. Pages, layouts, Navbar, Sidebar, providers, and components MUST NOT render `<BrowserRouter>`, `<HashRouter>`, `<MemoryRouter>`, or any nested `<Router>`. If you see `<BrowserRouter>` in any file other than App.jsx, you have failed.
+   6. Do NOT import CSS files (Tailwind is global). Do NOT use brand icons (Github, Google, Twitter).
 6. NO orphan components: every file MUST be imported in App.jsx AND rendered.
 7. NO duplicate files: pages in pages/, reusable UI in components/. Never both.
 8. NO TypeScript: use plain JSX, no React.FC types. No App.tsx — use App.jsx only.
@@ -74,7 +76,12 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
     - `export const sendMessage = async (data) => ...`
     - `export const getUserProfile = async (id) => ...`
     - `export const getChats = async () => ...`
-    - RULE: When generating api.js, scan task description for ALL function names any page might need and export them ALL.
+    - RULE: Before saving any component/page, list every named import from `../lib/api.js`, `./lib/api.js`, or `../../lib/api.js`; `frontend/src/lib/api.js` MUST export every one of those exact names in the same batch.
+    - API CONTRACT LEDGER: At the top of `api.js`, add a short comment listing each helper and exact backend route it calls. Example: `// createInvoice -> POST /api/invoices`.
+    - Helper names must match component imports exactly. If a component imports `createInvoice`, `api.js` must export `createInvoice`; do not export a similar name like `addInvoice`.
+    - Routes must come from the backend contract or task spec. If backend route context is missing, use a consistent `/api/<resource>` route family and keep all helpers on that same family.
+    - If, and only if, the task includes auth/login/register, use `loginUser`, `registerUser`, `getCurrentUser`, `logoutUser` mapped to `/api/auth/login`, `/api/auth/register`, `/api/auth/me`.
+    - Never import a named API helper from `api.js` until you have generated that exact named export. Missing exports break Vite with "does not provide an export named".
 11. BANNED IMPORTS — NEVER USE:
     - `import ... from '../components/ui/Button'` ← DOES NOT EXIST, use Tailwind button instead
     - `import ... from '../components/ui/Card'` ← DOES NOT EXIST, use Tailwind div instead
@@ -86,10 +93,12 @@ Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
 13. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
 14. CRITICAL: Do NOT include `"type": "module"` in frontend/package.json. Vite handles ESM natively. 
     Config files like postcss.config.js MUST use CommonJS: `module.exports = ...` (NOT `export default`).
-15. App.jsx is the root: it MUST use react-router-dom Routes and render ALL pages/components.
+15. App.jsx is the routing root: it MUST render exactly one `<BrowserRouter>` wrapping `<Routes>` and all route-level pages/components.
     - Include Navbar/Footer if they exist
-    - Example: `<Routes><Route path="/" element={{<Home />}} /></Routes>`
+    - Example: `<BrowserRouter><Routes><Route path="/" element={{<Home />}} /></Routes></BrowserRouter>`
+    - Do not add BrowserRouter anywhere else, and do not wrap App with BrowserRouter in `main.jsx`.
 16. NEVER create files with only stubs. Every component must have real JSX, Tailwind classes, and working logic.
+17. ROUTE CONTRACT: Components MUST NOT hardcode fetch/axios URLs. Forms, dashboards, and lists call named helpers from `frontend/src/lib/api.js`, and those helpers call the exact mounted `/api/...` backend routes.
 
 ═══ PREMIUM UI (NON-NEGOTIABLE) ═══
 - Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.
@@ -163,6 +172,8 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         workspace_id = state.get("current_job_id")
         user_id = state.get("user_id")
         app_jsx_context = ""
+        api_js_context = ""
+        backend_route_context = ""
         if not is_component_only and workspace_id and not workspace_id.startswith("error:"):
             from Brain.services.workspace_manager import workspace_manager
             ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
@@ -186,6 +197,38 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                         app_jsx_context = f"\n\nCURRENT App.jsx: {' | '.join(summary_parts)}\nOnly update App.jsx if required by this task. Otherwise leave it unchanged."
                     except Exception:
                         pass
+                api_js_path = os.path.join(ws_root, "frontend", "src", "lib", "api.js")
+                if os.path.exists(api_js_path):
+                    try:
+                        with open(api_js_path, "r", encoding="utf-8") as f:
+                            api_content = f.read()
+                        exports = re.findall(r"export\s+(?:async\s+function|function|const|let|var)\s+(\w+)", api_content)
+                        routes = sorted(set(re.findall(r"['\"](/api/[^'\"]*)['\"]", api_content)))
+                        parts = []
+                        if exports:
+                            parts.append(f"Exports ({len(exports)}): " + ", ".join(exports[:20]))
+                        if routes:
+                            parts.append(f"Routes ({len(routes)}): " + ", ".join(routes[:20]))
+                        parts.append(f"Lines: {len(api_content.splitlines())}")
+                        api_js_context = f"\n\nCURRENT frontend/src/lib/api.js: {' | '.join(parts)}\nBefore importing any API helper, ensure this file exports that exact name. Update api.js in the same batch when helpers/routes change."
+                    except Exception:
+                        pass
+                server_js_path = os.path.join(ws_root, "backend", "server.js")
+                if os.path.exists(server_js_path):
+                    try:
+                        with open(server_js_path, "r", encoding="utf-8") as f:
+                            server_content = f.read()
+                        mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"].*?\)", server_content)]
+                        health = [m.group(0) for m in re.finditer(r"app\.get\(['\"]/(?:api/)?health['\"]", server_content)]
+                        parts = []
+                        if mounts:
+                            parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:12]))
+                        if health:
+                            parts.append("Health endpoints present")
+                        parts.append(f"Lines: {len(server_content.splitlines())}")
+                        backend_route_context = f"\n\nCURRENT backend/server.js routes: {' | '.join(parts)}\nUse these exact mounted /api routes from frontend helpers. If a needed route is missing, do not fake it in the component; generate/update api.js and let backend task own the route."
+                    except Exception:
+                        pass
 
         # Compact executed tasks context
         executed_context = ""
@@ -204,6 +247,8 @@ Otherwise DO NOT generate App.jsx — just create the component files.
             f"{spec_context}"
             f"{executed_context}"
             f"{app_jsx_context}"
+            f"{api_js_context}"
+            f"{backend_route_context}"
         )
 
         # Initialize messages

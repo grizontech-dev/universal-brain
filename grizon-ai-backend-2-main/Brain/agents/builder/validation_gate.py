@@ -45,6 +45,8 @@ BACKEND_APPROVED_PACKAGES = {
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
     "ws": "^8.18.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
 }
 
 
@@ -1323,6 +1325,7 @@ class ValidationGate:
             "1. Fix ONLY the specific files mentioned in the errors using `client_save_code`.\n"
             "2. CRITICAL: `client_save_code` replaces the ENTIRE file. You MUST provide the complete file content, including all existing code plus your fix. Do NOT provide only a snippet or partial file.\n"
             "3. When a file is missing exports, READ its current content above and ADD all missing exports in ONE save call with the complete file.\n"
+            "3A. If `frontend/src/lib/api.js` is missing a helper, add the exact helper name imported by the component and map it to the actual mounted backend `/api/...` route for that feature. Do not invent todo/auth routes unless the project actually has that feature.\n"
             "4. Do NOT rewrite unrelated working code.\n"
             "5. If an import path or exported name is wrong, fix the import/export declaration.\n"
             "6. If a dependency is missing from package.json, add it to dependencies.\n"
@@ -1333,6 +1336,7 @@ class ValidationGate:
             "11. If the error is a Supabase WebSocket/Node compatibility error across multiple controllers, CREATE `backend/supabase/client.js` as the shared Supabase client helper with ws transport, then UPDATE ALL affected controllers to use it. Do NOT fix each controller individually."
             "12. If there is a PostCSS/ESM error (`module is not defined in ES module scope`), REMOVE `\"type\": \"module\"` from frontend/package.json. Vite handles ESM natively and CommonJS configs like postcss.config.js require `module.exports`."
             "13. If backend fails with `require is not defined in ES module scope` or `Cannot find module 'backend/routes/...'`, check backend/package.json for `\"type\": \"module\"` and REMOVE it. Then fix server.js to only import routes that actually exist under backend/routes/."
+            "14. If frontend fails with `You cannot render a <Router> inside another <Router>`, remove ALL `<BrowserRouter>`, `<HashRouter>`, `<MemoryRouter>`, or `<Router>` wrappers from every file EXCEPT `frontend/src/App.jsx`. Only App.jsx may contain one top-level `<BrowserRouter>`."
         )
 
         if not self.llm:
