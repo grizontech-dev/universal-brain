@@ -8,6 +8,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
+from Brain.agents.builder.unsplash_tools import get_unsplash_image
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 from Brain.shared.llm_retry import ainvoke_with_retry
 
@@ -281,7 +282,7 @@ class BuilderAgent(BaseAgent):
         import re as _re
 
         # Bind tools based on category
-        tools = [client_save_code]
+        tools = [client_save_code, get_unsplash_image]
         if category == "database":
             tools.extend([supabase_exec_sql, supabase_create_exec_sql_function])
 
@@ -478,6 +479,15 @@ class BuilderAgent(BaseAgent):
                             supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
+                    elif tool_name == "get_unsplash_image":
+                        result = await asyncio.wait_for(
+                            get_unsplash_image.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                        messages.append(ToolMessage(
+                            content=str(result),
+                            tool_call_id=tc["id"]
+                        ))
                     else:
                         messages.append(ToolMessage(
                             content=f"Unknown tool: {tool_name}. Use client_save_code.",
@@ -1284,7 +1294,8 @@ class BuilderAgent(BaseAgent):
                 "4. Do NOT re-declare imported names (if you import X, don't export default function X)\n"
                 "5. Use react-router-dom Link, NOT <a href>\n"
                 "6. Do NOT import CSS files (Tailwind is global)\n"
-                "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n\n"
+                "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n"
+                "8. Do NOT use images or placeholders for brand logos. Instead, write the brand name in text with beautiful typography and formatting (e.g., gradient text).\n\n"
                 "═══ OUTPUT FORMAT ═══\n"
                 "Generate ONE file per tool call. After ALL files, respond with a short summary.\n\n"
                 "═══ EXAMPLE: How to generate a component ═══\n"
