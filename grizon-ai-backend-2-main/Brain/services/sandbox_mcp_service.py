@@ -301,7 +301,7 @@ class SandboxMCPService:
             if not os.path.isfile(pkg_json):
                 print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/package.json")
                 with open(pkg_json, "w") as f:
-                    f.write('{\n  "name": "frontend",\n  "private": true,\n  "version": "0.0.0",\n  "type": "module",\n  "scripts": {\n    "dev": "vite --port 9999 --host 0.0.0.0",\n    "build": "vite build",\n    "preview": "vite preview"\n  },\n  "dependencies": {\n    "react": "^18.2.0",\n    "react-dom": "^18.2.0",\n    "react-router-dom": "^6.20.0"\n  },\n  "devDependencies": {\n    "@vitejs/plugin-react": "^4.2.0",\n    "vite": "^5.0.0",\n    "tailwindcss": "^3.3.0",\n    "postcss": "^8.4.0",\n    "autoprefixer": "^10.4.0"\n  }\n}')
+                    f.write('{\n  "name": "frontend",\n  "private": true,\n  "version": "0.0.0",\n  "scripts": {\n    "dev": "vite --port 9999 --host 0.0.0.0",\n    "build": "vite build",\n    "preview": "vite preview"\n  },\n  "dependencies": {\n    "react": "^18.2.0",\n    "react-dom": "^18.2.0",\n    "react-router-dom": "^6.20.0"\n  },\n  "devDependencies": {\n    "@vitejs/plugin-react": "^4.2.0",\n    "vite": "^5.0.0",\n    "tailwindcss": "^3.3.0",\n    "postcss": "^8.4.0",\n    "autoprefixer": "^10.4.0"\n  }\n}')
 
             # Create frontend/src/index.css if missing (Tailwind entry)
             index_css = os.path.join(frontend_src, "index.css")

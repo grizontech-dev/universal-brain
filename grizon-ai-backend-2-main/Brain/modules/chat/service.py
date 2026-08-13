@@ -1242,13 +1242,37 @@ class BrainChatService:
                     except RuntimeError:
                         pass
 
+            # Execute Validation Gate if not already completed
+            if state.get("status") not in ("validation_passed", "validation_failed"):
+                print(f"[CHAT-SERVICE] BG-TASK: All tasks finished — executing Validation Gate", flush=True)
+                from Brain.agents.builder.validation_gate import ValidationGate
+                val_gate = ValidationGate(agent.llm, conv_id, user_id=state.get("user_id"))
+                val_res = await val_gate.run_validation_and_repair(state)
+                if val_res.get("passed"):
+                    state["status"] = "validation_passed"
+                else:
+                    state["status"] = "validation_failed"
+                    attempts_used = val_res.get("attempts", "?")
+                    state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_res.get('errors')}"
+
+            # Check if validation passed before triggering Runner phase
+            if state.get("status") == "validation_failed":
+                print(f"[CHAT-SERVICE] BG-TASK: Build Validation FAILED — proceeding to runner/sandbox anyway so user can view and follow up", flush=True)
+                report = state.get("run_report") or "Build validation failed after repair attempts. Proceeding to sandbox for review."
+                conversation_service.save_message(
+                    conv_id, "ASSISTANT", report,
+                    todo_list=list(plan),
+                    sandbox_job=state.get("sandbox_job"),
+                    metadata={"agentStep": "validation_failed", "planApproved": True, "current_task_index": len(plan)}
+                )
+
             # Mark all remaining tasks as completed
             for t in plan:
                 if t.get("status") not in ("completed", "failed"):
                     t["status"] = "completed"
 
             # Runner phase
-            print(f"[CHAT-SERVICE] BG-TASK: All tasks done — running runner", flush=True)
+            print(f"[CHAT-SERVICE] BG-TASK: All tasks & validation passed — running runner", flush=True)
             runner = RunnerAgent()
             runner_state = state
             async for ev in runner.execute(state):

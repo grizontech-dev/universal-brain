@@ -25,8 +25,11 @@ import Brain.modules.conversations.models  # noqa: E402, F401
 import Brain.modules.connectors.supabase.service  # noqa: E402, F401
 import Brain.modules.connectors.github.service  # noqa: E402, F401
 
-# Create all tables on startup
-Base.metadata.create_all(bind=engine)
+# Create all tables on startup (if database is available)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _db_err:
+    print(f"[DATABASE] Warning: DB connection skipped on import: {_db_err}")
 
 def get_db():
     db = SessionLocal()

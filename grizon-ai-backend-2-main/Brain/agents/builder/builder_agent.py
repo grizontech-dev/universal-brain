@@ -8,6 +8,7 @@ from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
+from Brain.agents.builder.unsplash_tools import get_unsplash_image
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 from Brain.shared.llm_retry import ainvoke_with_retry
 
@@ -281,7 +282,7 @@ class BuilderAgent(BaseAgent):
         import re as _re
 
         # Bind tools based on category
-        tools = [client_save_code]
+        tools = [client_save_code, get_unsplash_image]
         if category == "database":
             tools.extend([supabase_exec_sql, supabase_create_exec_sql_function])
 
@@ -461,7 +462,17 @@ class BuilderAgent(BaseAgent):
                         consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
-                        # Note: edit_file activity already emitted by client_save_code via ws_manager
+                        # Auto-execute SQL migrations on Supabase when saving .sql files
+                        if file_path.endswith(".sql") and code_content.strip():
+                            try:
+                                print(f"{LOG} 🗄 Auto-executing SQL schema '{file_path}' on Supabase database...", flush=True)
+                                sql_res = await asyncio.wait_for(
+                                    supabase_exec_sql.ainvoke({"sql_query": code_content}, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                                    timeout=30
+                                )
+                                print(f"{LOG} [OK] Supabase SQL auto-execution result: {sql_res}", flush=True)
+                            except Exception as sql_err:
+                                print(f"{LOG} [WARN] Supabase SQL auto-execution notice: {sql_err}", flush=True)
 
                         # Tell LLM the file was saved
                         messages.append(ToolMessage(
@@ -478,6 +489,15 @@ class BuilderAgent(BaseAgent):
                             supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
+                    elif tool_name == "get_unsplash_image":
+                        result = await asyncio.wait_for(
+                            get_unsplash_image.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            timeout=tool_timeout
+                        )
+                        messages.append(ToolMessage(
+                            content=str(result),
+                            tool_call_id=tc["id"]
+                        ))
                     else:
                         messages.append(ToolMessage(
                             content=f"Unknown tool: {tool_name}. Use client_save_code.",
@@ -498,36 +518,15 @@ class BuilderAgent(BaseAgent):
         # ═══════════════════════════════════════════════════════════════
         print(f"{LOG} ═══ VALIDATION: Scanning for broken imports + backend routes ═══", flush=True)
         
-        # Run both validations in parallel
-        import_validation_task = self._validate_and_fix_imports(
-            session_id, task_title, files_saved, start_time, timeout_sec
-        )
-        backend_validation_task = self._validate_backend_routes(session_id)
-        
-        fixed_files, _ = await asyncio.gather(
-            import_validation_task,
-            backend_validation_task,
-            return_exceptions=True
-        )
-        
-        if isinstance(fixed_files, list):
-            files_saved.extend(fixed_files)
+        # Quick backend route mounting validation (lightweight)
+        await self._validate_backend_routes(session_id)
 
         # Summary
-        print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
-        print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)}", flush=True)
+        print(f"{LOG} ===============================================================", flush=True)
+        print(f"{LOG} [OK] TASK DONE: '{task_title}' | files_saved={len(files_saved)}", flush=True)
         print(f"{LOG}   Files: {files_saved}", flush=True)
-        print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # SELF-HEALING LOOP: Run local esbuild to catch & fix syntax errors
-        # ═══════════════════════════════════════════════════════════════
-        # Skip Phase 1 (import validation) since _validate_and_fix_imports already ran
-        # Quick esbuild check first - skip repair if build passes
-        if not files_saved or category == "database":
-            print(f"{LOG} ⏭ Skipping esbuild check (no frontend files or database task)", flush=True)
-        else:
-            files_saved = await self._run_self_healing_loop(session_id, task_title, files_saved, timeout_sec)
+        print(f"{LOG}   (Full validation & repair deferred to ValidationGate after all tasks complete)", flush=True)
+        print(f"{LOG} ===============================================================", flush=True)
 
         if llm_failed and not files_saved:
             raise LLMRateLimitedError(
@@ -1053,11 +1052,25 @@ class BuilderAgent(BaseAgent):
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
 
         if index >= len(tasks):
-            print(f"{LOG} ✓ All {len(tasks)} tasks done — handing off to runner", flush=True)
+            print(f"{LOG} ✓ All {len(tasks)} tasks generated — starting Validation Gate", flush=True)
             ProjectIndex.clear_cache()  # Cleanup cache after build
             print(f"{LOG} 🧹 Cleared ProjectIndex cache after build completion", flush=True)
-            state["status"] = "building_complete"
-            state["next_agent"] = "runner"
+
+            from Brain.agents.builder.validation_gate import ValidationGate
+            val_gate = ValidationGate(self.llm, session_id, user_id=user_id)
+            val_result = await val_gate.run_validation_and_repair(state)
+
+            if val_result.get("passed"):
+                print(f"{LOG} ✓ Validation Gate PASSED — handing off to runner", flush=True)
+                state["status"] = "validation_passed"
+                state["next_agent"] = "runner"
+            else:
+                print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
+                state["status"] = "validation_failed"
+                state["next_agent"] = None
+                attempts_used = val_result.get("attempts", "?")
+                state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_result.get('errors')}"
+
             yield state
             return
 
@@ -1070,7 +1083,27 @@ class BuilderAgent(BaseAgent):
         if category == "runner" or "runner" in task_title.lower():
             print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
             current_task["status"] = "completed"
-            state["current_task_index"] = index + 1
+            next_idx = index + 1
+            state["current_task_index"] = next_idx
+
+            if next_idx >= len(tasks):
+                print(f"{LOG} ✓ All {len(tasks)} tasks finished (after skipping runner task) — starting Validation Gate", flush=True)
+                ProjectIndex.clear_cache()
+                from Brain.agents.builder.validation_gate import ValidationGate
+                val_gate = ValidationGate(self.llm, session_id, user_id=user_id)
+                val_result = await val_gate.run_validation_and_repair(state)
+
+                if val_result.get("passed"):
+                    print(f"{LOG} ✓ Validation Gate PASSED — handing off to runner", flush=True)
+                    state["status"] = "validation_passed"
+                    state["next_agent"] = "runner"
+                else:
+                    print(f"{LOG} ✖ Validation Gate FAILED after repair attempts — blocking delivery", flush=True)
+                    state["status"] = "validation_failed"
+                    state["next_agent"] = None
+                    attempts_used = val_result.get("attempts", "?")
+                    state["run_report"] = f"Build validation failed after {attempts_used} repair attempts. Errors: {val_result.get('errors')}"
+
             yield state
             return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)
@@ -1273,7 +1306,9 @@ class BuilderAgent(BaseAgent):
                 "4. Do NOT re-declare imported names (if you import X, don't export default function X)\n"
                 "5. Use react-router-dom Link, NOT <a href>\n"
                 "6. Do NOT import CSS files (Tailwind is global)\n"
-                "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n\n"
+                "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n"
+                "8. Do NOT use images or placeholders for brand logos. Instead, write the brand name in text with beautiful typography and formatting (e.g., gradient text).\n"
+                "9. CRITICAL: Do NOT include `\"type\": \"module\"` in frontend/package.json. Vite handles ESM natively. Config files like postcss.config.js MUST use CommonJS: `module.exports = ...`\n\n"
                 "═══ OUTPUT FORMAT ═══\n"
                 "Generate ONE file per tool call. After ALL files, respond with a short summary.\n\n"
                 "═══ EXAMPLE: How to generate a component ═══\n"
@@ -1331,12 +1366,18 @@ class BuilderAgent(BaseAgent):
             system_prompt = (
                 "You are a Senior Backend Engineer. Node.js + Express API in `backend/`.\n\n"
                 "═══ CRITICAL RULES ═══\n"
-                "1. Use CommonJS (require/module.exports). NEVER use ES modules.\n"
-                "2. Use client_save_code for EVERY file. One tool call per file.\n"
-                "3. Write server.js LAST with ALL routes mounted.\n"
-                "4. Every controller starts with: const { supabase } = require('../supabase/client');\n"
-                "5. Every route returns JSON: { success: true, data } or { success: false, error }\n"
-                "6. Try/catch in every route handler\n\n"
+                "1. CommonJS ONLY: use `require()` and `module.exports`. NEVER use `import`/`export`.\n"
+                "2. NEVER include `\"type\": \"module\"` in backend/package.json.\n"
+                "3. Use client_save_code for EVERY file. One tool call per file.\n"
+                "4. Write server.js LAST with ALL routes mounted.\n"
+                "5. Every controller uses: `const { supabase } = require('../supabase/client');`\n"
+                "6. Use the Shared Table + JSONB Data Matrix Pattern. Query `tenant_connector_vault` with tenant_id + schema_name + record_data JSONB filters.\n"
+                "   Example: supabase.from('tenant_connector_vault').select('*').eq('tenant_id', id).eq('schema_name', 'todos').eq('record_data->>status', 'active');\n"
+                "7. Every route returns JSON: `{ success: true, data }` or `{ success: false, error }`\n"
+                "8. Try/catch in EVERY route handler. On DB error, return `{ success: true, data: [] }` instead of 500.\n"
+                "9. MANDATORY: Add `/health` endpoint to server.js BEFORE other routes:\n"
+                "   `app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));`\n"
+                "10. If `backend/supabase/client.js` does not exist, CREATE it FIRST.\n\n"
                 "═══ FILE STRUCTURE ═══\n"
                 "backend/\n"
                 "  ├── server.js          (main entry, mounts all routes)\n"
@@ -1363,18 +1404,26 @@ class BuilderAgent(BaseAgent):
                 "const { supabase } = require('../supabase/client');\n\n"
                 "exports.getTodos = async (req, res) => {\n"
                 "  try {\n"
-                "    const { data, error } = await supabase.from('todos').select('*');\n"
+                "    const { data, error } = await supabase\n"
+                "      .from('tenant_connector_vault')\n"
+                "      .select('*')\n"
+                "      .eq('tenant_id', req.user.tenant_id)\n"
+                "      .eq('schema_name', 'todos')\n"
+                "      .eq('record_data->>status', 'active');\n"
                 "    if (error) throw error;\n"
-                "    res.json({ success: true, data });\n"
+                "    res.json({ success: true, data: data.map(r => r.record_data) });\n"
                 "  } catch (err) {\n"
                 "    res.status(500).json({ success: false, error: err.message });\n"
                 "  }\n"
                 "};\n\n"
                 "exports.createTodo = async (req, res) => {\n"
                 "  try {\n"
-                "    const { data, error } = await supabase.from('todos').insert(req.body).select();\n"
+                "    const { data, error } = await supabase\n"
+                "      .from('tenant_connector_vault')\n"
+                "      .insert([{ tenant_id: req.user.tenant_id, schema_name: 'todos', record_data: req.body }])\n"
+                "      .select();\n"
                 "    if (error) throw error;\n"
-                "    res.json({ success: true, data });\n"
+                "    res.json({ success: true, data: data[0].record_data });\n"
                 "  } catch (err) {\n"
                 "    res.status(500).json({ success: false, error: err.message });\n"
                 "  }\n"
@@ -1388,9 +1437,11 @@ class BuilderAgent(BaseAgent):
                 "app.use(cors());\n"
                 "app.use(express.json());\n\n"
                 "app.use('/api/todos', require('./routes/todos'));\n\n"
+                "app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));\n\n"
                 "const PORT = process.env.PORT || 3001;\n"
-                "app.listen(PORT, () => console.log(`Server running on port ${PORT}`));\n"
-                "```"
+                "app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));\n"
+                "```\n\n"
+                "Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`."
             )
         elif category == "database":
             system_prompt = (
@@ -1398,9 +1449,9 @@ class BuilderAgent(BaseAgent):
                 f"SKILL REFERENCE (follow these patterns):\n{skill_content}\n\n"
                 "RULES:\n"
                 "1. Write SQL migration files in backend/supabase/.\n"
-                "2. Use Supabase CLI patterns for schema changes.\n"
-                "3. Always enable RLS on new tables.\n"
-                "4. Use proper constraints, indexes, and foreign keys.\n"
+                "2. Use the Shared Table + JSONB Data Matrix Pattern: one shared tenant-scoped table (`tenant_connector_vault`) with `tenant_id`, `schema_name`, `record_data` JSONB, `created_at`.\n"
+                "3. Always enable RLS on shared tables and create tenant-isolated policies.\n"
+                "4. Use proper constraints, indexes, and GIN indexes for JSONB search paths.\n"
                 "5. Use client_save_code for EVERY file.\n"
                 "6. CRITICAL: After writing the SQL file, you MUST ALSO execute it against Supabase using supabase_exec_sql.\n"
                 "   - First try: supabase_create_exec_sql_function (one-time setup, only if exec_sql function doesn't exist)\n"
@@ -1421,7 +1472,8 @@ class BuilderAgent(BaseAgent):
                 "5. BATCH GENERATION: Generate ALL related files in ONE response (up to 5 files per call).\n"
                 "   Example: If task needs routes/todos.js + controllers/todos.js + server.js update,\n"
                 "   generate ALL THREE in a single response with multiple tool calls.\n"
-                "6. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
+                "6. Use the Shared Table + JSONB Data Matrix Pattern for data access.\n"
+                "7. After saving ALL files, respond with ONLY a short summary message. NO MORE TOOL CALLS after your summary."
             )
 
         if existing_code_context:

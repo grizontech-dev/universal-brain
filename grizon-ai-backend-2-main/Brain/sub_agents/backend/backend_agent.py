@@ -6,7 +6,7 @@ import asyncio
 from Brain.shared.agent import BaseAgent
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from Brain.shared.skills.resolver import SkillResolver
-from Brain.agents.builder.mcp_tools import client_save_code, read_skill_file
+from Brain.agents.builder.mcp_tools import client_save_code
 from Brain.services.provider_router import ProviderRouter
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.shared.llm_retry import ainvoke_with_retry
@@ -24,8 +24,8 @@ class BackendAgent(BaseAgent):
         self.skill_resolver = SkillResolver()
         self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
-        self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
-        self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
+        self.bound_llm = self.llm.bind_tools([client_save_code])
+        self.fallback_llm = self.fallback_model.bind_tools([client_save_code])
 
     async def _safe_tool_call(self, tool, args, config=None):
         try:
@@ -37,38 +37,108 @@ class BackendAgent(BaseAgent):
             return e
 
     def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
-        prompt = f"""You are a Senior Backend Engineer. Node.js + Express API in `backend/`.
+        prompt = f"""You are a Senior Backend Engineer building production-grade Node.js + Express APIs.
 
 ═══ STACK ═══
-- Express.js, CommonJS (require/module.exports). NEVER use ES modules.
-- Supabase for DB (server-side only — no browser client).
-- JSON responses: {{"success": true, "data": ...}} or {{"success": false, "error": "..."}}.
+- Runtime: Node.js 20 LTS
+- Framework: Express.js 4.x
+- Module system: CommonJS ONLY. Every file MUST use `require()` and `module.exports`. NEVER use `import`/`export`.
+- Database: Supabase PostgreSQL via shared `tenant_connector_vault` table (JSONB pattern). No ORM.
+- Env: dotenv for secrets. Never hardcode credentials.
+- Port: `process.env.PORT || 3001`, bind `0.0.0.0`. Vite uses 9999; Express API uses 3001.
+
+═══ FILE STRUCTURE (MANDATORY) ═══
+```
+backend/
+  server.js              # App entry: middleware + route mounts + /health + /api/health
+  routes/
+    <feature>.js         # Express.Router only — NO business logic
+  controllers/
+    <feature>.js         # ALL business logic, DB queries, error handling
+  supabase/
+    client.js            # SINGLE shared Supabase client (create this first)
+    schema.sql           # SQL migrations only
+  package.json
+```
 
 ═══ RULES (VIOLATION = BROKEN BUILD) ═══
-1. Use client_save_code for EVERY file. One tool call per file.
-2. CommonJS only: require() / module.exports. NEVER import/export.
-3. Routes: backend/routes/*.js, Controllers: backend/controllers/*.js
-4. Use Express.Router in routes: module.exports = router;
-5. ALWAYS update backend/server.js — import route + app.use('/api/...', routes)
-6. Frontend contract: paths must match /api/... (POST /api/contact, GET /api/programs)
-7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
-8. Port 9999, bind 0.0.0.0 — required for tunnel URL
-9. NEVER import browser Supabase client. All DB access is server-side.
-10. Supabase: check user's connected connector first, fallback to Python proxy.
-11. Schema as backend/supabase/*.sql files only. No Supabase CLI.
-12. Write server.js LAST with ALL routes mounted.
-
-═══ SUPABASE PATTERNS ═══
-- Shared Table + JSONB: one shared tenant-scoped table with JSONB payload, NOT one table per user.
-- Keep payloads sparse, prune large blobs (500 MB free-tier limit).
-- Document server-side env vars only. Never request user Supabase credentials.
+0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase + shared JSONB table pattern. NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. NEVER create domain-specific tables like users, todos, messages. ALL data goes through the shared `tenant_connector_vault` table or the Python Backend Proxy API.
+1. For every required file:
+   a. Generate the COMPLETE file with all logic — no placeholders, no TODOs, no stubs.
+   b. Immediately call client_save_code.
+   c. Never return file contents as plain text.
+   d. One client_save_code call = one file.
+   e. Save ALL required files before finishing.
+2. CommonJS ONLY: `require()` / `module.exports`. NEVER `import`/`export`. If you see `import` in generated code, you have failed.
+3. Routes in `backend/routes/<feature>.js`: define router, attach middleware, delegate to controller. Example:
+   ```js
+   const router = require('express').Router();
+   const controller = require('../controllers/<feature>');
+   router.get('/', controller.list);
+   module.exports = router;
+   ```
+4. Controllers in `backend/controllers/<feature>.js`: async functions with try/catch. Return `{{ success: true, data }}` or `{{ success: false, error }}`.
+5. server.js MUST be saved LAST. It imports routes and mounts them:
+   ```js
+   require('dotenv').config();
+   const express = require('express');
+   const app = express();
+   app.use(express.json());
+   // health endpoint (MANDATORY)
+   app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   // routes
+   const featureRoutes = require('./routes/feature');
+   app.use('/api/feature', featureRoutes);
+   app.listen(process.env.PORT || 3001, '0.0.0.0');
+   ```
+6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
+   - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
+   - Backend MUST mount the route in `server.js` and frontend MUST call the exact same path through `frontend/src/lib/api.js`.
+   - Do not invent alternate paths for the same feature (`/api/task`, `/api/tasks`, `/api/todo-items`) across files.
+   If, and only if, the task needs login/register/auth, create and mount:
+   - `POST /api/auth/register`
+   - `POST /api/auth/login`
+   - optional `GET /api/auth/me`
+   Never mount auth at only `/auth`, `/api/users/login`, or `/api/user/register`; those cause 404s.
+7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`.
+8. NEVER import browser Supabase client. Use server-side only.
+   - If user has connected Supabase connector: direct table queries with `.from()`.
+   - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).
+   - Never expose credentials to frontend code.
+9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
+   ```js
+   require('dotenv').config();
+   const ws = require('ws');
+   const supabaseLib = require('@supabase/supabase-js');
+   const createClient = supabaseLib.createClient || supabaseLib;
+   const SUPABASE_URL = process.env.SUPABASE_URL;
+   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+   module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
+     global: {{ fetch }},
+     realtime: {{ transport: ws }}
+   }});
+   ```
+   From controllers use `require('../supabase/client')`. From files inside `backend/routes/` use `require('../supabase/client')`.
+10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
+11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
+    ```js
+    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+    app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+    ```
+    Place it BEFORE all other route mounts, right after middleware setup.
+12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
+13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated.
+14. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
-Generate ALL files required for this task. Do NOT omit files to save tokens.
-Batch them in one response (2-5 files). Quality is more important than response length.
-If task needs routes + controllers + server.js update, generate ALL THREE.
+- Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`.
+- If task needs routes + controllers + server.js update, generate ALL THREE in the correct order: routes first, controllers first, server.js last.
+- Use async/await with try/catch in ALL controllers.
+- Validate input at the controller level.
+- Use proper HTTP status codes: 200/201 for success, 400 for bad input, 404 for not found, 500 for server errors (but catch these and return success: false).
 
-{f"SKILL FILES (read via read_skill_file when needed):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+{f"SKILL FILES (project-specific only — generic skillss files are excluded):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
 
 ═══ OUTPUT FORMAT ═══
 Respond ONLY in JSON.
@@ -112,6 +182,14 @@ Respond ONLY in JSON.
             else:
                 try:
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
+                    if skills_content and skills_content.strip() not in ("{}", ""):
+                        lines = skills_content.splitlines()
+                        filtered_lines = [
+                            line for line in lines
+                            if not line.strip().lower().startswith("- skillss/")
+                            and not line.strip().lower().startswith("skillss/")
+                        ]
+                        skills_content = "\n".join(filtered_lines)
                     BackendAgent._skill_cache[cache_key] = skills_content
                     print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
                 except Exception:
@@ -140,7 +218,7 @@ Respond ONLY in JSON.
                         if mounts:
                             parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:8]))
                         parts.append(f"Lines: {len(content.splitlines())}")
-                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nOnly update server.js if this task changes routing. Otherwise leave it unchanged."
+                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nUpdate server.js ONLY if this task changes routing. Otherwise leave it unchanged."
                     except Exception:
                         pass
 
@@ -168,32 +246,25 @@ Respond ONLY in JSON.
 
         print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
-        # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
-        # its iteration budget calling read_skill_file on project files (which the
-        # tool cannot read) and never reaches client_save_code.
-        if skills_content and skills_content != "{}":
-            active_llm = self.bound_llm
-            fallback_llm = self.fallback_llm
-        else:
-            active_llm = self.llm.bind_tools([client_save_code])
-            fallback_llm = self.fallback_model.bind_tools([client_save_code])
+        active_llm = self.bound_llm
+        fallback_llm = self.fallback_llm
 
         files_saved = set()
-        max_iterations = 8  # Qwen explores (read_skill_file) before saving — allow budget
+        max_iterations = 4
         fallback_tried = False
 
         for iteration in range(max_iterations):
             try:
                 response = await ainvoke_with_retry(
-                    active_llm, msgs, 120,
+                    active_llm, msgs, 90,
                     tag="BACKEND",
                     fallback_llm=fallback_llm if not fallback_tried else None,
-                    max_retries=3,
-                    backoff_base=5.0,
-                    backoff_max=60.0,
+                    max_retries=1,
+                    backoff_base=2.0,
+                    backoff_max=10.0,
                 )
             except asyncio.TimeoutError:
-                print(f"[BACKEND] Timeout after 120s (iteration {iteration+1})", flush=True)
+                print(f"[BACKEND] Timeout after 90s (iteration {iteration+1})", flush=True)
                 if not fallback_tried:
                     print(f"[BACKEND] ↻ Timeout — switching to deepseek-v4-flash permanently", flush=True)
                     active_llm = fallback_llm
@@ -224,10 +295,7 @@ Respond ONLY in JSON.
                     or (isinstance(last_content, str) and not last_content.strip())
                 )
                 if is_empty:
-                    print(f"[BACKEND] ↻ Empty response (iteration {iteration+1}) — switching to fallback permanently", flush=True)
-                    if not fallback_tried:
-                        active_llm = fallback_llm
-                        fallback_tried = True
+                    print(f"[BACKEND] ↻ Empty response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
                     msgs.append(SystemMessage(
                         content="Your previous response was empty. You MUST respond by calling the "
                                "client_save_code tool for EVERY file. Do not return plain text — make tool calls."
@@ -236,11 +304,6 @@ Respond ONLY in JSON.
                 parsed = self._format_json_response(last_content) if isinstance(last_content, str) else None
                 if isinstance(parsed, dict) and "files" in parsed:
                     break
-                if not fallback_tried:
-                    print(f"[BACKEND] ↻ Malformed response — switching to fallback permanently", flush=True)
-                    active_llm = fallback_llm
-                    fallback_tried = True
-                    continue
                 print(f"[BACKEND] Malformed response (iteration {iteration+1}) — retrying with corrective prompt", flush=True)
                 msgs.append(SystemMessage(
                     content="Your previous response was invalid JSON. You MUST respond by calling the "
@@ -249,17 +312,6 @@ Respond ONLY in JSON.
                 continue
 
             save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
-            skill_calls = [tc for tc in response.tool_calls if tc["name"] == "read_skill_file"]
-
-            if skill_calls:
-                skill_results = await asyncio.gather(*[
-                    self._safe_tool_call(read_skill_file, tc["args"]) for tc in skill_calls
-                ], return_exceptions=True)
-                for tc, result in zip(skill_calls, skill_results):
-                    if isinstance(result, Exception):
-                        msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
-                    else:
-                        msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
             if save_calls:
                 save_configs = [{"configurable": {
@@ -287,14 +339,14 @@ Respond ONLY in JSON.
                             tool_call_id=tc["id"]
                         ))
 
-            # The model explored (read_skill_file etc.) but produced no files this round —
+            # The model produced no files this round —
             # nudge it to save NOW so it doesn't burn the whole iteration budget exploring.
             if not save_calls and iteration < max_iterations - 1:
                 print(f"[BACKEND] ↻ No saves this round (tool_calls={len(response.tool_calls)}) — nudging to save files", flush=True)
                 msgs.append(SystemMessage(
                     content="You explored the workspace, but you did NOT save any files. STOP exploring. "
                            "Use the client_save_code tool to save the required files NOW — every file, "
-                           "one tool call each. Do not call read_skill_file again."
+                           "one tool call each."
                 ))
 
         if not files_saved:

@@ -65,17 +65,20 @@ FRONTEND_BUILD_STANDARDS = """
 - If you create 5 components, App.jsx imports and renders exactly 5.
 
 ### Port & Config
-- Vite dev server MUST run on port 9999 (not 5173).
-- In vite.config.js: `server: { port: 9999 }`
+- Vite dev server MUST run on port 9999 (for external web preview).
+- Express backend API runs on port 3001 (internal).
+- In vite.config.js: `server: { port: 9999 }` and proxy `/api` → `http://localhost:3001`.
 - API calls: `import { apiGet, apiPost } from './lib/api.js'`
-- Vite proxies `/api` → Express :3001.
+- `frontend/src/lib/api.js` must export every named helper imported by pages/components. Add an API contract ledger comment mapping each helper to its exact backend route, for example `createInvoice -> POST /api/invoices`.
+- Components never hardcode fetch/axios URLs. They call named `api.js` helpers, and those helpers call the exact mounted `/api/...` backend routes.
+- If, and only if, auth is requested, auth forms call `/api/auth/login` and `/api/auth/register` through `api.js`; never hardcode `/auth/login`, `/login`, `/api/users/login`, or localhost URLs in components.
 
 ### Task Failures (Immediate Fail)
 - Using `<Switch>` instead of `<Routes>`
 - Using `component={Home}` instead of `element={<Home />}`
 - Creating orphan components not imported in App.jsx
 - Home.jsx containing only `<h1>Home Page</h1>`
-- Not including FULL updated App.jsx in response
+- Not including FULL updated App.jsx in response (when App.jsx is modified by task)
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -91,6 +94,7 @@ BACKEND_BUILD_STANDARDS = """
 - Every controller starts with: `const { supabase } = require('../supabase/client');`
 
 ### Server.js
+- `server.js` MUST start with `require('dotenv').config();` at line 1 so environment variables are loaded.
 - Every new route MUST be imported and mounted in `backend/server.js`:
   `const contactRoutes = require('./routes/contact');`
   `app.use('/api/contact', contactRoutes);`
@@ -102,19 +106,24 @@ BACKEND_BUILD_STANDARDS = """
 - NEVER ask users for their own Supabase credentials.
 - NEVER import browser Supabase client. All DB access is server-side.
 - Shared Table + JSONB: one shared tenant-scoped table, NOT one table per user.
+- Feature data uses a canonical `schema_name` derived from the resource, for example `projects`, `invoices`, or `contact_messages`. If auth is requested, login/register data uses `schema_name = 'auth_users'`. Never create physical domain tables.
 - Schema as `backend/supabase/*.sql` files only (no Supabase CLI).
 - Keep payloads sparse, prune large blobs (500 MB free-tier limit).
 
-### API Contract
+### API Contract & Error Resiliency
 - Frontend calls `/api/...` — your routes must match exactly.
+- Every feature gets one canonical mounted `/api/<resource>` route family and frontend helpers must call that exact family. If auth is requested, use canonical `POST /api/auth/register`, `POST /api/auth/login`, optional `GET /api/auth/me`, mounted at `/api/auth`.
+- ALWAYS wrap controller logic in `try { ... } catch (err)` blocks.
+- If DB table query returns an error (e.g. table not created yet), return clean response `{ success: true, data: [], note: "Table pending initialization" }` instead of throwing HTTP 500!
 - JSON responses: `{ success: true, data }` or `{ success: false, error: "..." }`.
+- In `server.js`, handle `/favicon.ico`: `app.get('/favicon.ico', (req, res) => res.status(204).end());`
 - List all new deps in `backend/package.json`.
 - Return `"commands": ["cd backend && npm install"]` when adding dependencies.
 
 ### Port & Config
-- Express port 3001 (internal). Vite proxies to it.
-- All web servers MUST run on port 9999 for tunnel URL.
-- Bind to 0.0.0.0 for sandbox compatibility.
+- Express backend runs on port 3001 (internal API server).
+- Vite dev server runs on port 9999 and proxies `/api/*` → Express `:3001`.
+- Bind Express to `0.0.0.0` for sandbox compatibility.
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -126,6 +135,7 @@ DATABASE_BUILD_STANDARDS = """
 ### Schema Pattern
 - Shared Table + JSONB Data Matrix: one shared tenant-scoped table with JSONB payload fields.
 - NOT one table per user. Use tenant_id + JSONB for flexibility.
+- Feature data uses a canonical `schema_name` derived from the resource in `tenant_connector_vault`. If auth is requested, login/register data uses `schema_name = 'auth_users'`. Never create physical domain tables.
 - Schema files: `backend/supabase/*.sql` only. No Supabase CLI commands.
 
 ### Connector Priority
@@ -212,7 +222,7 @@ INTEGRATION_TASK_TEMPLATE = {
         "2. Rewrite `frontend/src/App.jsx` so that it imports AND renders ALL of those components/pages — no orphans are allowed.\n"
         "3. Use React Router v6 syntax throughout App.jsx: wrap in `<BrowserRouter>`, use `<Routes>` (NOT `<Switch>`), and use `element={<Component />}` (NOT `component={Component}`).\n"
         "   Example: `<Route path=\"/\" element={<Home />} />`\n"
-        "4. Connect any forms, lists, or data-driven views to the backend through `frontend/src/lib/api.js` using the actual `/api/*` routes defined by the backend tasks (apiGet / apiPost / apiPut / apiDelete).\n"
+        "4. Connect any forms, lists, or data-driven views to the backend through `frontend/src/lib/api.js` using the actual `/api/*` routes defined by the backend tasks (apiGet / apiPost / apiPut / apiDelete). Ensure `api.js` exports every helper imported anywhere and includes an API contract ledger mapping helper names to exact routes.\n"
         "5. Delete any duplicate or placeholder components (e.g. do NOT keep both `Home.jsx` and `HomePage.jsx`; keep exactly one canonical name per feature).\n"
         "6. Delete `frontend/src/App.tsx` if it exists.\n"
         "7. Include the FULL updated `App.jsx` in the response.\n\n"

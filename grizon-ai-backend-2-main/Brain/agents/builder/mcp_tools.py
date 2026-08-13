@@ -438,46 +438,51 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
         except Exception as e:
             print(f"{LOG} Management API error: {e}", flush=True)
 
-    # Method 2: Try creating a DB function that executes SQL, then call it via RPC
-    # This only works if the function already exists
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            # First, try calling exec_sql function if it exists
-            resp = await client.post(
-                f"{supabase_url}/rest/v1/rpc/exec_sql",
-                headers={
-                    "apikey": service_role_key,
-                    "Authorization": f"Bearer {service_role_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"query": sql_query},
-            )
-            if resp.status_code == 200:
-                print(f"{LOG} ✓ SQL executed via exec_sql RPC", flush=True)
-                result_text = resp.text[:1000]
+    # Method 2: Try exec_sql / exec_query RPC with multiple param name variants
+    import re as _re
+    async with httpx.AsyncClient(timeout=30) as client:
+        rpc_attempts = [
+            ("exec_sql",   {"query": sql_query}),
+            ("exec_sql",   {"sql":   sql_query}),
+            ("exec_query", {"query": sql_query}),
+            ("exec_query", {"sql":   sql_query}),
+        ]
+        for rpc_name, rpc_body in rpc_attempts:
+            try:
+                resp = await client.post(
+                    f"{supabase_url}/rest/v1/rpc/{rpc_name}",
+                    headers={
+                        "apikey": service_role_key,
+                        "Authorization": f"Bearer {service_role_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=rpc_body,
+                )
+                if resp.status_code == 200:
+                    print(f"{LOG} ✓ SQL executed via {rpc_name} RPC (params={list(rpc_body.keys())})", flush=True)
+                    result_text = resp.text[:1000]
 
-                # Auto-grant permissions for new tables
-                import re as _re
-                table_matches = _re.findall(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?(\w+)', sql_query, _re.IGNORECASE)
-                for tbl in table_matches:
-                    for role in ("service_role", "anon", "authenticated"):
-                        grant_sql = f"GRANT ALL ON public.{tbl} TO {role};"
-                        try:
-                            await client.post(
-                                f"{supabase_url}/rest/v1/rpc/exec_sql",
-                                headers={"apikey": service_role_key, "Authorization": f"Bearer {service_role_key}", "Content-Type": "application/json"},
-                                json={"query": grant_sql},
-                                timeout=10,
-                            )
-                        except Exception:
-                            pass
-                    print(f"{LOG} ✓ Auto-granted permissions on {tbl}", flush=True)
+                    # Auto-grant permissions for new tables
+                    table_matches = _re.findall(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?(\w+)', sql_query, _re.IGNORECASE)
+                    for tbl in table_matches:
+                        for role in ("service_role", "anon", "authenticated"):
+                            grant_sql = f"GRANT ALL ON public.{tbl} TO {role};"
+                            try:
+                                await client.post(
+                                    f"{supabase_url}/rest/v1/rpc/{rpc_name}",
+                                    headers={"apikey": service_role_key, "Authorization": f"Bearer {service_role_key}", "Content-Type": "application/json"},
+                                    json={list(rpc_body.keys())[0]: grant_sql},
+                                    timeout=10,
+                                )
+                            except Exception:
+                                pass
+                        print(f"{LOG} ✓ Auto-granted permissions on {tbl}", flush=True)
 
-                return f"SQL executed successfully via RPC.\n{result_text}"
-            else:
-                print(f"{LOG} RPC exec_sql returned {resp.status_code}: {resp.text[:200]}", flush=True)
-    except Exception as e:
-        print(f"{LOG} RPC error: {e}", flush=True)
+                    return f"SQL executed successfully via {rpc_name} RPC.\n{result_text}"
+                else:
+                    print(f"{LOG} RPC {rpc_name}({list(rpc_body.keys())}) returned {resp.status_code}: {resp.text[:200]}", flush=True)
+            except Exception as rpc_err:
+                print(f"{LOG} RPC {rpc_name} error: {rpc_err}", flush=True)
 
     # Method 3: Use supabase-py client to try direct SQL (if installed)
     try:

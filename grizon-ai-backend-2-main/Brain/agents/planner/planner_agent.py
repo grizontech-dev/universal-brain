@@ -192,12 +192,12 @@ class PlannerAgent(BaseAgent):
 
         GUIDELINES:
         1. The project_name MUST reflect the user's actual project (not a generic name).
-        2. GROUNDING RULE (CRITICAL, ANTI-HALLUCINATION): Include ONLY what the user actually asked for in their request and Q&A answers. Do NOT invent features, pages, data models, or tech-stack items the user never mentioned or clearly implied. If the user's request is small, the plan must be small.
+        2. GROUNDING & PLATFORM RULE (STRICT, ANTI-HALLUCINATION): Target Platform is ALWAYS a Web Application (React + Vite SPA). NEVER mention React Native, Electron, iOS, Android, or desktop apps. Tech Stack is strictly React, Express, Supabase, Tailwind CSS. Include ONLY what the user actually asked for in their request and Q&A answers.
         3. The plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature must trace back to something the user said.
         4. AUTHORITY: The `architecture` object is for downstream agents (Todo/Builder) and is authoritative — it MUST match the markdown_plan exactly.
         5. COMPLETENESS: Cover EVERY feature the user listed. The `architecture` object should be rich: 4-8 pages, real `tables` with concrete columns, `api_routes` with method + purpose, and every page with 2-5 components.
         6. `api_routes` MUST include method for every endpoint. `tables` MUST list real column names.
-        7. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies. Both required.
+        7. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies: React, Express, Supabase, Tailwind CSS.
         8. Use actual Markdown headers (e.g. `## Overview`) — not bold text. Bullet points with proper spacing.
         9. Plan for preview-visible UI — not isolated component files.
         10. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.

@@ -38,25 +38,31 @@ class DatabaseAgent(BaseAgent):
             return "database_general"
 
     def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
-        prompt = f"""You are the Database Agent for Grizon Brain. Supabase schema design.
+        prompt = f"""You are the Database Agent for Grizon Brain. Supabase/PostgreSQL schema design.
 
 {DATABASE_BUILD_STANDARDS}
 
 SKILL FILES (reference only):
 {skills_content}
 
-═══ RULES ═══
-1. Output SQL in `backend/supabase/schema.sql` or `backend/supabase/migrations/*.sql` only.
-2. Shared tenant-scoped table with JSONB: tenant_id, entity_type, entity_key, payload_jsonb, metadata_jsonb.
-3. Include RLS policies, tenant filters, JSONB GIN indexes.
-4. Keep schemas compact (500 MB free-tier limit).
-5. NEVER output user Supabase credentials. Server-side only.
-6. NEVER: Supabase CLI, echo commands, npm install.
-7. commands: always [].
+=== RULES (NON-NEGOTIABLE) ===
+1. Output SQL in `backend/supabase/schema.sql` ONLY.
+2. CRITICAL: Use ONLY the shared `tenant_connector_vault` table. NEVER create domain-specific tables like `users`, `tasks`, `messages`, etc. All data lives in `tenant_connector_vault` as JSONB rows, filtered by `tenant_id` + `schema_name`.
+3. Ensure `tenant_connector_vault` exists with: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{{}}'::jsonb, created_at timestamptz DEFAULT now().
+4. Add GIN index on `record_data` and btree index on `(tenant_id, schema_name)` for query performance.
+5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
+   ALTER TABLE public.tenant_connector_vault ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "allow_all" ON public.tenant_connector_vault FOR ALL USING (true) WITH CHECK (true);
+   GRANT ALL ON public.tenant_connector_vault TO service_role, anon, authenticated;
+6. Use IF NOT EXISTS to prevent re-run errors.
+7. After DDL, append: NOTIFY pgrst, 'reload schema';
+8. commands: always [].
+9. UNIVERSAL DATA CONTRACT: For each requested feature/resource, store rows in `tenant_connector_vault` with `schema_name = '<canonical_resource>'` using lowercase snake_case or kebab-derived snake_case (for example `projects`, `invoices`, `contact_messages`). Do NOT create physical domain tables for any app feature.
+10. AUTH DATA CONTRACT (ONLY WHEN REQUESTED): Do NOT create a `users` table for login/register. Auth rows are stored with `schema_name = 'auth_users'` and JSONB keys such as email, name, passwordHash, role, createdAt. Add expression indexes only when useful, for example lower(record_data->>'email') where schema_name = 'auth_users'.
 
-═══ OUTPUT FORMAT ═══
+=== OUTPUT FORMAT ===
 Respond ONLY in JSON.
-{{"files": [{{"path": "backend/supabase/...", "content": "..."}}, ...], "commands": [], "summary": "..."}}
+{{"files": [{{"path": "backend/supabase/schema.sql", "content": "..."}}], "commands": [], "summary": "..."}}
 """
         return prompt
 
@@ -119,6 +125,22 @@ Respond ONLY in JSON.
             # Validate parsed JSON
             generated_json = self._format_json_response(response_content)
             if isinstance(generated_json, dict) and "files" in generated_json:
+                # Auto-execute SQL migrations on Supabase for any .sql files generated
+                for f_item in generated_json.get("files", []):
+                    f_path = f_item.get("path", "")
+                    f_content = f_item.get("content", "")
+                    if f_path.endswith(".sql") and f_content.strip():
+                        try:
+                            from Brain.agents.builder.mcp_tools import supabase_exec_sql
+                            print(f"[DB] 🗄 Auto-executing SQL schema '{f_path}' on Supabase database...", flush=True)
+                            job_id = state.get("current_job_id")
+                            sql_res = await asyncio.wait_for(
+                                supabase_exec_sql.ainvoke({"sql_query": f_content}, config={"configurable": {"thread_id": job_id, "task_title": task.get("title", "")}}),
+                                timeout=30
+                            )
+                            print(f"[DB] [OK] Supabase SQL auto-execution result: {sql_res}", flush=True)
+                        except Exception as sql_err:
+                            print(f"[DB] [WARN] Supabase SQL auto-execution notice: {sql_err}", flush=True)
                 return generated_json
 
             # Parse failed — retry with corrective prompt
