@@ -45,6 +45,7 @@ class BackendAgent(BaseAgent):
 - JSON responses: {{"success": true, "data": ...}} or {{"success": false, "error": "..."}}.
 
 ═══ RULES (VIOLATION = BROKEN BUILD) ═══
+0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase + shared JSONB table pattern. NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. NEVER create domain-specific tables like users, todos, messages. ALL data goes through the shared `tenant_connector_vault` table or the Python Backend Proxy API.
 1. For every required file:
    a. Generate the complete file.
    b. Immediately call client_save_code.
@@ -60,27 +61,33 @@ class BackendAgent(BaseAgent):
 7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
 8. Use `process.env.PORT || 9999` and bind 0.0.0.0 — required for tunnel URL.
  9. NEVER import browser Supabase client. Use server-side Supabase access only.
-    - If user has connected Supabase connector: use direct table queries with .from().
-    - Otherwise: use the Python Supabase proxy with the shared `tenant_connector_vault` table (JSONB pattern).
-    Never expose credentials to frontend code.
- 10. Use the Shared Table + JSONB Data Matrix Pattern. Each entity uses tenant_id + JSONB payload for flexibility.
-     Example via proxy: GET /api/connector/query?tenant_id=...&schema_name=users&record_data->>name=John
-     Example direct: supabase.from("tenant_connector_vault").select("*").eq("tenant_id", id).eq("schema_name", "users")
-11. Schema as backend/supabase/*.sql files only. No Supabase CLI.
-12. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
-13. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return {{ "success": true, "data": [] }} instead of HTTP 500!
-14. MANDATORY HEALTH ENDPOINT — REQUIRED BY VALIDATION GATE:
-    server.js MUST include this EXACTLY (Validation Gate tests GET /health and will FAIL build if missing):
-    ```
-    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
-    ```
-    Place it BEFORE all other route mounts, right after middleware setup.
+     - If user has connected Supabase connector: use direct table queries with .from().
+     - Otherwise: use the Python Supabase proxy with the shared `tenant_connector_vault` table (JSONB pattern).
+     Never expose credentials to frontend code.
+  10. Use the Shared Table + JSONB Data Matrix Pattern. Each entity uses tenant_id + JSONB payload for flexibility.
+       Example via proxy: GET /api/connector/query?tenant_id=...&schema_name=users&record_data->>name=John
+       Example direct: supabase.from("tenant_connector_vault").select("*").eq("tenant_id", id).eq("schema_name", "users")
+  11. CRITICAL: Create `backend/supabase/client.js` as the SINGLE shared Supabase client helper. 
+       If Node.js < 22, configure ws transport: 
+       const ws = require('ws');
+       const { createClient } = require('@supabase/supabase-js');
+       module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{ global: {{ fetch }}, realtime: {{ transport: ws }} }});
+       ALL controllers must require('./supabase/client') instead of creating their own client.
+  12. Schema as backend/supabase/*.sql files only. No Supabase CLI.
+  13. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
+  14. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return {{ "success": true, "data": [] }} instead of HTTP 500!
+  15. MANDATORY HEALTH ENDPOINT — REQUIRED BY VALIDATION GATE:
+      server.js MUST include this EXACTLY (Validation Gate tests GET /health and will FAIL build if missing):
+      ```
+      app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+      ```
+      Place it BEFORE all other route mounts, right after middleware setup.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
 Generate ALL files required for this task. Do NOT omit files to save tokens.
 If task needs routes + controllers + server.js update, generate ALL THREE.
 
-{f"SKILL FILES (reference only — content already injected above):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+{f"SKILL FILES (project-specific only — generic skillss files are excluded):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
 
 ═══ OUTPUT FORMAT ═══
 Respond ONLY in JSON.
@@ -124,6 +131,14 @@ Respond ONLY in JSON.
             else:
                 try:
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
+                    if skills_content and skills_content.strip() not in ("{}", ""):
+                        lines = skills_content.splitlines()
+                        filtered_lines = [
+                            line for line in lines
+                            if not line.strip().lower().startswith("- skillss/")
+                            and not line.strip().lower().startswith("skillss/")
+                        ]
+                        skills_content = "\n".join(filtered_lines)
                     BackendAgent._skill_cache[cache_key] = skills_content
                     print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
                 except Exception:

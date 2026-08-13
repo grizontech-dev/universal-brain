@@ -1216,11 +1216,37 @@ class ValidationGate:
 
         # Inject current server.js and stack-trace source files for runtime backend errors
         runtime_files_to_inject: Set[str] = set()
+        supabase_ws_error = any(
+            err.stage == "runtime" and "WebSocket" in (err.message or "") and "supabase" in (err.message or "").lower()
+            for err in errors
+        )
         for err in errors:
             if err.stage == "runtime":
                 if err.file_path:
                     runtime_files_to_inject.add(err.file_path)
                 runtime_files_to_inject.update(self._extract_runtime_files(err.message))
+
+        # If this is a Supabase WebSocket/Node compatibility error, find ALL controllers
+        # that import @supabase/supabase-js so the repair agent can fix the root cause
+        # in one pass instead of file-by-file.
+        if supabase_ws_error:
+            backend_dir = os.path.join(self.workspace_dir, "backend")
+            if os.path.isdir(backend_dir):
+                for root_b, _, files_b in os.walk(backend_dir):
+                    if "node_modules" in root_b:
+                        continue
+                    for fname in files_b:
+                        if not fname.endswith(".js"):
+                            continue
+                        fpath = os.path.join(root_b, fname)
+                        try:
+                            with open(fpath, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            if "@supabase/supabase-js" in content and "createClient" in content:
+                                rel = os.path.relpath(fpath, self.workspace_dir).replace("\\", "/")
+                                runtime_files_to_inject.add(rel)
+                        except Exception:
+                            pass
 
         for rel_path in runtime_files_to_inject:
             abs_path = os.path.join(self.workspace_dir, rel_path)
@@ -1262,6 +1288,7 @@ class ValidationGate:
             "8. Make one tool call per file fix — but fix ALL issues for a file in a SINGLE call.\n"
             "9. CRITICAL: If you see multiple missing exports from the same file, add ALL of them in one save.\n"
             "10. For backend runtime errors, inspect ALL provided runtime stack-trace source files, especially the file identified by `File:` and the files extracted from the stack trace. Fix the actual root cause while preserving all existing routes, middleware, imports, database logic, configuration, and exports."
+            "11. If the error is a Supabase WebSocket/Node compatibility error across multiple controllers, CREATE `backend/supabase/client.js` as the shared Supabase client helper with ws transport, then UPDATE ALL affected controllers to use it. Do NOT fix each controller individually."
         )
 
         if not self.llm:
