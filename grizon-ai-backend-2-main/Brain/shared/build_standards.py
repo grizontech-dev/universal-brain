@@ -91,6 +91,7 @@ BACKEND_BUILD_STANDARDS = """
 - Every controller starts with: `const { supabase } = require('../supabase/client');`
 
 ### Server.js
+- `server.js` MUST start with `require('dotenv').config();` at line 1 so environment variables are loaded.
 - Every new route MUST be imported and mounted in `backend/server.js`:
   `const contactRoutes = require('./routes/contact');`
   `app.use('/api/contact', contactRoutes);`
@@ -105,9 +106,12 @@ BACKEND_BUILD_STANDARDS = """
 - Schema as `backend/supabase/*.sql` files only (no Supabase CLI).
 - Keep payloads sparse, prune large blobs (500 MB free-tier limit).
 
-### API Contract
+### API Contract & Error Resiliency
 - Frontend calls `/api/...` — your routes must match exactly.
+- ALWAYS wrap controller logic in `try { ... } catch (err)` blocks.
+- If DB table query returns an error (e.g. table not created yet), return clean response `{ success: true, data: [], note: "Table pending initialization" }` instead of throwing HTTP 500!
 - JSON responses: `{ success: true, data }` or `{ success: false, error: "..." }`.
+- In `server.js`, handle `/favicon.ico`: `app.get('/favicon.ico', (req, res) => res.status(204).end());`
 - List all new deps in `backend/package.json`.
 - Return `"commands": ["cd backend && npm install"]` when adding dependencies.
 

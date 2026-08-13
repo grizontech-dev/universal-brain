@@ -461,7 +461,17 @@ class BuilderAgent(BaseAgent):
                         consecutive_duplicates = 0
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
-                        # Note: edit_file activity already emitted by client_save_code via ws_manager
+                        # Auto-execute SQL migrations on Supabase when saving .sql files
+                        if file_path.endswith(".sql") and code_content.strip():
+                            try:
+                                print(f"{LOG} 🗄 Auto-executing SQL schema '{file_path}' on Supabase database...", flush=True)
+                                sql_res = await asyncio.wait_for(
+                                    supabase_exec_sql.ainvoke({"sql_query": code_content}, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                                    timeout=30
+                                )
+                                print(f"{LOG} [OK] Supabase SQL auto-execution result: {sql_res}", flush=True)
+                            except Exception as sql_err:
+                                print(f"{LOG} [WARN] Supabase SQL auto-execution notice: {sql_err}", flush=True)
 
                         # Tell LLM the file was saved
                         messages.append(ToolMessage(

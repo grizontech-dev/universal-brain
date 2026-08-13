@@ -119,6 +119,22 @@ Respond ONLY in JSON.
             # Validate parsed JSON
             generated_json = self._format_json_response(response_content)
             if isinstance(generated_json, dict) and "files" in generated_json:
+                # Auto-execute SQL migrations on Supabase for any .sql files generated
+                for f_item in generated_json.get("files", []):
+                    f_path = f_item.get("path", "")
+                    f_content = f_item.get("content", "")
+                    if f_path.endswith(".sql") and f_content.strip():
+                        try:
+                            from Brain.agents.builder.mcp_tools import supabase_exec_sql
+                            print(f"[DB] 🗄 Auto-executing SQL schema '{f_path}' on Supabase database...", flush=True)
+                            job_id = state.get("current_job_id")
+                            sql_res = await asyncio.wait_for(
+                                supabase_exec_sql.ainvoke({"sql_query": f_content}, config={"configurable": {"thread_id": job_id, "task_title": task.get("title", "")}}),
+                                timeout=30
+                            )
+                            print(f"[DB] [OK] Supabase SQL auto-execution result: {sql_res}", flush=True)
+                        except Exception as sql_err:
+                            print(f"[DB] [WARN] Supabase SQL auto-execution notice: {sql_err}", flush=True)
                 return generated_json
 
             # Parse failed — retry with corrective prompt

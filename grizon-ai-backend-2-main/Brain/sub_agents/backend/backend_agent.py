@@ -49,14 +49,15 @@ class BackendAgent(BaseAgent):
 2. CommonJS only: require() / module.exports. NEVER import/export.
 3. Routes: backend/routes/*.js, Controllers: backend/controllers/*.js
 4. Use Express.Router in routes: module.exports = router;
-5. ALWAYS update backend/server.js — import route + app.use('/api/...', routes)
+5. ALWAYS update backend/server.js — start with `require('dotenv').config();` at line 1, import route + app.use('/api/...', routes)
 6. Frontend contract: paths must match /api/... (POST /api/contact, GET /api/programs)
 7. ALL packages MUST be in backend/package.json. Return "commands": ["cd backend && npm install"]
 8. Port 9999, bind 0.0.0.0 — required for tunnel URL
 9. NEVER import browser Supabase client. All DB access is server-side.
 10. Supabase: check user's connected connector first, fallback to Python proxy.
 11. Schema as backend/supabase/*.sql files only. No Supabase CLI.
-12. Write server.js LAST with ALL routes mounted.
+12. Write server.js LAST with ALL routes mounted. Include `app.get('/favicon.ico', (req, res) => res.status(204).end());`.
+13. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try-catch. If DB table is not ready or returns error, return { "success": true, "data": [] } instead of HTTP 500!
 
 ═══ SUPABASE PATTERNS ═══
 - Shared Table + JSONB: one shared tenant-scoped table with JSONB payload, NOT one table per user.
