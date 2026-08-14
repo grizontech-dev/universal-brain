@@ -185,15 +185,32 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
                 method = r.get("method", "GET").upper()
                 if not path:
                     continue
-                resource = path.strip("/").split("/")[-1]
-                camel = "".join(w.capitalize() for w in re.split(r"[\-_/]+", resource)) if resource else "Resource"
-                method_prefix = {"GET": "get", "POST": "create", "PUT": "update", "PATCH": "update", "DELETE": "delete"}.get(method, "call")
-                handler = f"{method_prefix}{camel}"
+                # Skip param-segment paths like /api/todos/:id — detail routes,
+                # not resource roots. /api/todos already covers them.
+                last_seg = path.strip("/").split("/")[-1]
+                if last_seg.startswith(":"):
+                    continue
+                # Derive clean CamelCase resource name from path segment
+                resource_raw = last_seg.replace("-", "_")
+                parts = [p for p in resource_raw.split("_") if p]
+                camel = "".join(p.capitalize() for p in parts) if parts else "Resource"
+                singular = camel[:-1] if camel.endswith("s") and len(camel) > 2 else camel
+                # Map method to correct helper verb
+                if method == "GET":
+                    handler = f"get{camel}"
+                elif method == "POST":
+                    handler = f"create{singular}"
+                elif method in ("PUT", "PATCH"):
+                    handler = f"update{singular}"
+                elif method == "DELETE":
+                    handler = f"delete{singular}"
+                else:
+                    handler = f"call{camel}"
                 seeded_routes.append({"path": path, "method": method, "handler": handler})
                 seeded_helpers[handler] = f"{method} {path}"
             contract["api_routes"] = seeded_routes
             contract["api_helpers"] = seeded_helpers
-            print(f"[CONTRACT] Pre-seeded {len(seeded_routes)} routes from planner architecture", flush=True)
+            print(f"[CONTRACT] Pre-seeded {len(seeded_routes)} routes from planner architecture | helpers={list(seeded_helpers.keys())}", flush=True)
 
     # Planned tables/schema names from planner — gives DatabaseAgent a head start
     planned_tables = arch.get("tables", [])

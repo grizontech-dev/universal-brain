@@ -407,16 +407,45 @@ Respond ONLY in JSON.
                     # Extract: app.use('/api/xxx', ...) → /api/xxx
                     mounted = re.findall(r"app\.use\(['\"](/api/[^'\"]+)['\"]", srv)
                     mounted = sorted(set(mounted))
-                    # Build helper-name suggestions: /api/invoices → getInvoices, createInvoice, etc.
+
+                    # Get planned routes from state so we only keep routes the planner intended
+                    _project_plan = state.get("project_plan", {}) or {}
+                    if isinstance(_project_plan, str):
+                        try:
+                            import json as _pjson
+                            _project_plan = _pjson.loads(_project_plan)
+                        except Exception:
+                            _project_plan = {}
+                    _planned_paths = set()
+                    for _r in (_project_plan.get("architecture", {}) or {}).get("api_routes", []):
+                        if isinstance(_r, dict) and _r.get("path"):
+                            # Normalise: /api/todos/:id → /api/todos
+                            _base = _r["path"].split("/:")[0].rstrip("/")
+                            _planned_paths.add(_base)
+
+                    # Build helper-name suggestions: /api/todos → getTodos, createTodo, etc.
                     contract: dict = {}
                     for route in mounted:
-                        resource = route.strip("/").split("/")[-1]  # invoices
-                        camel = resource[0].upper() + resource[1:] if resource else resource
+                        # Skip routes whose last segment is a param (e.g. /api/todos/:id mounted directly)
+                        last_segment = route.strip("/").split("/")[-1]
+                        if last_segment.startswith(":"):
+                            continue
+                        # Skip routes not in the planner's architecture (hallucinated routes)
+                        if _planned_paths and route not in _planned_paths:
+                            print(f"[BACKEND] api_contract: skipping unplanned route '{route}' (not in architecture)", flush=True)
+                            continue
+                        # Derive clean resource name — strip hyphens/underscores → CamelCase
+                        resource = last_segment.replace("-", "_")
+                        parts = resource.split("_")
+                        camel = "".join(p.capitalize() for p in parts if p)
+                        if not camel:
+                            continue
+                        singular = camel[:-1] if camel.endswith("s") and len(camel) > 2 else camel
                         contract[route] = {
                             "get":    f"get{camel}",
-                            "post":   f"create{camel[:-1] if camel.endswith('s') else camel}",
-                            "put":    f"update{camel[:-1] if camel.endswith('s') else camel}",
-                            "delete": f"delete{camel[:-1] if camel.endswith('s') else camel}",
+                            "post":   f"create{singular}",
+                            "put":    f"update{singular}",
+                            "delete": f"delete{singular}",
                         }
                     if contract:
                         state["api_contract"] = contract
