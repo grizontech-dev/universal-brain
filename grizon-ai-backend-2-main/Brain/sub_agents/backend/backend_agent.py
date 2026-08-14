@@ -184,10 +184,16 @@ Respond ONLY in JSON.
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
                     if skills_content and skills_content.strip() not in ("{}", ""):
                         lines = skills_content.splitlines()
+                        # Strip lines referencing skillss/ paths AND lines containing
+                        # ORM/ODM patterns that conflict with Rule 0 (Supabase JSONB pattern)
+                        _banned_patterns = (
+                            "mongoose", "prisma", "sequelize", "typeorm", "objection",
+                            "knex", "mikro-orm", "waterline", "bookshelf",
+                            "skillss/", "- skillss/",
+                        )
                         filtered_lines = [
                             line for line in lines
-                            if not line.strip().lower().startswith("- skillss/")
-                            and not line.strip().lower().startswith("skillss/")
+                            if not any(p in line.lower() for p in _banned_patterns)
                         ]
                         skills_content = "\n".join(filtered_lines)
                     self._skill_cache[cache_key] = skills_content
@@ -232,6 +238,17 @@ Respond ONLY in JSON.
         structured_hint = format_structured_spec(task)
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
+        # Inject db_schema_names from DatabaseAgent if available — ensures exact naming match
+        schema_names_context = ""
+        db_schema_names = state.get("db_schema_names", [])
+        if db_schema_names:
+            schema_names_context = (
+                f"\n\nDB SCHEMA CONTRACT (use EXACTLY these schema_name values — no renaming):\n"
+                + "\n".join(f"  schema_name = '{s}'" for s in db_schema_names)
+                + "\nThe DatabaseAgent already created tenant_connector_vault rows for these names."
+                " Your controllers MUST query with these exact values."
+            )
+
         # Build compact user message
         user_content = (
             f"Task: {task.get('title')}\n"
@@ -240,6 +257,7 @@ Respond ONLY in JSON.
             f"{spec_context}"
             f"{executed_context}"
             f"{server_js_context}"
+            f"{schema_names_context}"
         )
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
@@ -363,4 +381,37 @@ Respond ONLY in JSON.
 
         result = {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
         print(f"[BACKEND] Result: files={len(result['files'])} paths={[f['path'] for f in result['files']]}", flush=True)
+
+        # ── API CONTRACT: scan server.js for mounted routes and store in state ──
+        # FrontendAgent reads state["api_contract"] to know exact routes + helpers to call
+        try:
+            workspace_id = state.get("current_job_id")
+            user_id = state.get("user_id")
+            if workspace_id:
+                from Brain.services.workspace_manager import workspace_manager as _wm
+                ws_root = _wm.resolve_workspace_path(workspace_id, user_id=user_id)
+                server_js = os.path.join(ws_root, "backend", "server.js") if ws_root else None
+                if server_js and os.path.isfile(server_js):
+                    with open(server_js, "r", encoding="utf-8") as _f:
+                        srv = _f.read()
+                    # Extract: app.use('/api/xxx', ...) → /api/xxx
+                    mounted = re.findall(r"app\.use\(['\"](/api/[^'\"]+)['\"]", srv)
+                    mounted = sorted(set(mounted))
+                    # Build helper-name suggestions: /api/invoices → getInvoices, createInvoice, etc.
+                    contract: dict = {}
+                    for route in mounted:
+                        resource = route.strip("/").split("/")[-1]  # invoices
+                        camel = resource[0].upper() + resource[1:] if resource else resource
+                        contract[route] = {
+                            "get":    f"get{camel}",
+                            "post":   f"create{camel[:-1] if camel.endswith('s') else camel}",
+                            "put":    f"update{camel[:-1] if camel.endswith('s') else camel}",
+                            "delete": f"delete{camel[:-1] if camel.endswith('s') else camel}",
+                        }
+                    if contract:
+                        state["api_contract"] = contract
+                        print(f"[BACKEND] api_contract stored: {list(contract.keys())}", flush=True)
+        except Exception as _ce:
+            print(f"[BACKEND] api_contract extraction failed (non-fatal): {_ce}", flush=True)
+
         return result

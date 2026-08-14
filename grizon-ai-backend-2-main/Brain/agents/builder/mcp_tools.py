@@ -546,29 +546,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RETURN json_build_object('error', SQLERRM);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Also create the todos table for todo apps
-CREATE TABLE IF NOT EXISTS public.todos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL,
-  description text DEFAULT '',
-  completed boolean DEFAULT false,
-  priority text DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
-  due_date timestamptz,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
-ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'todos') THEN
-    CREATE POLICY allow_all ON public.todos FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
-GRANT ALL ON public.todos TO service_role;
-GRANT ALL ON public.todos TO anon;
-GRANT ALL ON public.todos TO authenticated;"""
+$$ LANGUAGE plpgsql SECURITY DEFINER;"""
 
     return (
         f"Please run this SQL in your Supabase dashboard:\n"

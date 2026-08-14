@@ -41,7 +41,8 @@ class FrontendAgent(BaseAgent):
 
     def _build_system_prompt(self, task: Dict, palette_colors: list, palette_name: str,
                               theme_preference: str, custom_color_input: str,
-                              skills_content: str, framework: str) -> str:
+                              skills_content: str, framework: str,
+                              skills_are_paths: bool = False) -> str:
         """Build compact system prompt (~1500 tokens)."""
 
         c = palette_colors
@@ -50,7 +51,7 @@ class FrontendAgent(BaseAgent):
 
         prompt = f"""You are a Senior React Frontend Engineer. Stack: {framework} + Tailwind CSS + framer-motion + react-router-dom + lucide-react.
 
-═══ COLOR PALETTE (USE EXACTLY — NON-NEGOTIABLE) ═══
+═══ COLOR PALETTE (USE EXACTLY) ═══
 Palette: {palette_name} | Theme: {theme_preference}
 - Base/Darkest: {c[0]}
 - Primary/Accent: {c[1]}
@@ -58,65 +59,57 @@ Palette: {palette_name} | Theme: {theme_preference}
 - Text: {c[3]}
 - Background: {c[4]}
 {f"Custom: {custom_color_input}" if custom_color_input else ""}
-Gradients: c[1]→c[2] | Buttons/links: c[1] | Text on dark: c[3]
+Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text on dark: {c[3]}
 
-═══ RULES (VIOLATION = BROKEN BUILD) ═══
-1. Use client_save_code for EVERY file. One tool call per file.
-2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)
-3. Import EVERY component at top of file. Do NOT re-declare imported names.
-   4. Use react-router-dom Link, NOT <a href>. Routes NOT Switch. element={{<X />}} NOT component={{X}}.
-   5. ROUTER OWNERSHIP (ABSOLUTE, NON-NEGOTIABLE): `frontend/src/App.jsx` is the ONLY file allowed to render `<BrowserRouter>`. `frontend/src/main.jsx` must render `<App />` only. Pages, layouts, Navbar, Sidebar, providers, and components MUST NOT render `<BrowserRouter>`, `<HashRouter>`, `<MemoryRouter>`, or any nested `<Router>`. If you see `<BrowserRouter>` in any file other than App.jsx, you have failed.
-   6. Do NOT import CSS files (Tailwind is global). Do NOT use brand icons (Github, Google, Twitter).
-6. NO orphan components: every file MUST be imported in App.jsx AND rendered.
-7. NO duplicate files: pages in pages/, reusable UI in components/. Never both.
-8. NO TypeScript: use plain JSX, no React.FC types. No App.tsx — use App.jsx only.
-9. EVERY component needs real Tailwind styling — NEVER output <h1>Home Page</h1> as only content.
-10. `frontend/src/lib/api.js` is the ONLY place for API calls. Export ALL functions used anywhere by name:
-    - `export const getUsers = async () => ...`
-    - `export const sendMessage = async (data) => ...`
-    - `export const getUserProfile = async (id) => ...`
-    - `export const getChats = async () => ...`
-    - RULE: Before saving any component/page, list every named import from `../lib/api.js`, `./lib/api.js`, or `../../lib/api.js`; `frontend/src/lib/api.js` MUST export every one of those exact names in the same batch.
-    - API CONTRACT LEDGER: At the top of `api.js`, add a short comment listing each helper and exact backend route it calls. Example: `// createInvoice -> POST /api/invoices`.
-    - Helper names must match component imports exactly. If a component imports `createInvoice`, `api.js` must export `createInvoice`; do not export a similar name like `addInvoice`.
-    - Routes must come from the backend contract or task spec. If backend route context is missing, use a consistent `/api/<resource>` route family and keep all helpers on that same family.
-    - If, and only if, the task includes auth/login/register, use `loginUser`, `registerUser`, `getCurrentUser`, `logoutUser` mapped to `/api/auth/login`, `/api/auth/register`, `/api/auth/me`.
-    - Never import a named API helper from `api.js` until you have generated that exact named export. Missing exports break Vite with "does not provide an export named".
-11. BANNED IMPORTS — NEVER USE:
-    - `import ... from '../components/ui/Button'` ← DOES NOT EXIST, use Tailwind button instead
-    - `import ... from '../components/ui/Card'` ← DOES NOT EXIST, use Tailwind div instead
-    - `import ... from '../components/ui/Switch'` ← DOES NOT EXIST, use Tailwind toggle instead
-    - `import ... from '@/...'` ← path alias not configured
-    - `import ... from 'shadcn/ui'` ← not installed
-    - Style EVERYTHING with Tailwind classes. Zero dependency on ui/ subdirectory.
-12. ALL packages MUST be in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding deps.
-13. Vite dev server MUST run on port 9999: add --port 9999 --host 0.0.0.0 to vite.config.js or package.json.
-14. CRITICAL: Do NOT include `"type": "module"` in frontend/package.json. Vite handles ESM natively. 
-    Config files like postcss.config.js MUST use CommonJS: `module.exports = ...` (NOT `export default`).
-15. App.jsx is the routing root: it MUST render exactly one `<BrowserRouter>` wrapping `<Routes>` and all route-level pages/components.
-    - Include Navbar/Footer if they exist
-    - Example: `<BrowserRouter><Routes><Route path="/" element={{<Home />}} /></Routes></BrowserRouter>`
-    - Do not add BrowserRouter anywhere else, and do not wrap App with BrowserRouter in `main.jsx`.
-16. NEVER create files with only stubs. Every component must have real JSX, Tailwind classes, and working logic.
-17. ROUTE CONTRACT: Components MUST NOT hardcode fetch/axios URLs. Forms, dashboards, and lists call named helpers from `frontend/src/lib/api.js`, and those helpers call the exact mounted `/api/...` backend routes.
+═══ TOP 5 RULES (these break builds if violated) ═══
+1. Save files with client_save_code. One call per file. Paths start with frontend/src/
+2. App.jsx owns routing: one <BrowserRouter> wrapping <Routes>. NO other file renders any Router.
+3. Every page in pages/ MUST have a <Route> in App.jsx. Every component MUST be imported somewhere.
+4. api.js is the ONLY place for fetch calls. Export every function the components import by exact name.
+5. Pure Tailwind for all styling. No ui/ subdirectory imports — that folder does not exist.
+   Do NOT import from: '../components/ui/*', '@/...', 'shadcn/ui', or any path with 'shadcn'.
+   Build all UI with Tailwind classes directly.
 
-═══ PREMIUM UI (NON-NEGOTIABLE) ═══
-- Animations: framer-motion. EVERY page: AnimatePresence, motion.div, whileHover, whileInView, skeleton loaders.
-- Glass: bg-white/10 backdrop-blur-xl border border-white/20
-- Shadows: shadow-2xl shadow-[c[1]]/20
-- Typography: font-bold tracking-tight, gradient text bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent
-- Layout: Hero full-width gradient, Cards glass+hover glow, Navbar sticky glass, Footer multi-column
-- Spacing: p-6 to p-12, generous breathing room
+═══ STRUCTURE ═══
+- pages/ → route-level pages (one <Route> per page in App.jsx)
+- components/ → reusable pieces imported by pages
+- lib/api.js → all fetch calls, exported by name, with ledger comment mapping name→route
+- No TypeScript. No App.tsx. Plain JSX only.
 
-═══ BATCH GENERATION (SPEED) ═══
-Generate ALL related files in ONE response (2-5 tool calls). This cuts time 40-60%.
+═══ ROUTING (React Router v6) ═══
+- <Routes> not <Switch>. element={{<X />}} not component={{X}}.
+- Navigation: <Link to="/path"> not <a href>.
+- App.jsx example:
+  <BrowserRouter><Routes>
+    <Route path="/" element={{<Home />}} />
+    <Route path="/dashboard" element={{<Dashboard />}} />
+  </Routes></BrowserRouter>
 
-{f"SKILL FILES (read via read_skill_file when needed):{chr(10)}{skills_content}" if skills_content and skills_content != "{{}}" else ""}
+═══ API CONTRACT ═══
+- api.js ledger at top: // getItems -> GET /api/items
+- Components call named helpers: import {{ getItems }} from '../lib/api.js'
+- Never hardcode /api URLs in components. Never mix api.js helpers with direct fetch.
+- Auth (only if requested): loginUser/registerUser → /api/auth/login, /api/auth/register
+
+═══ UI QUALITY ═══
+- Real content only. Never <h1>Home Page</h1> as the only content.
+- Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
+- Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
+- Port 9999 for Vite: --port 9999 --host 0.0.0.0 in vite.config.js
+
+═══ PACKAGES ═══
+- All deps in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding.
+- Do NOT add "type": "module" to package.json. postcss.config.js uses module.exports (CommonJS).
+
+═══ BATCH GENERATION ═══
+Generate ALL files for this task in ONE response. Call client_save_code immediately — do not read skill files first.
+
+{f"SKILL FILES (on-demand via read_skill_file):{chr(10)}{skills_content}" if skills_are_paths else (f"SKILLS:{chr(10)}{skills_content[:600]}" if skills_content and skills_content != '{{}}' else "")}
 
 ═══ OUTPUT FORMAT ═══
 Respond ONLY in JSON.
-Update App.jsx ONLY IF: new page, new route, new layout, new navigation, new provider, or imports changed.
-Otherwise DO NOT generate App.jsx — just create the component files.
+ALWAYS update App.jsx when creating any page (pages/ directory).
+Every page you create MUST have a <Route> in App.jsx.
 {{"files": [...], "commands": [], "summary": "..."}}
 """
         return prompt
@@ -126,12 +119,14 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         framework = (state.get("framework") or "react").lower()
         executed = state.get("executed_tasks", [])[-3:]  # Only last 3 tasks
 
-        # Extract color palette
+        # Extract color palette — check state directly, then memory_context decisions as fallback
         color_palette = state.get("selected_color_palette", {})
         theme_preference = state.get("theme_preference", "dark")
         custom_color_input = state.get("custom_color_input", "")
         if not color_palette:
-            decisions = state.get("decisions", {})
+            # Correct fallback path: memory_context.decisions, not state.decisions
+            memory_ctx = state.get("memory_context", {}) or {}
+            decisions = memory_ctx.get("decisions", {}) or {}
             color_palette = decisions.get("color_palette", {})
 
         default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"] if theme_preference == "dark" \
@@ -159,10 +154,15 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                 except Exception:
                     skills_content = "{}"
 
+        # Determine skills format BEFORE building system prompt and binding tools
+        skills_are_paths = bool(skills_content and "SKILL FILES" in skills_content)
+        skills_are_rules = bool(skills_content and skills_content != "{}" and not skills_are_paths)
+
         # Build compact system prompt
         system_prompt = self._build_system_prompt(
             task, palette_colors, palette_name, theme_preference,
-            custom_color_input, skills_content, framework
+            custom_color_input, skills_content, framework,
+            skills_are_paths=skills_are_paths
         )
 
         # App.jsx context — skip for component-only tasks (Button, Card, Badge, etc.)
@@ -230,6 +230,20 @@ Otherwise DO NOT generate App.jsx — just create the component files.
                     except Exception:
                         pass
 
+        # Inject api_contract from BackendAgent if available — gives exact route→helper mapping
+        api_contract = state.get("api_contract", {})
+        if api_contract:
+            contract_lines = []
+            for route, helpers in api_contract.items():
+                contract_lines.append(
+                    f"  {route}: GET→{helpers['get']}(), POST→{helpers['post']}(), "
+                    f"PUT→{helpers['put']}(), DELETE→{helpers['delete']}()"
+                )
+            backend_route_context += (
+                "\n\nAPI CONTRACT (use EXACTLY these helper names in api.js — do not invent new names):\n"
+                + "\n".join(contract_lines)
+            )
+
         # Compact executed tasks context
         executed_context = ""
         if executed:
@@ -240,6 +254,64 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         structured_hint = format_structured_spec(task)
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
+        # For integration/wiring tasks: scan disk and provide REAL file list
+        # so LLM doesn't have to guess which components/pages exist
+        integration_file_context = ""
+        task_title_lower = task.get("title", "").lower()
+        task_desc_lower = task.get("description", "").lower()
+        is_integration = any(k in task_title_lower or k in task_desc_lower
+                             for k in ("wire", "integrat", "app.jsx", "router", "connect", "mount", "wiring"))
+        if is_integration and workspace_id and ws_root:
+            try:
+                fe_src = os.path.join(ws_root, "frontend", "src")
+                pages_files = []
+                component_files = []
+                for sub in ("pages", "components"):
+                    sub_dir = os.path.join(fe_src, sub)
+                    if os.path.isdir(sub_dir):
+                        for root_w, _, files_w in os.walk(sub_dir):
+                            for f_w in files_w:
+                                if f_w.endswith((".jsx", ".js", ".tsx")):
+                                    rel = os.path.relpath(
+                                        os.path.join(root_w, f_w), fe_src
+                                    ).replace("\\", "/")
+                                    full_path = f"frontend/src/{rel}"
+                                    if sub == "pages":
+                                        pages_files.append(full_path)
+                                    else:
+                                        component_files.append(full_path)
+
+                all_files = sorted(pages_files) + sorted(component_files)
+                if all_files:
+                    # Also inject current App.jsx content so LLM can merge properly
+                    current_app_content = ""
+                    app_jsx_path_full = os.path.join(fe_src, "App.jsx")
+                    if os.path.isfile(app_jsx_path_full):
+                        try:
+                            with open(app_jsx_path_full, "r", encoding="utf-8") as _af:
+                                current_app_content = _af.read()
+                        except Exception:
+                            pass
+
+                    integration_file_context = (
+                        "\n\n══ INTEGRATION TASK — MANDATORY STEPS ══\n"
+                        "You MUST rewrite App.jsx completely using the files listed below.\n"
+                        "Do NOT skip this. Do NOT leave any file without a route.\n\n"
+                        "PAGES (each needs a <Route path=... element=<Component />> in App.jsx):\n"
+                        + "\n".join(f"  {f}" for f in pages_files)
+                        + ("\n\nCOMPONENTS (import and render Navbar/Footer in App.jsx if present):\n"
+                           + "\n".join(f"  {f}" for f in component_files) if component_files else "")
+                        + "\n\nREQUIREMENTS:"
+                        "\n  1. Import every page above and give it a <Route> in <Routes>."
+                        "\n  2. Import Navbar/Footer components if they exist and render them around <Routes>."
+                        "\n  3. Use React Router v6: <BrowserRouter><Routes><Route path=... element=<X /> /></Routes></BrowserRouter>"
+                        "\n  4. Save the COMPLETE new App.jsx with client_save_code."
+                        + (f"\n\nCURRENT App.jsx (preserve existing routes, add missing ones):\n```jsx\n{current_app_content[:2000]}\n```"
+                           if current_app_content else "")
+                    )
+            except Exception:
+                pass
+
         # Build user message — compact
         user_content = (
             f"Task: {task.get('title')}\n"
@@ -249,6 +321,7 @@ Otherwise DO NOT generate App.jsx — just create the component files.
             f"{app_jsx_context}"
             f"{api_js_context}"
             f"{backend_route_context}"
+            f"{integration_file_context}"
         )
 
         # Initialize messages
@@ -259,10 +332,17 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
         # its iteration budget calling read_skill_file on project files (which the
         # tool cannot read) and never reaches client_save_code.
-        if skills_content and skills_content != "{}":
+        # skills_are_paths / skills_are_rules already computed above after skill resolution.
+        if skills_are_rules:
+            # Skills already compiled — no need to read files, save tool call budget
+            active_llm = self.llm.bind_tools([client_save_code])
+            fallback_llm = self.fallback_model.bind_tools([client_save_code])
+        elif skills_are_paths:
+            # Skills are file paths — agent may read them on demand
             active_llm = self.bound_llm
             fallback_llm = self.fallback_llm
         else:
+            # No skills — just save tool
             active_llm = self.llm.bind_tools([client_save_code])
             fallback_llm = self.fallback_model.bind_tools([client_save_code])
 

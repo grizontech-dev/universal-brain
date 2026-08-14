@@ -554,7 +554,8 @@ class BuilderAgent(BaseAgent):
                 f"(retried primary model + fallback)"
             )
 
-        return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
+        msg = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
+        return msg, len(files_saved)
 
 
     async def _validate_backend_routes(self, session_id):
@@ -913,10 +914,34 @@ class BuilderAgent(BaseAgent):
             skill_content = _load_skill("supabase", 3000)
 
         if category == "frontend":
+            # Extract color palette from state — same logic as FrontendAgent
+            _cp = state.get("selected_color_palette", {})
+            if not _cp:
+                _mem = state.get("memory_context", {}) or {}
+                _cp = (_mem.get("decisions", {}) or {}).get("color_palette", {})
+            _theme = state.get("theme_preference", "dark")
+            _custom = state.get("custom_color_input", "")
+            _default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"] if _theme == "dark" \
+                else ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
+            _colors = _cp.get("colors", _default_colors)
+            while len(_colors) < 5:
+                _colors.append(_default_colors[len(_colors)])
+            _palette_name = _cp.get("name", "Midnight Blue" if _theme == "dark" else "Clean Light")
+            _palette_section = (
+                f"═══ COLOR PALETTE (USE EXACTLY — NON-NEGOTIABLE) ═══\n"
+                f"Palette: {_palette_name} | Theme: {_theme}\n"
+                f"- Base/Darkest: {_colors[0]}\n"
+                f"- Primary/Accent: {_colors[1]}\n"
+                f"- Secondary: {_colors[2]}\n"
+                f"- Text: {_colors[3]}\n"
+                f"- Background: {_colors[4]}\n"
+                + (f"- Custom override: {_custom}\n" if _custom else "")
+                + f"Use ONLY these hex values for all backgrounds, buttons, text, borders, gradients.\n"
+            )
             system_prompt = (
                 "You are a Senior React Frontend Engineer. You build COMPLETE, BEAUTIFUL UIs.\n\n"
-                "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n"
-                "DARK THEME: bg-[#09090b], text-white, gradients\n\n"
+                "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n\n"
+                + _palette_section + "\n"
                 "═══ CRITICAL RULES (violation = broken build) ═══\n"
                 "1. Use client_save_code for EVERY file. One tool call per file.\n"
                 "2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)\n"
@@ -1116,13 +1141,14 @@ class BuilderAgent(BaseAgent):
         overall_timeout = 1200
         print(f"{LOG} Starting agent loop with {overall_timeout}s overall timeout...", flush=True)
         try:
-            output_content = await asyncio.wait_for(
+            output_content, fallback_files_saved = await asyncio.wait_for(
                 self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id, task_index=index, tasks=tasks),
                 timeout=overall_timeout
             )
         except asyncio.TimeoutError:
             print(f"{LOG} ✖ OVERALL TIMEOUT ({overall_timeout}s) for '{task_title}'", flush=True)
-            output_content = f"Task '{task_title}' completed with fallback (overall timeout after {overall_timeout}s)"
+            output_content = f"Task '{task_title}' fallback timeout after {overall_timeout}s"
+            fallback_files_saved = 0
         except LLMRateLimitedError:
             print(f"{LOG} ✖ TASK FAILED: '{task_title}' — LLM unavailable after retries + fallback", flush=True)
             raise
@@ -1130,7 +1156,19 @@ class BuilderAgent(BaseAgent):
             import traceback as _tb
             print(f"{LOG} ✖ AGENT LOOP ERROR: {type(loop_err).__name__}: {loop_err}", flush=True)
             _tb.print_exc()
-            output_content = f"Task '{task_title}' completed with fallback (error: {loop_err})"
+            output_content = f"Task '{task_title}' fallback error: {loop_err}"
+            fallback_files_saved = 0
+
+        # If fallback builder loop also saved 0 files, mark task as failed
+        # rather than silently advancing — avoids empty builds
+        if fallback_files_saved == 0:
+            print(f"{LOG} ✖ TASK FAILED: '{task_title}' — fallback builder loop saved 0 files. Marking failed.", flush=True)
+            state["plan"][index]["status"] = "failed"
+            state["plan"][index]["result"] = "No files generated (LLM produced empty output)"
+            state["current_task_index"] = index + 1
+            state["executed_tasks"].append({"title": task_title, "status": "failed", "output": output_content[:200]})
+            yield state
+            return
 
         print(f"{LOG} ▶ Task DONE: '{task_title}' | output_len={len(output_content)}", flush=True)
         print(f"{LOG}   Output preview: {output_content[:300]}", flush=True)
