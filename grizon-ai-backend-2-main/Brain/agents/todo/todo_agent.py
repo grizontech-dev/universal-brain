@@ -553,8 +553,31 @@ class TodoAgent(BaseAgent):
         )
 
         async def _scope_call(sys: str, timeout: float, max_tok: int):
+            """Call LLM with automatic fallback to deepseek-v4-flash on rate limit."""
             msgs = [SystemMessage(content=sys)] + list(base_msgs)
-            return await self.chat(msgs, model_id="llama-4-scout-17b-16e-instruct", timeout=timeout, max_tokens=max_tok)
+            # Try primary model first
+            try:
+                result = await self.chat(msgs, model_id="llama-4-scout-17b-16e-instruct", timeout=timeout, max_tokens=max_tok)
+                if result and not result.startswith('{"error"'):
+                    return result
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = ("429" in err_str or "RateLimit" in type(e).__name__
+                                 or "engine_overloaded" in err_str or "Model busy" in err_str)
+                if not is_rate_limit:
+                    raise
+                print(f"{LOG} ↻ llama-4-scout rate limited — switching to deepseek-v4-flash", flush=True)
+
+            # Fallback to deepseek-v4-flash
+            import asyncio as _aio
+            await _aio.sleep(1.0)  # brief pause before fallback
+            try:
+                result = await self.chat(msgs, model_id="deepseek-v4-flash", timeout=timeout, max_tokens=max_tok)
+                print(f"{LOG} ✓ deepseek-v4-flash fallback succeeded", flush=True)
+                return result
+            except Exception as e2:
+                print(f"{LOG} ✖ Fallback also failed: {e2}", flush=True)
+                return '{"error": "LLM call failed"}'
 
         print(f"{LOG} Calling LLM — 2 scoped calls in parallel (build + frontend), total chars={sum(len(m.content) for m in base_msgs)}", flush=True)
         _t0 = time.time()
