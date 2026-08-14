@@ -422,7 +422,9 @@ class BuilderAgent(BaseAgent):
                 if file_path in seen_files:
                     print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
                     messages.append(ToolMessage(content=f"Already saved {file_path}. Move on to next file.", tool_call_id=tc["id"]))
-                    continue: Redirect stray root-level files to frontend/src/
+                    continue
+
+                # PATH FIX: Redirect stray root-level files to frontend/src/
                 if file_path.startswith("src/pages/") and not file_path.startswith("frontend/src/"):
                     corrected = file_path.replace("src/pages/", "frontend/src/pages/", 1)
                     tool_args["file_path"] = corrected
