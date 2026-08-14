@@ -381,7 +381,8 @@ Every page you create MUST have a <Route> in App.jsx.
                            if _contract_pages_block and _contract else "")
                         + (f"\n\nBUILD CONTRACT — CONFIRMED API HELPERS (use in api.js):\n{_contract_api_block}"
                            if _contract_api_block else "")
-                    )            except Exception:
+                    )
+            except Exception:
                 pass
 
         # Build user message — compact
