@@ -174,26 +174,10 @@ Every page you create MUST have a <Route> in App.jsx.
         skills_are_paths = bool(skills_content and "SKILL FILES" in skills_content)
         skills_are_rules = bool(skills_content and skills_content != "{}" and not skills_are_paths)
 
-        # Build compact system prompt — contract blocks passed to TOP of prompt
-        system_prompt = self._build_system_prompt(
-            task, palette_colors, palette_name, theme_preference,
-            custom_color_input, skills_content, framework,
-            skills_are_paths=skills_are_paths,
-            contract_pages_block=_contract_pages_block,
-            contract_api_block=_contract_api_block,
-        )
-
-        # App.jsx context — skip for component-only tasks (Button, Card, Badge, etc.)
-        component_only_keywords = ["button", "card", "badge", "input", "modal", "avatar", "spinner", "tooltip", "divider"]
-        is_component_only = any(kw in task.get("title", "").lower() for kw in component_only_keywords)
-
         workspace_id = state.get("current_job_id")
         user_id = state.get("user_id")
-        app_jsx_context = ""
-        api_js_context = ""
-        backend_route_context = ""
 
-        # ── Read build contract (shared truth written by DB + Backend agents) ──
+        # ── Read build contract BEFORE building system prompt so blocks go to TOP ──
         _contract: dict = {}
         _contract_api_block = ""
         _contract_pages_block = ""
@@ -235,6 +219,23 @@ Every page you create MUST have a <Route> in App.jsx.
             color_palette = _contract["color_palette"]
             theme_preference = _contract.get("theme_preference", theme_preference)
             custom_color_input = _contract.get("custom_color_input", custom_color_input)
+
+        # Build compact system prompt — contract blocks now at TOP of prompt
+        system_prompt = self._build_system_prompt(
+            task, palette_colors, palette_name, theme_preference,
+            custom_color_input, skills_content, framework,
+            skills_are_paths=skills_are_paths,
+            contract_pages_block=_contract_pages_block,
+            contract_api_block=_contract_api_block,
+        )
+
+        # App.jsx context — skip for component-only tasks (Button, Card, Badge, etc.)
+        component_only_keywords = ["button", "card", "badge", "input", "modal", "avatar", "spinner", "tooltip", "divider"]
+        is_component_only = any(kw in task.get("title", "").lower() for kw in component_only_keywords)
+
+        app_jsx_context = ""
+        api_js_context = ""
+        backend_route_context = ""
 
         app_jsx_context = ""
         api_js_context = ""
