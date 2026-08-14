@@ -838,6 +838,7 @@ class BuilderAgent(BaseAgent):
                 "- Tailwind CSS on every element\n"
                 "- Use lucide-react for icons\n"
                 "- Real content, not placeholders\n"
+                "- Use get_unsplash_image tool for all image URLs, NEVER use placeholders\n"
                 "- Each component 50-150 lines\n"
                 "- Export default the component\n"
             ))
@@ -1308,7 +1309,8 @@ class BuilderAgent(BaseAgent):
                 "6. Do NOT import CSS files (Tailwind is global)\n"
                 "7. Do NOT use brand icons: Github, Google, Twitter (cause errors)\n"
                 "8. Do NOT use images or placeholders for brand logos. Instead, write the brand name in text with beautiful typography and formatting (e.g., gradient text).\n"
-                "9. CRITICAL: Do NOT include `\"type\": \"module\"` in frontend/package.json. Vite handles ESM natively. Config files like postcss.config.js MUST use CommonJS: `module.exports = ...`\n\n"
+                "9. CRITICAL: Do NOT include `\"type\": \"module\"` in frontend/package.json. Vite handles ESM natively. Config files like postcss.config.js MUST use CommonJS: `module.exports = ...`\n"
+                "10. For ALL images (except logos), you MUST use the get_unsplash_image tool to get real image URLs based on the context. NEVER use placeholder URLs like https://example.com/image.jpg.\n\n"
                 "═══ OUTPUT FORMAT ═══\n"
                 "Generate ONE file per tool call. After ALL files, respond with a short summary.\n\n"
                 "═══ EXAMPLE: How to generate a component ═══\n"
