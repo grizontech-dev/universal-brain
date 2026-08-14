@@ -13,14 +13,14 @@ from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
-    _skill_cache = {}
-
     def __init__(self):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
             model_id="qwen/qwen3-coder"
         )
+        # Instance-level cache — avoids cross-build skill contamination between concurrent users
+        self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
@@ -176,8 +176,8 @@ Respond ONLY in JSON.
         skills_content = "{}"
         if not is_simple:
             cache_key = self._get_skill_cache_key(task, task_description)
-            if cache_key in BackendAgent._skill_cache:
-                skills_content = BackendAgent._skill_cache[cache_key]
+            if cache_key in self._skill_cache:
+                skills_content = self._skill_cache[cache_key]
                 print(f"[BACKEND] Using cached skills: {cache_key}", flush=True)
             else:
                 try:
@@ -190,7 +190,7 @@ Respond ONLY in JSON.
                             and not line.strip().lower().startswith("skillss/")
                         ]
                         skills_content = "\n".join(filtered_lines)
-                    BackendAgent._skill_cache[cache_key] = skills_content
+                    self._skill_cache[cache_key] = skills_content
                     print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
                 except Exception:
                     skills_content = "{}"

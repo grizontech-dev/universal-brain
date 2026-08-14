@@ -9,14 +9,14 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 
 class DatabaseAgent(BaseAgent):
-    _skill_cache = {}
-
     def __init__(self):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
             model_id="deepseek-v4-flash"
         )
+        # Instance-level cache — avoids cross-build skill contamination between concurrent users
+        self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         # Cache model once
         self.llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
@@ -72,13 +72,13 @@ Respond ONLY in JSON.
 
         # Skill resolution with granular caching — DB tasks are never simple
         cache_key = self._get_skill_cache_key(task, task_description)
-        if cache_key in DatabaseAgent._skill_cache:
-            skills_content = DatabaseAgent._skill_cache[cache_key]
+        if cache_key in self._skill_cache:
+            skills_content = self._skill_cache[cache_key]
             print(f"[DB] Using cached skills: {cache_key}", flush=True)
         else:
             try:
                 skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
-                DatabaseAgent._skill_cache[cache_key] = skills_content
+                self._skill_cache[cache_key] = skills_content
                 print(f"[DB] Cached skills for: {cache_key}", flush=True)
             except Exception:
                 skills_content = "{}"

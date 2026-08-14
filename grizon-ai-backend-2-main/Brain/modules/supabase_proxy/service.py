@@ -88,7 +88,7 @@ class CompanySupabaseProxy:
         if not authorization:
             raise HTTPException(status_code=401, detail="Missing bearer token")
 
-        token = authorization.removeprefix("Bearer ").strip()
+        token = authorization[7:].strip()  # strip "Bearer " prefix — compatible with Python 3.8+
         if not token:
             raise HTTPException(status_code=401, detail="Missing bearer token")
 

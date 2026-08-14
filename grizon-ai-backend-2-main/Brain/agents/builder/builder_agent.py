@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+﻿from typing import Any, Dict, List
 import os
 import json
 import time
@@ -394,6 +394,7 @@ class BuilderAgent(BaseAgent):
 
             # Execute each tool call
             stuck = False
+            all_skipped = True  # track if every tool call was skipped (no progress)
             for i, tc in enumerate(response.tool_calls):
                 if time.time() - start_time > timeout_sec:
                     for skipped_tc in response.tool_calls[i:]:
@@ -401,6 +402,7 @@ class BuilderAgent(BaseAgent):
                             content="Tool call skipped because the builder timed out.",
                             tool_call_id=skipped_tc["id"]
                         ))
+                    stuck = True
                     break
                 if len(files_saved) >= max_files:
                     for skipped_tc in response.tool_calls[i:]:
@@ -408,6 +410,7 @@ class BuilderAgent(BaseAgent):
                             content="Tool call skipped because the builder reached the file limit.",
                             tool_call_id=skipped_tc["id"]
                         ))
+                    stuck = True
                     break
 
                 tool_name = tc["name"]
@@ -419,9 +422,7 @@ class BuilderAgent(BaseAgent):
                 if file_path in seen_files:
                     print(f"[BUILDER] Skipping duplicate file: {file_path}", flush=True)
                     messages.append(ToolMessage(content=f"Already saved {file_path}. Move on to next file.", tool_call_id=tc["id"]))
-                    continue
-
-                # PATH FIX: Redirect stray root-level files to frontend/src/
+                    continue: Redirect stray root-level files to frontend/src/
                 if file_path.startswith("src/pages/") and not file_path.startswith("frontend/src/"):
                     corrected = file_path.replace("src/pages/", "frontend/src/pages/", 1)
                     tool_args["file_path"] = corrected
@@ -460,6 +461,7 @@ class BuilderAgent(BaseAgent):
                         files_saved.append(file_path)
                         seen_files.add(file_path)
                         consecutive_duplicates = 0
+                        all_skipped = False
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
                         # Auto-execute SQL migrations on Supabase when saving .sql files
@@ -484,11 +486,19 @@ class BuilderAgent(BaseAgent):
                             supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
+                        messages.append(ToolMessage(
+                            content=str(result)[:500],
+                            tool_call_id=tc["id"]
+                        ))
                     elif tool_name == "supabase_create_exec_sql_function":
                         result = await asyncio.wait_for(
                             supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
                             timeout=tool_timeout
                         )
+                        messages.append(ToolMessage(
+                            content=str(result)[:500],
+                            tool_call_id=tc["id"]
+                        ))
                     elif tool_name == "get_unsplash_image":
                         result = await asyncio.wait_for(
                             get_unsplash_image.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
@@ -512,6 +522,14 @@ class BuilderAgent(BaseAgent):
 
             if stuck:
                 break
+            # If LLM responded with tool calls but saved nothing new — potential infinite loop
+            if all_skipped and not stuck:
+                consecutive_duplicates += 1
+                if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
+                    print(f"{LOG} ✖ No progress for {consecutive_duplicates} rounds — breaking loop", flush=True)
+                    break
+            else:
+                consecutive_duplicates = 0
 
         # ═══════════════════════════════════════════════════════════════
         # VALIDATION LOOP: Scan ALL files for broken imports, auto-fix
@@ -536,358 +554,6 @@ class BuilderAgent(BaseAgent):
 
         return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
 
-    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
-        """Self-healing: esbuild syntax check → auto-fix errors.
-        
-        Import validation is handled separately by _validate_and_fix_imports().
-        """
-        import os as _os
-        import re as _re
-        import asyncio
-        import shutil
-        import subprocess as _sp
-        import time as _time
-
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
-        frontend_dir = _os.path.join(workspace_dir, "frontend")
-        frontend_src = _os.path.join(frontend_dir, "src")
-
-        if not _os.path.isdir(frontend_src):
-            return files_saved
-
-        start_time = _time.time()
-        bound_llm = self.llm.bind_tools([client_save_code])
-
-        # Use cached ProjectIndex instead of repeated os.walk
-        project_index = ProjectIndex.get_or_create(frontend_src)
-        project_index.scan()
-
-        # ═══════════════════════════════════════════════════════════════
-        # PHASE 2: esbuild syntax check (max 2 iterations to save credits)
-        # ═══════════════════════════════════════════════════════════════
-        print(f"{LOG} ═══ SELF-HEALING: esbuild syntax check ═══", flush=True)
-
-        for iteration in range(2):
-            if _time.time() - start_time > timeout_sec - 30:
-                print(f"{LOG} ✖ Timeout — skipping remaining esbuild iterations", flush=True)
-                break
-
-            # Use cached ProjectIndex for file list
-            all_files = [full_path for full_path, _ in project_index.jsx_files]
-
-            if not all_files:
-                break
-
-            escaped_files = [f'"{f}"' for f in all_files]
-
-            # Find npx with full path
-            npx_full = shutil.which("npx.cmd" if _os.name == 'nt' else "npx")
-            if npx_full:
-                cmd_str = f'"{npx_full}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
-            else:
-                npx_cli_js = None
-                node_full = shutil.which("node")
-                if node_full:
-                    try:
-                        npm_prefix = _sp.check_output(
-                            [node_full, _os.path.join(_os.path.dirname(node_full), "node_modules", "npm", "bin", "npm-prefix.js")],
-                            text=True, timeout=5
-                        ).strip()
-                        candidate = _os.path.join(npm_prefix, "node_modules", "npm", "bin", "npx-cli.js")
-                        if _os.path.isfile(candidate):
-                            npx_cli_js = candidate
-                    except Exception:
-                        pass
-
-                if node_full and npx_cli_js:
-                    cmd_str = f'"{node_full}" "{npx_cli_js}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
-                else:
-                    print(f"{LOG} ⚠ npx not found — skipping esbuild check", flush=True)
-                    break
-
-            try:
-                process = await asyncio.create_subprocess_shell(
-                    cmd_str,
-                    cwd=frontend_dir,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await process.communicate()
-
-                temp_dir = _os.path.join(frontend_dir, "temp_esbuild_out")
-                if _os.path.isdir(temp_dir):
-                    try:
-                        import shutil as _shutil
-                        _shutil.rmtree(temp_dir, ignore_errors=True)
-                    except Exception:
-                        pass
-
-                if process.returncode == 0:
-                    print(f"{LOG} ✓ esbuild passed (iteration {iteration+1}) — no syntax/import errors", flush=True)
-                    break
-
-                error_output = stderr.decode('utf-8', errors='ignore')
-
-                if ("npx: not found" in error_output
-                    or "npx is not recognized" in error_output
-                    or "command not found" in error_output.lower()
-                    or "executable file not found" in error_output.lower()
-                    or "no such file or directory" in error_output.lower()):
-                    print(f"{LOG} ⚠ npx not found on host. Skipping esbuild check.", flush=True)
-                    break
-
-                print(f"{LOG} ⚠ esbuild failed (iter {iteration+1}):\n{error_output[:500]}...", flush=True)
-
-                # Extract file names from error message (targeted approach)
-                import re as _re
-                error_files = set()
-                for match in _re.finditer(r'(?:"([^"]+\.jsx?)"|\'([^\']+\.jsx?)\')', error_output):
-                    fname = match.group(1) or match.group(2)
-                    if fname and not fname.startswith('node_modules'):
-                        error_files.add(fname)
-                
-                # Also check for line numbers like "path/file.jsx:123"
-                for match in _re.finditer(r'([^\s:]+\.jsx?):(\d+)', error_output):
-                    fname = match.group(1)
-                    if fname and not fname.startswith('node_modules'):
-                        error_files.add(fname)
-                
-                # If no files extracted from error, fall back to first 3 files
-                if not error_files:
-                    error_files = {fp for fp in all_files[:3]}
-                else:
-                    # Convert relative paths to full paths
-                    error_files = {_os.path.join(frontend_src, f) for f in error_files if _os.path.exists(_os.path.join(frontend_src, f))}
-                    # If none exist, try from frontend_dir
-                    if not error_files:
-                        error_files = {_os.path.join(frontend_dir, f) for f in error_files if _os.path.exists(_os.path.join(frontend_dir, f))}
-
-                # Read ONLY error-related files for context (targeted)
-                file_context = ""
-                for fp in list(error_files)[:5]:  # Max 5 files
-                    if not _os.path.isfile(fp):
-                        continue
-                    try:
-                        with open(fp, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        rel = _os.path.relpath(fp, frontend_src).replace('\\', '/')
-                        file_context += f"\n--- {rel} ---\n```jsx\n{content[:1000]}\n```\n"
-                    except Exception:
-                        pass
-
-                prompt = (
-                    "The React build failed with the following errors. Fix the broken files using `client_save_code`.\n"
-                    f"```\n{error_output[:1500]}\n```\n"
-                    "Rules:\n"
-                    "- ONLY fix files mentioned in the error messages\n"
-                    "- Fix the specific import/syntax issue — do NOT rewrite entire files\n"
-                    "- If an import is wrong, fix the import path or fix the export name\n"
-                    "- If a component is missing, generate a minimal working version\n"
-                    f"{file_context}\n"
-                    "--- CURRENT App.jsx (preserve its structure, only fix errors) ---\n"
-                )
-
-                app_jsx_path = _os.path.join(frontend_src, "App.jsx")
-                if not _os.path.isfile(app_jsx_path):
-                    app_jsx_path = _os.path.join(frontend_src, "App.tsx")
-
-                if _os.path.isfile(app_jsx_path):
-                    try:
-                        with open(app_jsx_path, 'r', encoding='utf-8') as f:
-                            prompt += f"```jsx\n{f.read()}\n```\n"
-                    except Exception:
-                        pass
-
-                messages = [
-                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch."),
-                    HumanMessage(content=prompt)
-                ]
-
-                print(f"{LOG} → Asking LLM to fix build errors (iter {iteration+1})...", flush=True)
-                response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=120)
-
-                if response.tool_calls:
-                    fixed_any = False
-                    for tc in response.tool_calls:
-                        if tc["name"] == "client_save_code":
-                            tool_args = tc["args"]
-                            file_path = tool_args.get("file_path", "")
-                            try:
-                                await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
-                                    timeout=30
-                                )
-                                if file_path and file_path not in files_saved:
-                                    files_saved.append(file_path)
-                                print(f"{LOG} ✓ Fixed: {file_path}", flush=True)
-                                fixed_any = True
-                            except Exception as e:
-                                print(f"{LOG} ✖ Failed to fix {file_path}: {e}", flush=True)
-                    if not fixed_any:
-                        print(f"{LOG} ⚠ LLM did not provide fixes — stopping", flush=True)
-                        break
-                else:
-                    print(f"{LOG} ⚠ LLM did not provide any fixes — stopping", flush=True)
-                    break
-
-            except Exception as e:
-                print(f"{LOG} ✖ esbuild error: {e}", flush=True)
-                break
-
-        return files_saved
-
-    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec):
-        """Scan ALL .jsx/.js files for imports, check if imported files exist, generate missing ones."""
-        import re as _re
-        import os as _os
-        fixed = []
-        already_checked = set()
-
-        if not files_saved:
-            return fixed
-
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
-        frontend_src = _os.path.join(workspace_dir, "frontend", "src")
-
-        if not _os.path.isdir(frontend_src):
-            print(f"{LOG} ⚠ No frontend/src dir found", flush=True)
-            return fixed
-
-        # Use cached ProjectIndex instead of os.walk
-        project_index = ProjectIndex.get_or_create(frontend_src)
-        project_index.scan()
-
-        print(f"{LOG} ═══ VALIDATION: Scanning {len(project_index.jsx_files)} files for broken imports ═══", flush=True)
-
-        # Use cached imports from ProjectIndex
-        missing = []
-
-        for full_path, rel_path in project_index.jsx_files:
-            # Use cached imports
-            imports = project_index.get_imports(full_path)
-            for folder, name in imports:
-                check_key = f"{folder}/{name}"
-                if check_key in already_checked:
-                    continue
-                already_checked.add(check_key)
-
-                # Use cached file existence check
-                found = project_index.file_exists(f"{folder}/{name}.jsx") or \
-                        project_index.file_exists(f"{folder}/{name}.js") or \
-                        project_index.file_exists(f"{folder}/{name}.tsx") or \
-                        project_index.file_exists(f"{folder}/{name}.ts")
-
-                if not found:
-                    rel_missing = f"frontend/src/{folder}/{name}.jsx"
-                    # Don't re-generate files we already fixed
-                    if rel_missing not in fixed:
-                        missing.append((rel_missing, name, folder, rel_path))
-                        print(f"{LOG}   ✖ {rel_path} imports {name} → {rel_missing} MISSING", flush=True)
-                else:
-                    print(f"{LOG}   ✓ {rel_path} imports {name} → exists", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # ORPHAN DETECTION: Find components not imported by any file
-        # ═══════════════════════════════════════════════════════════════
-        components_dir = _os.path.join(frontend_src, "components")
-        if _os.path.isdir(components_dir):
-            # Find all component files
-            component_files = []
-            for f in _os.listdir(components_dir):
-                if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
-                    name = f.split('.')[0]
-                    component_files.append(name)
-
-            # Find all imports across ALL files (using ProjectIndex)
-            all_imports = set()
-            for full_path, rel_path in project_index.jsx_files:
-                # Use cached imports from ProjectIndex
-                imports = project_index.get_imports(full_path)
-                for folder, name in imports:
-                    all_imports.add(name)
-
-            # Find orphans
-            orphans = [c for c in component_files if c not in all_imports]
-            if orphans:
-                print(f"{LOG} ⚠ {len(orphans)} orphaned components: {orphans}. (Ignoring instead of destructive rewrite)", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # CLEANUP: Remove stray files outside src/
-        # ═══════════════════════════════════════════════════════════════
-        stray_app = _os.path.join(workspace_dir, "frontend", "App.jsx")
-        if _os.path.exists(stray_app):
-            try:
-                _os.remove(stray_app)
-                print(f"{LOG} ✓ Removed stray frontend/App.jsx (outside src/)", flush=True)
-            except Exception:
-                pass
-
-        if not missing:
-            print(f"{LOG} ✓ All imports validated — no missing files", flush=True)
-            return fixed
-
-        print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
-
-        # Generate each missing file
-        bound_llm = self.llm.bind_tools([client_save_code])
-        messages = [
-            SystemMessage(content=(
-                "You are a React frontend engineer. Generate missing component files.\n"
-                "Rules:\n"
-                "- Dark theme: bg-[#09090b], white text\n"
-                "- Tailwind CSS on every element\n"
-                "- Use lucide-react for icons\n"
-                "- Real content, not placeholders\n"
-                "- Use get_unsplash_image tool for all image URLs, NEVER use placeholders\n"
-                "- Each component 50-150 lines\n"
-                "- Export default the component\n"
-            ))
-        ]
-
-        for rel_path, name, folder, imported_by in missing:
-            if time.time() - start_time > timeout_sec - 30:
-                print(f"{LOG} ✖ Not enough time to generate {rel_path}", flush=True)
-                break
-
-            print(f"{LOG} → Generating missing: {rel_path} (imported by {imported_by})", flush=True)
-
-            gen_prompt = (
-                f"Generate the missing file: {rel_path}\n"
-                f"This is a {folder} component called '{name}'.\n"
-                f"It's imported in {imported_by}.\n"
-                f"Generate a complete, working React component with Tailwind CSS dark theme.\n"
-                f"Use client_save_code to save it to: {rel_path}"
-            )
-            messages.append(HumanMessage(content=gen_prompt))
-
-            try:
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(list(messages)),
-                    timeout=120
-                )
-                messages.append(response)
-
-                if response.tool_calls:
-                    for tc in response.tool_calls:
-                        if tc["name"] == "client_save_code":
-                            tool_args = tc["args"]
-                            tool_args["file_path"] = rel_path
-                            try:
-                                result = await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
-                                    timeout=30
-                                )
-                                fixed.append(rel_path)
-                                print(f"{LOG} ✓ Generated: {rel_path}", flush=True)
-                                messages.append(ToolMessage(content=f"Saved {rel_path}", tool_call_id=tc["id"]))
-                            except Exception as e:
-                                print(f"{LOG} ✖ Failed to save {rel_path}: {e}", flush=True)
-                                messages.append(ToolMessage(content=f"Error: {e}", tool_call_id=tc["id"]))
-            except Exception as e:
-                print(f"{LOG} ✖ LLM error generating {rel_path}: {e}", flush=True)
-
-        print(f"{LOG} ═══ VALIDATION DONE: {len(fixed)} missing files generated ═══", flush=True)
-        return fixed
 
     async def _validate_backend_routes(self, session_id):
         """Check if server.js mounts all route files. Auto-fix if missing."""
@@ -959,58 +625,6 @@ class BuilderAgent(BaseAgent):
             fh.write('\n'.join(lines))
 
         print(f"{LOG} ✓ Auto-mounted {len(unmounted)} routes in server.js", flush=True)
-
-    async def _run_free_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int) -> str:
-        """Fallback: free-form agent loop when file plan parsing fails."""
-        max_tool_calls = 20
-        tool_call_count = 0
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        bound_llm = self.llm.bind_tools([client_save_code])
-        start_time = time.time()
-        seen_files = set()
-        files_saved = []
-
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout_sec or tool_call_count >= max_tool_calls:
-                break
-
-            remaining = timeout_sec - elapsed
-            llm_timeout = min(120, remaining)
-            if llm_timeout <= 15:
-                break
-
-            try:
-                response = await asyncio.wait_for(bound_llm.ainvoke(list(messages)), timeout=llm_timeout)
-            except Exception:
-                break
-
-            messages.append(response)
-            if not response.tool_calls:
-                break
-
-            for tc in response.tool_calls:
-                if time.time() - start_time > timeout_sec:
-                    break
-                tool_args = tc["args"]
-                file_path = tool_args.get("file_path", "")
-                if file_path in seen_files:
-                    messages.append(ToolMessage(content=f"Already saved {file_path}. Next file.", tool_call_id=tc["id"]))
-                    continue
-                try:
-                    if tc["name"] == "client_save_code":
-                        result = await asyncio.wait_for(
-                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
-                            timeout=30
-                        )
-                        files_saved.append(file_path)
-                        seen_files.add(file_path)
-                        messages.append(ToolMessage(content=f"Saved {file_path}. Next file.", tool_call_id=tc["id"]))
-                except Exception:
-                    pass
-                tool_call_count += 1
-
-        return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved) if files_saved else 'none'}"
 
     async def execute(self, state: Dict[str, Any]):
         import traceback as _traceback
@@ -1256,6 +870,7 @@ class BuilderAgent(BaseAgent):
         # Load skills based on category
         skill_content = ""
         system_prompt = ""
+        # "skillss" (double-s) is the intentional folder name used by SkillResolver — keep consistent
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
         
         # Gather existing codebase memory for follow-ups (metadata only, not full content)

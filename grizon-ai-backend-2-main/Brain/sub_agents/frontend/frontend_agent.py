@@ -13,15 +13,15 @@ from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class FrontendAgent(BaseAgent):
-    # Class-level skill cache: {task_category: skills_content}
-    _skill_cache = {}
-
     def __init__(self):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
             model_id="qwen/qwen3-coder"
         )
+        # Instance-level cache — class-level dict caused cross-build skill contamination
+        # between concurrent users (User A's skills leaking into User B's build)
+        self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         # Cache bound model once — avoid recreating every execute()
         self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
@@ -149,13 +149,13 @@ Otherwise DO NOT generate App.jsx — just create the component files.
         if not is_simple:
             # Cache by task category to avoid repeated resolution
             task_category = task.get("category", "general")
-            if task_category in FrontendAgent._skill_cache:
-                skills_content = FrontendAgent._skill_cache[task_category]
+            if task_category in self._skill_cache:
+                skills_content = self._skill_cache[task_category]
                 print(f"[FRONTEND] Using cached skills for category: {task_category}", flush=True)
             else:
                 try:
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
-                    FrontendAgent._skill_cache[task_category] = skills_content
+                    self._skill_cache[task_category] = skills_content
                 except Exception:
                     skills_content = "{}"
 
