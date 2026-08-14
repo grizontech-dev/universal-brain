@@ -42,16 +42,32 @@ class FrontendAgent(BaseAgent):
     def _build_system_prompt(self, task: Dict, palette_colors: list, palette_name: str,
                               theme_preference: str, custom_color_input: str,
                               skills_content: str, framework: str,
-                              skills_are_paths: bool = False) -> str:
-        """Build compact system prompt (~1500 tokens)."""
+                              skills_are_paths: bool = False,
+                              contract_pages_block: str = "",
+                              contract_api_block: str = "") -> str:
+        """Build system prompt with contract data at the TOP for primacy bias."""
 
         c = palette_colors
         while len(c) < 5:
             c.append('#0f172a' if theme_preference == 'dark' else '#ffffff')
 
+        # ── CONTRACT BLOCK (TOP — LLM reads this first, remembers it best) ──
+        contract_section = ""
+        if contract_pages_block or contract_api_block:
+            contract_section = "═══ PROJECT CONTRACT (HIGHEST PRIORITY — follow these EXACTLY) ═══\n"
+            if contract_pages_block:
+                contract_section += f"{contract_pages_block}\n\n"
+            if contract_api_block:
+                contract_section += f"{contract_api_block}\n"
+            contract_section += (
+                "MANDATE: Every page listed above MUST be created AND have a <Route> in App.jsx.\n"
+                "MANDATE: Every API helper listed above MUST be exported from lib/api.js.\n"
+                "Do NOT invent page names or routes not listed above.\n\n"
+            )
+
         prompt = f"""You are a Senior React Frontend Engineer. Stack: {framework} + Tailwind CSS + framer-motion + react-router-dom + lucide-react.
 
-═══ COLOR PALETTE (USE EXACTLY) ═══
+{contract_section}═══ COLOR PALETTE (USE EXACTLY — no other hex values) ═══
 Palette: {palette_name} | Theme: {theme_preference}
 - Base/Darkest: {c[0]}
 - Primary/Accent: {c[1]}
@@ -158,11 +174,13 @@ Every page you create MUST have a <Route> in App.jsx.
         skills_are_paths = bool(skills_content and "SKILL FILES" in skills_content)
         skills_are_rules = bool(skills_content and skills_content != "{}" and not skills_are_paths)
 
-        # Build compact system prompt
+        # Build compact system prompt — contract blocks passed to TOP of prompt
         system_prompt = self._build_system_prompt(
             task, palette_colors, palette_name, theme_preference,
             custom_color_input, skills_content, framework,
-            skills_are_paths=skills_are_paths
+            skills_are_paths=skills_are_paths,
+            contract_pages_block=_contract_pages_block,
+            contract_api_block=_contract_api_block,
         )
 
         # App.jsx context — skip for component-only tasks (Button, Card, Badge, etc.)
@@ -171,6 +189,53 @@ Every page you create MUST have a <Route> in App.jsx.
 
         workspace_id = state.get("current_job_id")
         user_id = state.get("user_id")
+        app_jsx_context = ""
+        api_js_context = ""
+        backend_route_context = ""
+
+        # ── Read build contract (shared truth written by DB + Backend agents) ──
+        _contract: dict = {}
+        _contract_api_block = ""
+        _contract_pages_block = ""
+        _contract_palette_block = ""
+        try:
+            if workspace_id and not workspace_id.startswith("error:"):
+                from Brain.shared.build_contract import (
+                    read_contract,
+                    format_api_contract_for_prompt,
+                    format_pages_for_prompt,
+                    format_palette_for_prompt,
+                )
+                from Brain.services.workspace_manager import workspace_manager as _wm_fe
+                _ws_fe = _wm_fe.resolve_workspace_path(workspace_id, user_id=user_id)
+                if _ws_fe:
+                    _contract = read_contract(_ws_fe)
+                    _contract_api_block = format_api_contract_for_prompt(_contract)
+                    _contract_pages_block = format_pages_for_prompt(_contract)
+                    _contract_palette_block = format_palette_for_prompt(_contract)
+                    print(
+                        f"[FRONTEND] [CONTRACT] Loaded ✓ | "
+                        f"pages={len(_contract.get('pages', []))} "
+                        f"api_routes={len(_contract.get('api_routes', []))} "
+                        f"helpers={len(_contract.get('api_helpers', {}))} "
+                        f"schema_names={_contract.get('schema_names', [])} "
+                        f"components_created={len(_contract.get('components_created', []))} "
+                        f"palette={'✓' if _contract.get('color_palette') else '✗'}",
+                        flush=True,
+                    )
+                    if _contract_pages_block:
+                        print(f"[FRONTEND] [CONTRACT] Pages injected to TOP of prompt:\n{_contract_pages_block}", flush=True)
+                    if _contract_api_block:
+                        print(f"[FRONTEND] [CONTRACT] API block injected to TOP of prompt:\n{_contract_api_block[:400]}", flush=True)
+        except Exception as _cfe_err:
+            print(f"[FRONTEND] [CONTRACT] read failed (non-fatal): {_cfe_err}", flush=True)
+
+        # Prefer contract palette over state palette when contract has one
+        if _contract.get("color_palette"):
+            color_palette = _contract["color_palette"]
+            theme_preference = _contract.get("theme_preference", theme_preference)
+            custom_color_input = _contract.get("custom_color_input", custom_color_input)
+
         app_jsx_context = ""
         api_js_context = ""
         backend_route_context = ""
@@ -243,6 +308,8 @@ Every page you create MUST have a <Route> in App.jsx.
                 "\n\nAPI CONTRACT (use EXACTLY these helper names in api.js — do not invent new names):\n"
                 + "\n".join(contract_lines)
             )
+        # Note: contract pages/API blocks are already at TOP of system prompt (primacy position).
+        # Do NOT re-inject them here — it wastes tokens and dilutes the top-of-prompt signal.
 
         # Compact executed tasks context
         executed_context = ""
@@ -308,8 +375,13 @@ Every page you create MUST have a <Route> in App.jsx.
                         "\n  4. Save the COMPLETE new App.jsx with client_save_code."
                         + (f"\n\nCURRENT App.jsx (preserve existing routes, add missing ones):\n```jsx\n{current_app_content[:2000]}\n```"
                            if current_app_content else "")
-                    )
-            except Exception:
+                        # Contract pages supplement — ensures planned pages that aren't on disk yet
+                        # are still listed so the LLM creates stubs for them
+                        + (f"\n\nBUILD CONTRACT — PLANNED PAGES (include ALL even if file not yet on disk):\n{_contract_pages_block}"
+                           if _contract_pages_block and _contract else "")
+                        + (f"\n\nBUILD CONTRACT — CONFIRMED API HELPERS (use in api.js):\n{_contract_api_block}"
+                           if _contract_api_block else "")
+                    )            except Exception:
                 pass
 
         # Build user message — compact
@@ -384,6 +456,12 @@ Every page you create MUST have a <Route> in App.jsx.
             msgs.append(response)
 
             if not response.tool_calls:
+                # Early-exit guard: if files were already saved this run, treat a no-tool-call
+                # response as a natural completion signal — do NOT fire corrective prompts.
+                if files_saved:
+                    print(f"[FRONTEND] ✓ Clean completion — {len(files_saved)} files saved, LLM signalled done", flush=True)
+                    break
+
                 last_content = response.content
                 if isinstance(last_content, list):
                     last_content = str(last_content)
@@ -472,4 +550,22 @@ Every page you create MUST have a <Route> in App.jsx.
                     if isinstance(parsed, dict) and "files" in parsed:
                         return parsed
 
-        return {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        if files_saved:
+            # Record saved components into the shared build contract
+            try:
+                if workspace_id and not workspace_id.startswith("error:"):
+                    from Brain.shared.build_contract import record_components
+                    from Brain.services.workspace_manager import workspace_manager as _wm_rec
+                    _ws_rec = _wm_rec.resolve_workspace_path(workspace_id, user_id=user_id)
+                    if _ws_rec:
+                        record_components(_ws_rec, list(files_saved))
+                        print(f"[FRONTEND] [CONTRACT] Recorded {len(files_saved)} components to contract", flush=True)
+            except Exception as _rec_err:
+                print(f"[FRONTEND] [CONTRACT] component record failed (non-fatal): {_rec_err}", flush=True)
+
+            return {
+                "status": "completed",
+                "files": [{"path": f, "content": ""} for f in sorted(files_saved)],
+                "summary": f"Saved {len(files_saved)} files via tool calls"
+            }
+        return {"files": [], "summary": "No files saved"}

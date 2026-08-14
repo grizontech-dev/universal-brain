@@ -658,6 +658,27 @@ class BuilderAgent(BaseAgent):
             ProjectIndex.clear_cache()
             print(f"{LOG} 🔄 Cleared ProjectIndex cache for new build", flush=True)
 
+            # Bootstrap the shared build contract so every sub-agent has a common truth
+            try:
+                from Brain.shared.build_contract import create_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_bc
+                ws_root_bc = _wm_bc.resolve_workspace_path(session_id, user_id=user_id)
+                if ws_root_bc:
+                    _bc = create_contract(ws_root_bc, state)
+                    print(
+                        f"{LOG} [CONTRACT] ✅ Bootstrap complete | "
+                        f"project='{_bc.get('project_name', '?')}' "
+                        f"pages={[p['name'] for p in _bc.get('pages', [])]} "
+                        f"seeded_routes={len(_bc.get('api_routes', []))} "
+                        f"schema_names={_bc.get('schema_names', [])} "
+                        f"palette={'✓' if _bc.get('color_palette') else '✗'}",
+                        flush=True,
+                    )
+                else:
+                    print(f"{LOG} [CONTRACT] ⚠ workspace not resolved — contract NOT created", flush=True)
+            except Exception as _bc_err:
+                print(f"{LOG} [CONTRACT] ⚠ Bootstrap failed (non-fatal): {_bc_err}", flush=True)
+
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
         print(f"{LOG} EXECUTE | task={index+1}/{len(tasks)} | session={session_id}", flush=True)
         print(f"{LOG} Total tasks in plan: {len(tasks)}", flush=True)
@@ -697,8 +718,13 @@ class BuilderAgent(BaseAgent):
         category = current_task.get("category", "backend") or "backend"
         framework = state.get("framework", "react")
 
-        # SKIP runner tasks — they should be handled by RunnerAgent, not Builder
-        if category == "runner" or "runner" in task_title.lower():
+        # SKIP runner tasks — BUT only if the title is NOT an integration/wiring task.
+        # Integration tasks (App.jsx wiring, route wiring, etc.) MUST run as frontend
+        # even if their category is tagged "runner" — skipping them leaves App.jsx unwired.
+        _integration_keywords = ("wire", "integrat", "app.jsx", "wiring", "connect", "mount", "assemble")
+        _is_integration_task = any(kw in task_title.lower() for kw in _integration_keywords)
+
+        if (category == "runner" or "runner" in task_title.lower()) and not _is_integration_task:
             print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
             current_task["status"] = "completed"
             next_idx = index + 1
@@ -725,6 +751,12 @@ class BuilderAgent(BaseAgent):
             yield state
             return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)
+
+        # Reclassify integration/wiring tasks that were tagged "runner" → treat as "frontend"
+        # so FrontendAgent handles App.jsx wiring instead of the task being dropped.
+        if category == "runner" and _is_integration_task:
+            category = "frontend"
+            print(f"{LOG} [CONTRACT] ↻ Reclassified '{task_title}' runner→frontend (integration/wiring task must not be skipped)", flush=True)
 
         if workspace_id and not workspace_id.startswith("error:"):
             start_act = self._make_activity("task_start", f"Exploring — {task_title}", task_title=task_title, status="running")

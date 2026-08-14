@@ -303,6 +303,13 @@ class PlannerAgent(BaseAgent):
         # Minimal report text (just used internally, not displayed in chat)
         report = f"## {plan.get('project_name', 'New Project')} - Implementation Plan\n{plan.get('summary', '')}"
 
+        # Ensure project_plan is always stored as dict, never as a JSON string
+        if isinstance(plan, str):
+            try:
+                import json as _j
+                plan = _j.loads(plan)
+            except Exception:
+                plan = {"markdown_plan": plan, "project_name": "Project"}
         state["project_plan"] = plan
         state["project_report"] = report
         state["status"] = "plan_proposed"

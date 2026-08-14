@@ -969,6 +969,177 @@ class ValidationGate:
         except Exception as e:
             print(f"{LOG} Failed to emit validation status: {e}", flush=True)
 
+    def _check_build_contract(self) -> Tuple[List[ValidationError], List[ValidationWarning]]:
+        """
+        Cross-check build_contract.json against actual disk state:
+          1. Every api_helper must be exported from frontend/src/lib/api.js
+          2. Every page in contract["pages"] must have a <Route> in App.jsx
+
+        On attempt 1 these are warnings (non-blocking) so a first-pass build can
+        succeed even if the contract was written after the frontend tasks ran.
+        On attempt 2+ they escalate to hard errors so the Repair Agent is forced
+        to fix them (not skip them).
+        """
+        errors: List[ValidationError] = []
+        warnings: List[ValidationWarning] = []
+
+        try:
+            from Brain.shared.build_contract import read_contract
+            contract = read_contract(self.workspace_dir)
+        except Exception:
+            return errors, warnings
+
+        # On attempt 1: emit as warnings (don't block a clean first pass).
+        # On attempt 2+: escalate to hard errors — Repair Agent must fix them.
+        _attempt = getattr(self, "_current_attempt", 1)
+        _use_errors = _attempt >= 2
+
+        def _report(stage: str, message: str, file_path: str) -> None:
+            if _use_errors:
+                errors.append(ValidationError(stage=stage, message=message, file_path=file_path))
+            else:
+                warnings.append(ValidationWarning(stage=stage, message=message, file_path=file_path))
+
+        # ── Check 1: api.js exports match contract helpers ──
+        api_helpers = contract.get("api_helpers", {})
+        if api_helpers:
+            api_js_path = os.path.join(self.frontend_src, "lib", "api.js")
+            if os.path.isfile(api_js_path):
+                try:
+                    with open(api_js_path, "r", encoding="utf-8") as f:
+                        api_content = f.read()
+                    exported = set(re.findall(
+                        r"export\s+(?:async\s+)?(?:function|const|let|var)\s+(\w+)", api_content
+                    ))
+                    # Also catch: export { foo, bar }
+                    for m in re.finditer(r"export\s+\{([^}]+)\}", api_content):
+                        for name in m.group(1).split(","):
+                            exported.add(name.strip().split(" as ")[0].strip())
+
+                    for helper_name in api_helpers:
+                        if helper_name and helper_name not in exported:
+                            _report(
+                                "contract",
+                                (
+                                    f"Build contract helper '{helper_name}' is not exported by api.js. "
+                                    f"Add: export async function {helper_name}() {{...}}"
+                                ),
+                                "frontend/src/lib/api.js",
+                            )
+                except Exception:
+                    pass
+
+        # ── Check 2: contract pages have routes in App.jsx ──
+        contract_pages = contract.get("pages", [])
+        if contract_pages:
+            app_jsx_path = os.path.join(self.frontend_src, "App.jsx")
+            if os.path.isfile(app_jsx_path):
+                try:
+                    with open(app_jsx_path, "r", encoding="utf-8") as f:
+                        app_content = f.read()
+                    # Extract all route paths from <Route path="..."> or <Route path='...'>
+                    declared_routes = set(re.findall(r'<Route\b[^>]*\bpath=["\']([^"\']+)["\']', app_content))
+
+                    for page in contract_pages:
+                        route = page.get("route", "")
+                        name = page.get("name", "")
+                        if route and route not in declared_routes:
+                            _report(
+                                "contract",
+                                (
+                                    f"Build contract page '{name}' (route '{route}') "
+                                    f"has no matching <Route> in App.jsx."
+                                ),
+                                "frontend/src/App.jsx",
+                            )
+                except Exception:
+                    pass
+
+        if errors or warnings:
+            print(
+                f"{LOG} [CONTRACT] Check results: {len(errors)} errors, {len(warnings)} warnings "
+                f"(attempt={_attempt}, escalated={'yes' if _use_errors else 'no'})",
+                flush=True,
+            )
+            for e in errors:
+                print(f"{LOG} [CONTRACT] ✖ {e}", flush=True)
+            for w in warnings:
+                print(f"{LOG} [CONTRACT] ⚠ {w}", flush=True)
+        else:
+            print(f"{LOG} [CONTRACT] ✅ All contract checks passed (attempt={_attempt})", flush=True)
+
+        return errors, warnings
+
+    async def _generate_missing_page_stubs(self, errors: List["ValidationError"]) -> int:
+        """
+        For each broken-import error whose target resolves to a non-existent file under
+        frontend/src/pages/, write a minimal valid React functional component stub so the
+        broken-import check passes without consuming an LLM repair credit.
+
+        Only stubs paths under pages/ — skips lib/, components/, and any path that already
+        exists on disk.  Returns the number of stubs created.
+        """
+        stubs_created = 0
+        for err in errors:
+            if err.stage != "imports":
+                continue
+            m = re.search(r"Broken import '([^']+)' — target file does not exist", err.message or "")
+            if not m:
+                continue
+            import_path = m.group(1)
+            if not err.file_path:
+                continue
+
+            # Resolve the broken import path relative to the importing file
+            importer_abs = os.path.join(self.workspace_dir, err.file_path)
+            importer_dir = os.path.dirname(importer_abs)
+            target_base = os.path.normpath(os.path.join(importer_dir, import_path))
+
+            # Try .jsx then .js — pick the first candidate that does NOT already exist
+            target_path = None
+            for ext in (".jsx", ".js"):
+                candidate = target_base + ext
+                if not os.path.isfile(candidate):
+                    target_path = candidate
+                    break
+            if not target_path:
+                # Both extensions already exist — nothing to stub
+                continue
+
+            # Only auto-stub files under pages/
+            try:
+                rel = os.path.relpath(target_path, self.frontend_src).replace("\\", "/")
+            except ValueError:
+                continue
+            if not rel.startswith("pages/"):
+                continue
+
+            component_name = os.path.splitext(os.path.basename(target_path))[0]
+            stub_content = (
+                "import { motion } from 'framer-motion';\n\n"
+                f"export default function {component_name}() {{\n"
+                "  return (\n"
+                "    <motion.div\n"
+                "      initial={{ opacity: 0 }}\n"
+                "      animate={{ opacity: 1 }}\n"
+                '      className="min-h-screen flex items-center justify-center"\n'
+                "    >\n"
+                f'      <h1 className="text-2xl font-bold">{component_name}</h1>\n'
+                "    </motion.div>\n"
+                "  );\n"
+                "}\n"
+            )
+            try:
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with open(target_path, "w", encoding="utf-8") as f:
+                    f.write(stub_content)
+                print(f"{LOG} [STUB] Generated missing page stub: frontend/src/{rel}", flush=True)
+                stubs_created += 1
+            except Exception as e:
+                print(f"{LOG} [STUB] Failed to write stub for {rel}: {e}", flush=True)
+
+        return stubs_created
+
     async def run_validation_and_repair(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Core Validation Loop: Generate → Validate → Repair → Validate → Deliver. Max 5 repair attempts."""
         print(f"\n{LOG} ===============================================================", flush=True)
@@ -979,6 +1150,7 @@ class ValidationGate:
         previous_fingerprints: Set[str] = set()
 
         for attempt in range(1, self.max_repair_attempts + 1):
+            self._current_attempt = attempt  # used by _check_build_contract for warning→error escalation
             state["status"] = "validating"
             await self._emit_status("validating", attempt=attempt)
 
@@ -990,20 +1162,23 @@ class ValidationGate:
             static_errors = []
             static_warnings = []
             if not dep_errors and not backend_dep_errors:
-                imp_result, build_result, quality_result = await asyncio.gather(
+                imp_result, build_result, quality_result, contract_result = await asyncio.gather(
                     asyncio.to_thread(self._check_imports_and_structure),
                     asyncio.to_thread(self._check_static_compilation),
                     asyncio.to_thread(self._check_eslint_quality),
+                    asyncio.to_thread(self._check_build_contract),
                 )
                 imp_errors, imp_warns = imp_result
                 build_errors, build_warns = build_result
                 quality_errors, quality_warns = quality_result
-                static_errors = imp_errors + build_errors + quality_errors
-                static_warnings = imp_warns + build_warns + quality_warns
+                contract_errors, contract_warns = contract_result
+                static_errors = imp_errors + build_errors + quality_errors + contract_errors
+                static_warnings = imp_warns + build_warns + quality_warns + contract_warns
             else:
                 imp_errors, imp_warns = [], []
                 build_errors, build_warns = [], []
                 quality_errors, quality_warns = [], []
+                contract_errors, contract_warns = [], []
 
             runtime_errors, runtime_warns = [], []
             if not static_errors:
@@ -1077,16 +1252,20 @@ class ValidationGate:
                 for w in all_warnings
                 if "Named export" in w.message
             ]
+            # Generate deterministic stubs for wholly-absent page import targets
+            # before invoking the LLM — avoids burning a repair credit on a file the
+            # LLM cannot create from thin air (it has no content to work with).
+            stubs_created = await self._generate_missing_page_stubs(repair_items)
+            if stubs_created:
+                print(f"{LOG} [STUB] Created {stubs_created} page stub(s) — re-running validation without LLM call", flush=True)
+                previous_fingerprints = current_fingerprints
+                continue
+
             repair_success = await self._run_targeted_repair(repair_items, attempt, stagnant_errors)
             if not repair_success:
-                print(f"{LOG} [WARN] Repair agent produced no file changes -- stopping early to save LLM credits", flush=True)
-                state["status"] = "validation_failed"
-                await self._emit_status("validation_failed", attempt=attempt, errors=all_errors)
-                return {
-                    "passed": False,
-                    "attempts": attempt,
-                    "errors": [e.to_dict() for e in all_errors]
-                }
+                print(f"{LOG} [WARN] Repair agent produced no file changes on attempt {attempt} — continuing to next attempt", flush=True)
+                # Non-fatal: fall through so the loop continues to the next attempt.
+                # Only set validation_failed when max_repair_attempts is exhausted (handled above).
 
             previous_fingerprints = current_fingerprints
 

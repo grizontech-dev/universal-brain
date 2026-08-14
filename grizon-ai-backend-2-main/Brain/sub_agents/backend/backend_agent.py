@@ -305,6 +305,12 @@ Respond ONLY in JSON.
             msgs.append(response)
 
             if not response.tool_calls:
+                # Early-exit guard: same pattern as FrontendAgent.
+                # If files were already saved, treat no-tool-call as clean completion.
+                if files_saved:
+                    print(f"[BACKEND] ✓ Clean completion — {len(files_saved)} files saved, LLM signalled done", flush=True)
+                    break
+
                 last_content = response.content
                 if isinstance(last_content, list):
                     last_content = str(last_content)
@@ -379,7 +385,11 @@ Respond ONLY in JSON.
                     if isinstance(parsed, dict) and "files" in parsed:
                         return parsed
 
-        result = {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        result = {
+            "status": "completed" if files_saved else "empty",
+            "files": [{"path": f, "content": ""} for f in sorted(files_saved)],
+            "summary": f"Saved {len(files_saved)} files via tool calls"
+        }
         print(f"[BACKEND] Result: files={len(result['files'])} paths={[f['path'] for f in result['files']]}", flush=True)
 
         # ── API CONTRACT: scan server.js for mounted routes and store in state ──
@@ -411,6 +421,32 @@ Respond ONLY in JSON.
                     if contract:
                         state["api_contract"] = contract
                         print(f"[BACKEND] api_contract stored: {list(contract.keys())}", flush=True)
+                        # Persist to build_contract.json so FrontendAgent gets exact routes
+                        try:
+                            from Brain.shared.build_contract import record_api_routes
+                            from Brain.services.workspace_manager import workspace_manager as _wm_be
+                            _ws_be = _wm_be.resolve_workspace_path(workspace_id, user_id=user_id)
+                            if _ws_be:
+                                _mounted_routes = []
+                                _helpers: dict = {}
+                                for _route_path, _helpers_dict in contract.items():
+                                    for _method, _handler in _helpers_dict.items():
+                                        _mounted_routes.append({
+                                            "path": _route_path,
+                                            "method": _method.upper(),
+                                            "handler": _handler,
+                                        })
+                                        _helpers[_handler] = f"{_method.upper()} {_route_path}"
+                                record_api_routes(_ws_be, _mounted_routes, _helpers)
+                                print(
+                                    f"[BACKEND] [CONTRACT] ✅ Routes persisted to contract | "
+                                    f"routes={len(_mounted_routes)} helpers={list(_helpers.keys())}",
+                                    flush=True,
+                                )
+                            else:
+                                print(f"[BACKEND] [CONTRACT] ⚠ workspace not resolved — routes NOT persisted", flush=True)
+                        except Exception as _bc_err:
+                            print(f"[BACKEND] [CONTRACT] ⚠ update failed (non-fatal): {_bc_err}", flush=True)
         except Exception as _ce:
             print(f"[BACKEND] api_contract extraction failed (non-fatal): {_ce}", flush=True)
 

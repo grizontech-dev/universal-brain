@@ -176,6 +176,19 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
                 if schema_names:
                     state["db_schema_names"] = schema_names
                     print(f"[DB] schema_names_used: {schema_names} → stored in state for BackendAgent", flush=True)
+                    # Persist to build_contract.json so every subsequent agent can read it
+                    try:
+                        from Brain.shared.build_contract import record_schema_names
+                        from Brain.services.workspace_manager import workspace_manager as _wm_db
+                        _ws_db = _wm_db.resolve_workspace_path(
+                            state.get("current_job_id"), user_id=state.get("user_id")
+                        )
+                        if _ws_db:
+                            record_schema_names(_ws_db, schema_names)
+                        else:
+                            print(f"[DB] [CONTRACT] ⚠ workspace not resolved — schema_names NOT persisted to contract", flush=True)
+                    except Exception as _bc_err:
+                        print(f"[DB] [CONTRACT] ⚠ update failed (non-fatal): {_bc_err}", flush=True)
 
                 # Auto-execute SQL migrations on Supabase for any .sql files generated
                 for f_item in generated_json.get("files", []):
@@ -190,14 +203,32 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
                                 supabase_exec_sql.ainvoke({"sql_query": f_content}, config={"configurable": {"thread_id": job_id, "task_title": task.get("title", "")}}),
                                 timeout=30
                             )
-                            # Check if SQL actually succeeded — don't print [OK] for errors
-                            sql_res_str = str(sql_res)
-                            if sql_res_str.startswith("ERROR:") or "Could not execute SQL" in sql_res_str:
-                                print(f"[DB] [WARN] Supabase SQL execution failed (schema saved to file): {sql_res_str[:200]}", flush=True)
+                            sql_res_str = str(sql_res).strip()
+                            # Strict success check — distinguish OK from silent failure
+                            _sql_failed = (
+                                sql_res_str.upper().startswith("ERROR")
+                                or "could not execute sql" in sql_res_str.lower()
+                                or "relation already exists" not in sql_res_str.lower()
+                                and any(kw in sql_res_str.lower() for kw in (
+                                    "error", "failed", "exception", "invalid", "syntax error",
+                                    "permission denied", "duplicate", "violates"
+                                ))
+                            )
+                            if _sql_failed:
+                                print(f"[DB] [WARN] Supabase SQL execution failed — schema saved to file but DB may be out of sync: {sql_res_str[:300]}", flush=True)
+                                # Store failure in state so downstream agents are aware
+                                state.setdefault("db_sql_warnings", []).append({
+                                    "file": f_path,
+                                    "error": sql_res_str[:300],
+                                })
                             else:
                                 print(f"[DB] [OK] Supabase SQL executed successfully: {sql_res_str[:200]}", flush=True)
+                        except asyncio.TimeoutError:
+                            print(f"[DB] [WARN] Supabase SQL timed out after 30s — schema saved to file, DB may be out of sync", flush=True)
+                            state.setdefault("db_sql_warnings", []).append({"file": f_path, "error": "timeout"})
                         except Exception as sql_err:
-                            print(f"[DB] [WARN] Supabase SQL auto-execution notice: {sql_err}", flush=True)
+                            print(f"[DB] [WARN] Supabase SQL auto-execution error: {sql_err}", flush=True)
+                            state.setdefault("db_sql_warnings", []).append({"file": f_path, "error": str(sql_err)[:200]})
                 return generated_json
 
             # Parse failed — check if response was truncated (common with SQL content)
