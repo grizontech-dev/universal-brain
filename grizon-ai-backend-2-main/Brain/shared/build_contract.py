@@ -68,6 +68,12 @@ def update_contract(workspace_dir: str, patch: Dict[str, Any]) -> Dict[str, Any]
             merged = list(dict.fromkeys(existing + value))
             contract["components_created"] = merged
             print(f"[CONTRACT] 📝 components_created → {len(merged)} total files", flush=True)
+        elif key == "schema_names" and isinstance(value, list):
+            # Accumulate — multiple DB tasks each add their schema names
+            existing = contract.get("schema_names", [])
+            merged = sorted(set(existing + value))
+            contract["schema_names"] = merged
+            print(f"[CONTRACT] 📝 schema_names (merged) → {merged}", flush=True)
         elif key == "api_helpers" and isinstance(value, dict):
             existing = contract.get("api_helpers", {})
             existing.update(value)
@@ -101,11 +107,30 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
         or "Untitled Project"
     )
 
-    # Color palette
+    # Color palette — prefer state, then memory_context, then hardcoded default
     color_palette = state.get("selected_color_palette", {}) or {}
     if not color_palette:
         mem = state.get("memory_context", {}) or {}
         color_palette = (mem.get("decisions", {}) or {}).get("color_palette", {})
+
+    # If still empty, use a clean modern light default so palette=✓ always
+    if not color_palette:
+        _prompt_lower = (state.get("content", "") or "").lower()
+        if "dark" in _prompt_lower:
+            color_palette = {
+                "name": "Midnight Blue",
+                "colors": ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"],
+                "theme": "dark"
+            }
+            contract["theme_preference"] = "dark"
+        else:
+            color_palette = {
+                "name": "Clean Light",
+                "colors": ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f8fafc"],
+                "theme": "light"
+            }
+            contract["theme_preference"] = "light"
+        print(f"[CONTRACT] 🎨 No palette in state — using default: {color_palette['name']}", flush=True)
     contract["color_palette"] = color_palette or {}
     contract["theme_preference"] = state.get("theme_preference", "dark")
     contract["custom_color_input"] = state.get("custom_color_input", "")
@@ -199,12 +224,16 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
 # ──────────────────────────────────────────────────────────────────────────────
 
 def record_schema_names(workspace_dir: str, schema_names: List[str]) -> None:
-    """DatabaseAgent calls this after extracting schema_names_used from SQL."""
+    """DatabaseAgent calls this after extracting schema_names_used from SQL.
+    Accumulates across multiple DB tasks — never shrinks the list."""
     if not schema_names:
         print(f"[CONTRACT] ⚠ record_schema_names called with empty list — skipping", flush=True)
         return
-    update_contract(workspace_dir, {"schema_names": sorted(set(schema_names))})
-    print(f"[CONTRACT] ✅ schema_names confirmed: {sorted(set(schema_names))}", flush=True)
+    # Read existing and merge — multiple DB tasks may run (users table, todos table)
+    existing = read_contract(workspace_dir).get("schema_names", [])
+    merged = sorted(set(existing + schema_names))
+    update_contract(workspace_dir, {"schema_names": merged})
+    print(f"[CONTRACT] ✅ schema_names confirmed (merged): {merged}", flush=True)
 
 
 def record_api_routes(workspace_dir: str, mounted_routes: List[Dict[str, str]], helpers: Dict[str, str]) -> None:
