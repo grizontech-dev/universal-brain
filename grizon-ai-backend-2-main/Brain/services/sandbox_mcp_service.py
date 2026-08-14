@@ -287,7 +287,7 @@ class SandboxMCPService:
             if not os.path.isfile(index_html):
                 print(f"[SANDBOX_MCP] FALLBACK: Creating missing frontend/index.html")
                 with open(index_html, "w") as f:
-                    f.write('<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>App</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.jsx"></script>\n  </body>\n</html>')
+                    f.write('<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>App</title>\n    <link rel="icon" type="image/x-icon" href="/favicon.ico" />\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.jsx"></script>\n  </body>\n</html>')
 
             # Create vite.config.js if missing
             vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
@@ -437,6 +437,19 @@ export default defineConfig({
                     print(f"[SANDBOX_MCP] STEP-3 Import validation OK: {len(import_matches)} imports match {len(actual_files)} files")
             except Exception as e:
                 print(f"[SANDBOX_MCP] STEP-3 Could not validate App.jsx imports: {e}")
+
+        # ═══ INJECT FAVICON ═══
+        try:
+            public_dir = os.path.join(workspace_dir, "frontend", "public")
+            os.makedirs(public_dir, exist_ok=True)
+            favicon_src = os.path.join(os.path.dirname(__file__), "..", "templates", "favicon.ico")
+            favicon_dest = os.path.join(public_dir, "favicon.ico")
+            import shutil
+            if os.path.exists(favicon_src):
+                shutil.copy2(favicon_src, favicon_dest)
+                print(f"[SANDBOX_MCP] STEP-3.5 Injected favicon.ico into frontend/public/")
+        except Exception as e:
+            print(f"[SANDBOX_MCP] STEP-3.5 Could not inject favicon: {e}")
 
         # ═══ ARCHIVE CREATION (async to avoid blocking event loop) ═══
         print(f"[SANDBOX_MCP] STEP-4 Creating archive from: {workspace_dir}")
