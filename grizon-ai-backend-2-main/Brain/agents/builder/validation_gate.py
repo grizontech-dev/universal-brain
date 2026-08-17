@@ -616,7 +616,7 @@ class ValidationGate:
                                 for name in names:
                                     export_name = name.split(" as ")[0].strip()
                                     export_patterns = [
-                                        rf"export\s+(?:const|function|class|let|var)\s+{export_name}\b",
+                                        rf"export\s+(?:async\s+)?(?:const|function|class|let|var)\s+{export_name}\b",
                                         rf"export\s+\{{[^}}]*\b{export_name}\b[^}}]*\}}",
                                     ]
                                     if not any(re.search(p, target_content) for p in export_patterns):

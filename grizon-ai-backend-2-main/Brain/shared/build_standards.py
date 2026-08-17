@@ -91,7 +91,8 @@ BACKEND_BUILD_STANDARDS = """
 - Express.js on port 3001. CommonJS (require/module.exports). NEVER use ES modules.
 - Structure: `backend/routes/*.js`, `backend/controllers/*.js`.
 - Use Express.Router in routes: `module.exports = router;`
-- Every controller starts with: `const { supabase } = require('../supabase/client');`
+  - Every controller starts with: `const supabase = require('../supabase/client');`
+  - ALWAYS null-check: `if (!supabase) return res.json({ success: true, data: [] });`
 
 ### Server.js
 - `server.js` MUST start with `require('dotenv').config();` at line 1 so environment variables are loaded.
@@ -114,7 +115,7 @@ BACKEND_BUILD_STANDARDS = """
 - Frontend calls `/api/...` — your routes must match exactly.
 - Every feature gets one canonical mounted `/api/<resource>` route family and frontend helpers must call that exact family. If auth is requested, use canonical `POST /api/auth/register`, `POST /api/auth/login`, optional `GET /api/auth/me`, mounted at `/api/auth`.
 - ALWAYS wrap controller logic in `try { ... } catch (err)` blocks.
-- If DB table query returns an error (e.g. table not created yet), return clean response `{ success: true, data: [], note: "Table pending initialization" }` instead of throwing HTTP 500!
+- If supabase client is null (env vars not set) or DB query fails, return `{ success: true, data: [], note: "DB not configured" }` — NEVER throw HTTP 500!
 - JSON responses: `{ success: true, data }` or `{ success: false, error: "..." }`.
 - In `server.js`, handle `/favicon.ico`: `app.get('/favicon.ico', (req, res) => res.status(204).end());`
 - List all new deps in `backend/package.json`.

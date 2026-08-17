@@ -109,18 +109,44 @@ backend/
 9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
    ```js
    require('dotenv').config();
-   const ws = require('ws');
    const supabaseLib = require('@supabase/supabase-js');
    const createClient = supabaseLib.createClient || supabaseLib;
    const SUPABASE_URL = process.env.SUPABASE_URL;
    const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-   module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
-     global: {{ fetch }},
-     realtime: {{ transport: ws }}
-   }});
+   let supabase = null;
+   try {{
+     if (SUPABASE_URL && SUPABASE_KEY) {{
+       supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+     }}
+   }} catch (e) {{
+     console.warn('[Supabase] Client init failed:', e.message);
+   }}
+   module.exports = supabase;
    ```
    From controllers use `require('../supabase/client')`. From files inside `backend/routes/` use `require('../supabase/client')`.
-10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
+   CRITICAL: ALWAYS null-check the supabase client before using it in controllers:
+   ```js
+   const supabase = require('../supabase/client');
+   // In controller:
+   if (!supabase) return res.json({{ success: true, data: [], message: 'DB not configured' }});
+   ```
+10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. NEVER return HTTP 500.
+    - If supabase client is null (env vars not set): return `{{ success: true, data: [], message: 'DB not configured' }}`
+    - If DB query fails: return `{{ success: true, data: [], error: err.message }}`
+    - NEVER let a controller throw an uncaught error — it WILL result in a 500.
+    Example controller pattern:
+    ```js
+    exports.list = async (req, res) => {{
+      try {{
+        if (!supabase) return res.json({{ success: true, data: [] }});
+        const {{ data, error }} = await supabase.from('table').select('*');
+        if (error) return res.json({{ success: true, data: [], error: error.message }});
+        res.json({{ success: true, data: data || [] }});
+      }} catch (err) {{
+        res.json({{ success: true, data: [], error: err.message }});
+      }}
+    }};
+    ```
 11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
     ```js
     app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
