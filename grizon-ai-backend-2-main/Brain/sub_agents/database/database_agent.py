@@ -67,6 +67,13 @@ Do NOT write any introduction (e.g., "Sure, here is the schema") or explanation.
 Do NOT wrap the JSON in markdown code blocks or code fences (e.g., do not use ```json ... ```).
 Your response MUST start directly with `{{` and end directly with `}}`. Any conversational text will crash the system.
 
+=== SQL-IN-JSON SAFETY (CRITICAL) ===
+The SQL content goes inside a JSON string. You MUST follow these rules or JSON parsing will fail:
+- NEVER use unescaped single quotes inside INSERT VALUES. Use '' (two single-quotes) for SQL string literals. e.g. 'men''s watch' NOT 'men's watch'
+- NEVER use real newlines inside the `content` string — use \n as a literal escape sequence.
+- NEVER use real tab characters — use spaces instead.
+- NEVER use backslashes in SQL unless escaped as \\\\ in the JSON string.
+
 Format:
 {{"files": [{{"path": "backend/supabase/schema.sql", "content": "-- SQL here"}}], "commands": [], "summary": "...", "schema_names_used": ["resource1", "resource2"]}}
 """
