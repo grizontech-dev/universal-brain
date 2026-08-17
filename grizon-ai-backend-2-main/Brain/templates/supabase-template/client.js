@@ -1,23 +1,20 @@
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+require('dotenv').config();
+const supabaseLib = require('@supabase/supabase-js');
+const createClient = supabaseLib.createClient || supabaseLib;
 
-dotenv.config();
+const url = process.env.SUPABASE_URL;
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
-const url = process.env.SUPABASE_URL || '';
-const key = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-if (!url || !key) {
-  console.warn('[Supabase] Missing SUPABASE_URL or SUPABASE_ANON_KEY — client disabled');
-}
-
-export const supabase = url && key ? createClient(url, key) : null;
-
-export async function pingSupabase() {
-  if (!supabase) return { connected: false, reason: 'missing env vars' };
-  try {
-    const { error } = await supabase.from('todos').select('id').limit(1);
-    return { connected: !error, error: error?.message };
-  } catch (e) {
-    return { connected: false, error: e.message };
+let supabase = null;
+try {
+  if (url && key) {
+    supabase = createClient(url, key);
+    console.log('[Supabase] Client initialized ✓');
+  } else {
+    console.warn('[Supabase] Missing SUPABASE_URL or key — client disabled');
   }
+} catch (e) {
+  console.warn('[Supabase] Client init failed:', e.message);
 }
+
+module.exports = supabase;
