@@ -137,6 +137,7 @@ backend/
    if (!supabase) return res.json({{ success: true, data: [], message: 'DB not configured' }});
    ```
 10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. NEVER return HTTP 500.
+    - BE PERMISSIVE: Do NOT return 400 Bad Request for missing fields in POST/PUT payloads unless it is Auth (email/password). For normal CRUD, accept `req.body` as-is and store it. Strict backend validation causes 400 errors when frontend payloads don't perfectly match.
     - If supabase client is null (env vars not set): return `{{ success: true, data: [], message: 'DB not configured' }}`
     - If DB query fails: return `{{ success: true, data: [], error: err.message }}`
     - NEVER let a controller throw an uncaught error — it WILL result in a 500.
