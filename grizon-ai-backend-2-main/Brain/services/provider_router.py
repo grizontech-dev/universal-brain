@@ -76,12 +76,17 @@ class ProviderRouter:
             )
 
         def _make_openrouter(model: str):
+            extra_headers = {
+                "HTTP-Referer": "https://grizon.ai",
+                "X-Title": "Grizon AI",
+            }
             return ChatOpenAI(
                 model=model,
                 api_key=openrouter_key,
                 base_url=openrouter_base,
                 temperature=temperature,
                 streaming=True,
+                default_headers=extra_headers,
                 max_retries=1,
                 timeout=120,
                 request_timeout=120,
