@@ -79,7 +79,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 
 ═══ TOP 5 RULES (these break builds if violated) ═══
 1. Save files with client_save_code. One call per file. Paths start with frontend/src/
-2. App.jsx owns routing: one <BrowserRouter> wrapping <Routes>. NO other file renders any Router.
+2. App.jsx owns routing: one <BrowserRouter> wrapping <Routes>. NO other file renders any Router. IF you create Context Providers (like CartProvider or AuthProvider), you MUST wrap them around <BrowserRouter> or <Routes> in App.jsx to prevent 'undefined' hooks errors.
 3. Every page in pages/ MUST have a <Route> in App.jsx. Every component MUST be imported somewhere.
 4. api.js is the ONLY place for fetch calls. Export every function the components import by exact name.
 5. Pure Tailwind for all styling. No ui/ subdirectory imports — that folder does not exist.

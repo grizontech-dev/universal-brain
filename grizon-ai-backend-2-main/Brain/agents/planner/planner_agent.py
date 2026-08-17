@@ -207,6 +207,7 @@ PAGES — derive from the user's actual app:
 - Every primary resource needs at minimum: a list page and a detail/form page
 - Route params: use /:id for detail pages, /create for create forms
 - Each page MUST list its own specific components (2-5), NOT generic ones
+- ADMIN CMS (CRITICAL): If the application manages dynamic data (e.g. Ecommerce products, Blog posts, YouTube videos), you MUST automatically include an Admin Dashboard/CMS (e.g. /admin/dashboard, /admin/products) for managing this data, even if the user didn't explicitly ask for it.
 
 TABLES — derive from the user's data model:
 - One table per primary resource the user mentioned
