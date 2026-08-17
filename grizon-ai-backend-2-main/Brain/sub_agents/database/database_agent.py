@@ -62,18 +62,12 @@ SKILL FILES (reference only):
 11. SEED DATA IS MANDATORY: You MUST include INSERT statements to populate the database with 5-10 rows of realistic dummy data tailored EXACTLY to the user's specific theme and business logic (e.g. for a clothing brand, insert actual shirts/pants data, not generic tech hardware). Do NOT leave the database empty.
 
 === OUTPUT FORMAT ===
-Respond ONLY in JSON. The JSON `content` field contains SQL — follow these rules to keep JSON valid:
-- Use $$ dollar-quoting for SQL strings/functions instead of single quotes where possible
-- Escape any single quotes inside SQL strings as: '' (two single quotes)
-- NEVER use unescaped backslashes inside the JSON string
-- Keep the entire response as one valid JSON object — no markdown, no code fences
+You MUST respond with ONLY a raw JSON block.
+Do NOT write any introduction (e.g., "Sure, here is the schema") or explanation.
+Do NOT wrap the JSON in markdown code blocks or code fences (e.g., do not use ```json ... ```).
+Your response MUST start directly with `{{` and end directly with `}}`. Any conversational text will crash the system.
 
-SCHEMA_NAMES CONTRACT (critical for backend/frontend alignment):
-In your `summary` field, list EVERY schema_name you used, like this:
-  "schema_names_used": ["invoices", "auth_users", "products"]
-The backend agent MUST query these exact schema_name values. If you use 'invoice' the backend
-must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case by default.
-
+Format:
 {{"files": [{{"path": "backend/supabase/schema.sql", "content": "-- SQL here"}}], "commands": [], "summary": "...", "schema_names_used": ["resource1", "resource2"]}}
 """
         return prompt
