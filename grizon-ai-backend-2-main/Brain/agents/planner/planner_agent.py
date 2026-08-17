@@ -207,7 +207,7 @@ PAGES — derive from the user's actual app:
 - Every primary resource needs at minimum: a list page and a detail/form page
 - Route params: use /:id for detail pages, /create for create forms
 - Each page MUST list its own specific components (2-5), NOT generic ones
-- ADMIN CMS (CRITICAL): If the application manages dynamic data (e.g. Ecommerce products, Blog posts, YouTube videos), you MUST automatically include an Admin Dashboard/CMS (e.g. /admin/dashboard, /admin/products) for managing this data, even if the user didn't explicitly ask for it.
+- ADMIN CMS & LOGIN (CRITICAL): If the application manages dynamic data (e.g. Ecommerce products, Blog posts, YouTube videos), you MUST automatically include an Admin Panel. The entry route must be `/admin` (a secure login gate). Successful login must redirect to `/admin/dashboard` (the admin panel). Use default credentials: Email: `admin@grizonai.com`, Password: `admin123` (DatabaseAgent must seed this user, and FrontendAgent must build the login screen matching this logic).
 
 TABLES — derive from the user's data model:
 - One table per primary resource the user mentioned

@@ -95,6 +95,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 ═══ ROUTING (React Router v6) ═══
 - <Routes> not <Switch>. element={{<X />}} not component={{X}}.
 - Navigation: <Link to="/path"> not <a href>.
+- ADMIN PANEL ROUTING (CRITICAL): If an Admin/CMS dashboard is generated, you MUST implement a login gate on route `/admin`. Logins with Email `admin@grizonai.com` and Password `admin123` must redirect to `/admin/dashboard` (the actual dashboard panel). Store the session state (e.g. in localStorage) so the admin session is persisted on page refresh.
 - App.jsx example:
   <BrowserRouter><Routes>
     <Route path="/" element={{<Home />}} />
@@ -112,6 +113,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
 - Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
 - PREMIUM HOMEPAGE: The Homepage/Landing page MUST be extremely rich and contain at least 5-6 beautifully designed, premium sections (e.g. Hero, Featured Categories grid, Bestsellers/Featured Products grid, Brand Story/Philosophy, Customer Testimonials/Reviews, Promotional/Newsletter banner, rich interactive Footer). Do NOT build a basic 1-2 section skeleton.
+- DEFENSIVE PROGRAMMING (CRITICAL): Always use optional chaining, null-coalescing, and safety checks for all dynamic variables, API data, and React Context states. Never call methods like `.toLocaleString()`, `.toFixed()`, `.map()`, or `.length` on values without checking if they exist (e.g., use `(subtotal ?? 0).toLocaleString()` instead of `subtotal.toLocaleString()`, and `cartItems?.length` instead of `cartItems.length`). If a value could be undefined, provide a safe fallback so the page never crashes to a blank white screen.
 - Vite Config (CRITICAL): MUST generate `vite.config.js` with `server: {{ port: 9999, host: '0.0.0.0', proxy: {{ '/api': 'http://localhost:3001' }} }}` so frontend API calls don't 404.
 
 ═══ PACKAGES ═══

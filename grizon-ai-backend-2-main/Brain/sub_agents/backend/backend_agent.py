@@ -164,7 +164,15 @@ backend/
     Place it BEFORE all other route mounts, right after middleware setup.
 12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
 13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated.
-14. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
+14. ADMIN AUTH (ALWAYS REQUIRED when Admin panel is in scope): ALWAYS create a `POST /api/auth/admin-login` endpoint in `backend/routes/auth.js`. This route must:
+    - Accept `{{ email, password }}` from the request body.
+    - Compare against the hardcoded admin credentials: Email `admin@grizonai.com`, Password `admin123` (plain text comparison is fine for MVP, no hashing needed for admin credentials).
+    - On success: return `{{ success: true, token: 'admin-token-grizon', role: 'admin' }}`.
+    - On failure: return `{{ success: false, error: 'Invalid admin credentials' }}` with HTTP 401.
+    - Mount this route in `server.js` as `app.use('/api/auth', authRoutes)`.
+    - Frontend admin login page MUST call `POST /api/auth/admin-login` and redirect on success.
+15. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
+
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
 - Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`.

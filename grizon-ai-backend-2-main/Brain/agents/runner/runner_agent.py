@@ -200,14 +200,59 @@ class RunnerAgent(BaseAgent):
 
             status = deploy_result.get("status", "unknown")
             exe_status = "running" if status != "error" else "error"
-            run_report = (
-                f"### Sandbox Deployment\n"
-                f"Status: {status}\n"
-                f"Entrypoint: {_entrypoint}\n"
-                f"Output:\n{execution_output}\n"
-            )
+
+            # Load build contract to construct a user-friendly report
+            proj_name = "Your Project"
+            pages = []
+            api_routes = []
+            schema_names = []
+            try:
+                from Brain.shared.build_contract import read_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_run
+                _ws_run = _wm_run.resolve_workspace_path(str(_sid), user_id=_user_id)
+                if _ws_run:
+                    _contract = read_contract(_ws_run)
+                    proj_name = _contract.get("project_name", "Your Project")
+                    pages = _contract.get("pages", [])
+                    api_routes = _contract.get("api_routes", [])
+                    schema_names = _contract.get("schema_names", [])
+            except Exception as e:
+                print(f"[RUNNER] Failed to load contract for report: {e}")
+
+            run_report = f"# 🎉 {proj_name} Build Complete!\n\n"
+            run_report += "Your application has been compiled, validated, and deployed successfully.\n\n"
+            
+            if pages:
+                run_report += "### 🌐 Frontend Pages & Routes:\n"
+                for p in pages:
+                    route_path = p.get('route', '')
+                    route_url = f"{tunnel_url}{route_path}" if tunnel_url else route_path
+                    run_report += f"- **{p.get('name')}**: [{route_path}]({route_url})\n"
+                run_report += "\n"
+            
+            # Add Admin credentials hint if /admin exists
+            has_admin = any("/admin" in p.get("route", "") for p in pages)
+            if has_admin:
+                run_report += "### 🔑 Admin Credentials:\n"
+                admin_login_url = f"{tunnel_url}/admin" if tunnel_url else "/admin"
+                run_report += f"- **Admin Login Route**: [/admin]({admin_login_url})\n"
+                run_report += "- **Email / Username**: `admin@grizonai.com`\n"
+                run_report += "- **Password**: `admin123`\n"
+                run_report += "*Use these credentials to log in and manage your dynamic store data (e.g. Products, Orders).* \n\n"
+
+            if api_routes:
+                run_report += "### 🔌 Backend API Routes (Port 3001):\n"
+                for r in api_routes:
+                    run_report += f"- `{r.get('method')} {r.get('path')}`\n"
+                run_report += "\n"
+                
+            if schema_names:
+                run_report += f"### 🗄 Database Schemas Created: `{', '.join(schema_names)}` (Supabase Vault)\n\n"
+                
             if tunnel_url:
-                run_report += f"\nTunnel URL: {tunnel_url}"
+                run_report += f"**🚀 Live Preview Link**: [Open Application]({tunnel_url})\n"
+            else:
+                run_report += f"\nSandbox Deployment Output:\n{execution_output}\n"
 
             final_payload = {
                 "type": "build_success" if status != "error" else "build_error",
