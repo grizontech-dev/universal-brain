@@ -390,7 +390,9 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
 async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
     """Execute raw SQL against the company Supabase database. Use this to CREATE TABLE, ALTER TABLE, INSERT, etc.
     Requires COMPANY_SUPABASE_URL and COMPANY_SUPABASE_SERVICE_ROLE_KEY env vars."""
-    session_id = config.get("configurable", {}).get("thread_id")
+    configurable = config.get("configurable", {})
+    session_id = configurable.get("thread_id")
+    user_id = configurable.get("user_id")
     print(f"{LOG} supabase_exec_sql | session={session_id} | query_len={len(sql_query)}", flush=True)
 
     # Auto-append schema reload if the query contains DDL (CREATE/ALTER TABLE)
@@ -400,37 +402,78 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
             sql_query = sql_query.rstrip().rstrip(";") + ";\nNOTIFY pgrst, 'reload schema';"
             print(f"{LOG} Appended NOTIFY pgrst, 'reload schema' for DDL query", flush=True)
 
-    supabase_url = (
-        os.getenv("COMPANY_SUPABASE_URL")
-        or os.getenv("SUPABASE_URL")
-        or ""
-    ).rstrip("/")
-    service_role_key = (
-        os.getenv("COMPANY_SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or ""
-    )
+    supabase_url = None
+    service_role_key = None
+    management_token = None
 
-    if not supabase_url or not service_role_key:
-        return "ERROR: COMPANY_SUPABASE_URL and COMPANY_SUPABASE_SERVICE_ROLE_KEY must be set."
+    if user_id:
+        try:
+            from Brain.config.database import SessionLocal
+            from Brain.modules.connectors.supabase.service import Connector as SupabaseConnector, decrypt_token
+            db = SessionLocal()
+            try:
+                connector = db.query(SupabaseConnector).filter(
+                    SupabaseConnector.userId == user_id,
+                    SupabaseConnector.type == "supabase"
+                ).first()
+                if connector and connector.config:
+                    conf = connector.config
+                    supabase_url = conf.get("url", "").rstrip("/")
+                    encrypted_token = conf.get("access_token")
+                    if encrypted_token:
+                        try:
+                            management_token = decrypt_token(encrypted_token)
+                        except Exception:
+                            management_token = encrypted_token
+                            
+                    if management_token and not supabase_url:
+                        try:
+                            async with httpx.AsyncClient(timeout=10) as client:
+                                resp = await client.get('https://api.supabase.com/v1/projects', headers={'Authorization': f'Bearer {management_token}'})
+                                if resp.status_code == 200:
+                                    projs = resp.json()
+                                    if projs:
+                                        supabase_url = f"https://{projs[0]['ref']}.supabase.co"
+                                        print(f"{LOG} Discovered Supabase URL from OAuth project: {supabase_url}", flush=True)
+                        except Exception as e:
+                            print(f"{LOG} Failed to fetch projects: {e}", flush=True)
+                            
+                    service_role_key = conf.get("service_role_key")
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"{LOG} Failed to load user Supabase connection: {e}", flush=True)
 
-    # Method 1: Try Supabase Management API (requires personal access token)
-    # The service_role_key with sb_secret_ prefix won't work here, but try anyway
-    management_token = os.getenv("SUPABASE_ACCESS_TOKEN", "")
+    if not supabase_url:
+        supabase_url = (
+            os.getenv("COMPANY_SUPABASE_URL")
+            or os.getenv("SUPABASE_URL")
+            or ""
+        ).rstrip("/")
+        service_role_key = (
+            os.getenv("COMPANY_SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or ""
+        )
+        management_token = os.getenv("SUPABASE_ACCESS_TOKEN", "")
+
+    if not supabase_url:
+        return "ERROR: Supabase URL not found. Ensure COMPANY_SUPABASE_URL is set or a Supabase Connector is linked."
+
     project_ref = supabase_url.replace("https://", "").replace(".supabase.co", "")
 
     if management_token:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"https://api.supabase.com/v1/projects/{project_ref}/sql",
+                    f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
                     headers={
                         "Authorization": f"Bearer {management_token}",
                         "Content-Type": "application/json",
                     },
                     json={"query": sql_query},
                 )
-                if resp.status_code == 200:
+                if resp.status_code in (200, 201):
                     print(f"{LOG} ✓ SQL executed via Management API", flush=True)
                     return f"SQL executed successfully via Management API.\n{resp.text[:1000]}"
                 else:
@@ -522,11 +565,53 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
 async def supabase_create_exec_sql_function(config: RunnableConfig) -> str:
     """One-time setup: Creates the exec_sql() function in Supabase so future SQL can be executed via RPC.
     Run this ONCE before using supabase_exec_sql. You need to paste the output SQL into Supabase dashboard."""
-    supabase_url = (
-        os.getenv("COMPANY_SUPABASE_URL")
-        or os.getenv("SUPABASE_URL")
-        or ""
-    ).rstrip("/")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    supabase_url = None
+
+    if user_id:
+        try:
+            from Brain.config.database import SessionLocal
+            from Brain.modules.connectors.supabase.service import Connector as SupabaseConnector, decrypt_token
+            db = SessionLocal()
+            try:
+                connector = db.query(SupabaseConnector).filter(SupabaseConnector.userId == user_id, SupabaseConnector.type == "supabase").first()
+                if connector and connector.config:
+                    supabase_url = connector.config.get("url", "").rstrip("/")
+                    if not supabase_url:
+                        encrypted_token = connector.config.get("access_token")
+                        if encrypted_token:
+                            try:
+                                mgmt_token = decrypt_token(encrypted_token)
+                            except Exception:
+                                mgmt_token = encrypted_token
+                            import asyncio
+                            async def fetch_proj():
+                                async with httpx.AsyncClient(timeout=10) as client:
+                                    resp = await client.get('https://api.supabase.com/v1/projects', headers={'Authorization': f'Bearer {mgmt_token}'})
+                                    if resp.status_code == 200:
+                                        projs = resp.json()
+                                        if projs:
+                                            return f"https://{projs[0]['ref']}.supabase.co"
+                                return None
+                            try:
+                                pref = await fetch_proj()
+                                if pref:
+                                    supabase_url = pref
+                            except Exception:
+                                pass
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+    if not supabase_url:
+        supabase_url = (
+            os.getenv("COMPANY_SUPABASE_URL")
+            or os.getenv("SUPABASE_URL")
+            or ""
+        ).rstrip("/")
+        
     project_ref = supabase_url.replace("https://", "").replace(".supabase.co", "")
 
     setup_sql = """DROP FUNCTION IF EXISTS exec_sql(text);

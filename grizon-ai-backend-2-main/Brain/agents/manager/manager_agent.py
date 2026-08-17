@@ -246,13 +246,19 @@ class ManagerAgent(BaseAgent):
             Keep tasks small and scoped (e.g. 1-2 tasks for a small change, up to 3-4 for a big feature).
             ALWAYS include a final 'runner' task so the user can preview the changes.
             
+            Categories available:
+            - "frontend": for React components, UI, Vite config.
+            - "backend": for Express routes, controllers, API logic.
+            - "database": for ANY Supabase schema changes, creating tables, or writing SQL migrations.
+            - "runner": to start servers.
+            
             Respond ONLY with a JSON array of tasks:
             [
               {
                 "id": "t1",
                 "title": "Task Title",
                 "description": "What exact files to modify and how to fix the issue or add the feature.",
-                "category": "frontend",
+                "category": "database", 
                 "skill_required": "implement",
                 "acceptance_criteria": "How to verify"
               },

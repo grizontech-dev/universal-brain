@@ -7,7 +7,7 @@ import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function
+from Brain.agents.builder.mcp_tools import client_save_code, client_execute_in_sandbox, supabase_exec_sql, supabase_create_exec_sql_function, mcp_call_tool, mcp_list_tools
 from Brain.agents.builder.unsplash_tools import get_unsplash_image
 from Brain.shared.frontend_entry import APP_TSX, normalize_frontend_entry_files
 from Brain.shared.llm_retry import ainvoke_with_retry
@@ -282,7 +282,7 @@ class BuilderAgent(BaseAgent):
         import re as _re
 
         # Bind tools based on category
-        tools = [client_save_code, get_unsplash_image]
+        tools = [client_save_code, get_unsplash_image, mcp_list_tools, mcp_call_tool]
         if category == "database":
             tools.extend([supabase_exec_sql, supabase_create_exec_sql_function])
 
@@ -467,7 +467,7 @@ class BuilderAgent(BaseAgent):
                             try:
                                 print(f"{LOG} 🗄 Auto-executing SQL schema '{file_path}' on Supabase database...", flush=True)
                                 sql_res = await asyncio.wait_for(
-                                    supabase_exec_sql.ainvoke({"sql_query": code_content}, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                                    supabase_exec_sql.ainvoke({"sql_query": code_content}, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                                     timeout=30
                                 )
                                 print(f"{LOG} [OK] Supabase SQL auto-execution result: {sql_res}", flush=True)
@@ -481,12 +481,12 @@ class BuilderAgent(BaseAgent):
                         ))
                     elif tool_name == "supabase_exec_sql":
                         result = await asyncio.wait_for(
-                            supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=tool_timeout
                         )
                     elif tool_name == "supabase_create_exec_sql_function":
                         result = await asyncio.wait_for(
-                            supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
+                            supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=tool_timeout
                         )
                     elif tool_name == "get_unsplash_image":
