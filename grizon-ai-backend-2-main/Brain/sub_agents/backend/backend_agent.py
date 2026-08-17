@@ -78,7 +78,7 @@ backend/
    module.exports = router;
    ```
 4. Controllers in `backend/controllers/<feature>.js`: async functions with try/catch. Return `{{ success: true, data }}` or `{{ success: false, error }}`.
-5. server.js MUST be saved LAST. It imports routes and mounts them:
+5. server.js MUST be saved LAST in every task. It imports routes and mounts them:
    ```js
    require('dotenv').config();
    const express = require('express');
@@ -95,10 +95,12 @@ backend/
    app.use('/api/feature', featureRoutes);
    app.listen(process.env.PORT || 3001, '0.0.0.0');
    ```
-   ⚠️ CRITICAL RULE: ONLY mount a route in server.js if you ACTUALLY generate that route file in this task.
+   ⚠️ CRITICAL — SERVER.JS MERGE RULE (prevents 404s): Each backend task generates its own route file AND updates server.js. Since multiple tasks run sequentially, each task MUST include ALL previously mounted routes in its server.js output PLUS its new route. DO NOT write a minimal server.js with only the current task's route — that will OVERWRITE and ERASE routes from previous tasks, causing 404 errors on all other endpoints.
+   - When generating server.js, you will be given the current file contents. READ them carefully and PRESERVE every existing `require('./routes/X')` and `app.use('/api/X', ...)` line.
+   - Then ADD your new route at the end of the existing route list.
+   - The final server.js MUST contain ALL routes from ALL tasks combined.
    - If you write `require('./routes/contact')` in server.js → you MUST also save `backend/routes/contact.js`.
-   - NEVER reference a route file you did not generate. This causes a validation ERROR every single time.
-   - Before saving server.js, verify: every `require('./routes/X')` has a matching saved `backend/routes/X.js`.
+   - NEVER reference a route file you did not generate OR that didn't already exist.
 
 6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
    - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
@@ -259,15 +261,14 @@ Respond ONLY in JSON.
                     try:
                         with open(server_js_path, "r", encoding="utf-8") as f:
                             content = f.read()
-                        imports = [m.group(0) for m in re.finditer(r"const\s+\w+\s*=\s*require\(['\"].*?['\"]\)", content)]
-                        mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"].*?\)", content)]
-                        parts = []
-                        if imports:
-                            parts.append(f"Imports ({len(imports)}): " + "; ".join(imports[:6]))
-                        if mounts:
-                            parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:8]))
-                        parts.append(f"Lines: {len(content.splitlines())}")
-                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nUpdate server.js ONLY if this task changes routing. Otherwise leave it unchanged."
+                        # Send FULL server.js content so agent can MERGE routes, not overwrite
+                        content_preview = content[:3000] + ("\n... (truncated)" if len(content) > 3000 else "")
+                        server_js_context = (
+                            f"\n\n═══ EXISTING server.js (READ AND MERGE — DO NOT OVERWRITE) ═══\n"
+                            f"{content_preview}\n"
+                            f"═══════════════════════════════════════════════════════════════\n"
+                            f"INSTRUCTION: Your output server.js MUST include ALL existing require() and app.use() lines ABOVE, PLUS your new route. Never remove an existing route mount."
+                        )
                     except Exception:
                         pass
 
