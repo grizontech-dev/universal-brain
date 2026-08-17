@@ -111,6 +111,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - Real content only. Never <h1>Home Page</h1> as the only content.
 - Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
 - Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
+- PREMIUM HOMEPAGE: The Homepage/Landing page MUST be extremely rich and contain at least 5-6 beautifully designed, premium sections (e.g. Hero, Featured Categories grid, Bestsellers/Featured Products grid, Brand Story/Philosophy, Customer Testimonials/Reviews, Promotional/Newsletter banner, rich interactive Footer). Do NOT build a basic 1-2 section skeleton.
 - Vite Config (CRITICAL): MUST generate `vite.config.js` with `server: {{ port: 9999, host: '0.0.0.0', proxy: {{ '/api': 'http://localhost:3001' }} }}` so frontend API calls don't 404.
 
 ═══ PACKAGES ═══
@@ -387,7 +388,19 @@ Every page you create MUST have a <Route> in App.jsx.
                 pass
 
         # Build user message — compact
+        project_context = ""
+        orig_prompt = state.get("content", "")
+        proj_name = _contract.get("project_name", "") if _contract else ""
+        if proj_name or orig_prompt:
+            project_context = "═══ PROJECT CONTEXT ═══\n"
+            if proj_name:
+                project_context += f"Project Name: {proj_name}\n"
+            if orig_prompt:
+                project_context += f"Original User Goal: {orig_prompt}\n"
+            project_context += "═══════════════════════\n\n"
+
         user_content = (
+            f"{project_context}"
             f"Task: {task.get('title')}\n"
             f"Description: {task.get('description', '')}"
             f"{spec_context}"

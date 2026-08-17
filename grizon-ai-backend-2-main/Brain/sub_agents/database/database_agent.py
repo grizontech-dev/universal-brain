@@ -101,7 +101,34 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
         structured_hint = format_structured_spec(task)
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
+        # ── Read build contract ──
+        proj_name = ""
+        workspace_id = state.get("current_job_id")
+        user_id = state.get("user_id")
+        try:
+            if workspace_id and not workspace_id.startswith("error:"):
+                from Brain.shared.build_contract import read_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_db
+                _ws_db = _wm_db.resolve_workspace_path(workspace_id, user_id=user_id)
+                if _ws_db:
+                    _contract = read_contract(_ws_db)
+                    proj_name = _contract.get("project_name", "")
+        except Exception:
+            pass
+
+        # Build user message — compact
+        project_context = ""
+        orig_prompt = state.get("content", "")
+        if proj_name or orig_prompt:
+            project_context = "═══ PROJECT CONTEXT ═══\n"
+            if proj_name:
+                project_context += f"Project Name: {proj_name}\n"
+            if orig_prompt:
+                project_context += f"Original User Goal: {orig_prompt}\n"
+            project_context += "═══════════════════════\n\n"
+
         user_content = (
+            f"{project_context}"
             f"Task: {task.get('title')}\n"
             f"Description: {task.get('description', '')}"
             f"{spec_context}"

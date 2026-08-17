@@ -284,8 +284,32 @@ Respond ONLY in JSON.
                 " Your controllers MUST query with these exact values."
             )
 
-        # Build compact user message
+        # ── Read build contract ──
+        proj_name = ""
+        try:
+            if workspace_id and not workspace_id.startswith("error:"):
+                from Brain.shared.build_contract import read_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_be
+                _ws_be = _wm_be.resolve_workspace_path(workspace_id, user_id=user_id)
+                if _ws_be:
+                    _contract = read_contract(_ws_be)
+                    proj_name = _contract.get("project_name", "")
+        except Exception:
+            pass
+
+        # Build user message — compact
+        project_context = ""
+        orig_prompt = state.get("content", "")
+        if proj_name or orig_prompt:
+            project_context = "═══ PROJECT CONTEXT ═══\n"
+            if proj_name:
+                project_context += f"Project Name: {proj_name}\n"
+            if orig_prompt:
+                project_context += f"Original User Goal: {orig_prompt}\n"
+            project_context += "═══════════════════════\n\n"
+
         user_content = (
+            f"{project_context}"
             f"Task: {task.get('title')}\n"
             f"Description: {task.get('description', '')}\n"
             f"Acceptance: {task.get('acceptance_criteria', '')}"
