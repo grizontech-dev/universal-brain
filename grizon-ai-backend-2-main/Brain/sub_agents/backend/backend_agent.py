@@ -17,12 +17,12 @@ class BackendAgent(BaseAgent):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="qwen/qwen3-coder"
+            model_id="google/gemini-3.7-flash"
         )
         # Instance-level cache — avoids cross-build skill contamination between concurrent users
         self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
-        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
+        self.llm = ProviderRouter.get_model("google/gemini-3.7-flash", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code])
@@ -350,13 +350,14 @@ Respond ONLY in JSON.
                 ], return_exceptions=True)
 
                 for tc, result in zip(save_calls, save_results):
-                    file_path = tc["args"].get("file_path", "")
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
                     code_content = tc["args"].get("code_content", "")
                     if isinstance(result, Exception):
                         print(f"[BACKEND] ✖ Failed: {file_path}: {result}", flush=True)
                         msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
                     else:
-                        files_saved.add(file_path)
+                        if file_path:
+                            files_saved.add(file_path)
                         print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
                         msgs.append(ToolMessage(
                             content=f"Saved: {file_path} ({len(code_content)} chars)",

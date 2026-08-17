@@ -17,14 +17,14 @@ class FrontendAgent(BaseAgent):
         super().__init__(
             name="Frontend Agent",
             description="Specialized in HTML, CSS, JS, React, Angular, Tailwind CSS, and Bootstrap.",
-            model_id="qwen/qwen3-coder"
+            model_id="google/gemini-3.7-flash"
         )
         # Instance-level cache — class-level dict caused cross-build skill contamination
         # between concurrent users (User A's skills leaking into User B's build)
         self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         # Cache bound model once — avoid recreating every execute()
-        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
+        self.llm = ProviderRouter.get_model("google/gemini-3.7-flash", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code, read_skill_file])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code, read_skill_file])
@@ -517,13 +517,14 @@ Every page you create MUST have a <Route> in App.jsx.
                 ], return_exceptions=True)
 
                 for tc, result in zip(save_calls, save_results):
-                    file_path = tc["args"].get("file_path", "")
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
                     code_content = tc["args"].get("code_content", "")
                     if isinstance(result, Exception):
                         print(f"[FRONTEND] ✖ Failed: {file_path}: {result}", flush=True)
                         msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
                     else:
-                        files_saved.add(file_path)  # set.add() instead of list.append()
+                        if file_path:
+                            files_saved.add(file_path)  # set.add() instead of list.append()
                         print(f"[FRONTEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
                         msgs.append(ToolMessage(
                             content=f"Saved: {file_path} ({len(code_content)} chars)",

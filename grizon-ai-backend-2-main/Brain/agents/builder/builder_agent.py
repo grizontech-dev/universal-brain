@@ -1,4 +1,4 @@
-﻿from typing import Any, Dict, List
+from typing import Any, Dict, List
 import os
 import json
 import time
@@ -264,13 +264,13 @@ class BuilderAgent(BaseAgent):
         start_time = time.time()
 
         _cat_models = {
-            "frontend": "qwen/qwen3-coder",
-            "backend": "qwen/qwen3-coder",
+            "frontend": "google/gemini-3.7-flash",
+            "backend": "google/gemini-3.7-flash",
             "database": "deepseek-v4-flash",
             "runner": "deepseek-v4-pro",
         }
         _model = _cat_models.get(category, "deepseek-v4-pro")
-        _llm = ProviderRouter.get_model(_model, temperature=0.7)
+        _llm = ProviderRouter.get_model(_model, temperature=0.1)
 
         print(f"{LOG} Using model: {_model} | category={category}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -288,7 +288,7 @@ class BuilderAgent(BaseAgent):
 
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
-        _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.7).bind_tools(tools)
+        _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools(tools)
         _fallback_active = False  # Permanently swap to fallback on first 429
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
         start_time = time.time()
@@ -819,13 +819,15 @@ class BuilderAgent(BaseAgent):
                     from Brain.agents.builder.mcp_tools import client_save_code
                     for file_entry in result["files"]:
                         if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
-                            file_path = file_entry["path"]
+                            file_path = file_entry.get("path", "")
+                            if not file_path or not file_path.strip():
+                                continue
                             file_content = file_entry["content"]
                             # Skip empty content — sub-agent already saved via tool calls
                             if not file_content:
                                 # Verify file exists on disk before skipping
                                 ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
-                                full_check = os.path.join(ws_root, file_path) if ws_root else None
+                                full_check = os.path.join(ws_root, file_path) if ws_root and file_path else None
                                 print(f"{LOG} ⚠ Skip empty check: ws_root={ws_root} file={file_path} full={full_check} exists={os.path.isfile(full_check) if full_check else False}", flush=True)
                                 if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
                                     files_saved.append(file_path)
@@ -843,6 +845,21 @@ class BuilderAgent(BaseAgent):
                                 print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)
                             except Exception as save_err:
                                 print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
+
+                # Recover files from task file saves log if sub-agent saved files via tool calls
+                try:
+                    from Brain.agents.builder.mcp_tools import get_task_file_saves
+                    mcp_saves = get_task_file_saves()
+                    for s in mcp_saves:
+                        s_path = s.get("path", "")
+                        if s_path and s_path not in files_saved:
+                            ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
+                            full_check = os.path.join(ws_root, s_path) if ws_root else None
+                            if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
+                                files_saved.append(s_path)
+                                print(f"{LOG} ✓ [{len(files_saved)}] Recovered from task saves log: {s_path}", flush=True)
+                except Exception as rec_err:
+                    print(f"{LOG} ⚠ Task saves recovery notice: {rec_err}", flush=True)
 
                 summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
                 print(f"{LOG} ⚠ Sub-agent result: files={len(result.get('files', [])) if isinstance(result, dict) else 'N/A'} | files_saved={len(files_saved)} | summary={summary[:100]}", flush=True)

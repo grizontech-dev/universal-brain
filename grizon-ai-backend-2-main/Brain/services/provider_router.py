@@ -81,6 +81,7 @@ class ProviderRouter:
                 api_key=openrouter_key,
                 base_url=openrouter_base,
                 temperature=temperature,
+                streaming=True,
                 max_retries=1,
                 timeout=120,
                 request_timeout=120,
@@ -107,8 +108,8 @@ class ProviderRouter:
                 return _make_deepseek(model_id)
             return get_fallback_model()
 
-        # Qwen Models -> OpenRouter
-        elif "qwen" in model_id.lower() or "openrouter" in model_id.lower():
+        # Qwen / OpenRouter / Google OpenRouter Models -> OpenRouter
+        elif "qwen" in model_id.lower() or "openrouter" in model_id.lower() or "google/" in model_id.lower():
             if openrouter_key:
                 print(f"{LOG} → OpenRouter '{model_id}' (base={openrouter_base})", flush=True)
                 return _make_openrouter(model_id)

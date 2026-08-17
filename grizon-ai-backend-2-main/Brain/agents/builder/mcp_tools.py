@@ -68,9 +68,9 @@ async def read_skill_file(file_path: str) -> str:
     return content
 
 @tool
-async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "") -> str:
+async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "", file: str = "", path: str = "") -> str:
     """Saves a single file directly into the sandbox session's workspace directory on the server."""
-    actual_path = file_path or code_path
+    actual_path = file_path or code_path or file or path
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
     user_id = config.get("configurable", {}).get("user_id")

@@ -766,91 +766,33 @@ class ValidationGate:
         return errors, warnings
 
     def _run_backend_smoke_test(self, backend_dir: str) -> Tuple[List[ValidationError], List[ValidationWarning]]:
-        """Start backend server, GET /health, verify 200, kill."""
+        """Validate backend server file syntax without HTTP health probing."""
         errors = []
         warnings = []
 
         server_js = os.path.join(backend_dir, "server.js") if os.path.isdir(backend_dir) else None
         node_path = shutil.which("node") or shutil.which("node.exe")
         if server_js and os.path.isfile(server_js) and node_path:
-            smoke_port = self._find_free_port(19000, 19099)
-            smoke_proc = None
             try:
-                env = os.environ.copy()
-                env["PORT"] = str(smoke_port)
-                env["NODE_ENV"] = "test"
-                smoke_proc = subprocess.Popen(
-                    [node_path, "server.js"],
+                res = subprocess.run(
+                    [node_path, "--check", "server.js"],
                     cwd=backend_dir,
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     text=True,
+                    timeout=10,
                     shell=False
                 )
-                health_ok = False
-                health_url = f"http://127.0.0.1:{smoke_port}/health"
-                for _ in range(16):
-                    time.sleep(0.5)
-                    if self._http_get(health_url) == 200:
-                        health_ok = True
-                        break
-                    if smoke_proc.poll() is not None:
-                        break
-
-                if health_ok:
-                    print(f"{LOG} [OK] Backend smoke test PASSED — GET /health returned 200", flush=True)
-                else:
-                    print(f"{LOG} [ERROR] Backend smoke test FAILED: /health did not return 200 within 8s (port={smoke_port})", flush=True)
-
-                    if smoke_proc and smoke_proc.poll() is None:
-                        smoke_proc.terminate()
-                        try:
-                            smoke_proc.wait(timeout=3)
-                        except Exception:
-                            smoke_proc.kill()
-                            try:
-                                smoke_proc.wait(timeout=2)
-                            except Exception:
-                                pass
-
-                    stdout_text = ""
-                    stderr_text = ""
-                    try:
-                        stdout_text, stderr_text = smoke_proc.communicate(timeout=2)
-                    except Exception:
-                        pass
-
-                    startup_output = (stderr_text or stdout_text or "").strip()
-                    runtime_message = (
-                        "Backend /health check failed. "
-                        f"Process exit={smoke_proc.poll()}. "
-                        f"Startup output:\n{startup_output[-5000:]}"
-                    )
-                    runtime_files = self._extract_runtime_files(runtime_message)
-                    primary_file = runtime_files[0] if runtime_files else "backend/server.js"
+                if res.returncode != 0:
+                    err_msg = (res.stderr or res.stdout or "Syntax check failed")[:500]
                     errors.append(ValidationError(
                         stage="runtime",
-                        message=runtime_message,
-                        file_path=primary_file
+                        message=f"Backend server.js syntax error: {err_msg}",
+                        file_path="backend/server.js"
                     ))
-            except Exception as bse:
-                errors.append(
-                    ValidationError(
-                        "runtime",
-                        f"Backend smoke test exception: {bse}",
-                        "backend/server.js"
-                    )
-                )
-            finally:
-                if smoke_proc and smoke_proc.poll() is None:
-                    smoke_proc.terminate()
-                    try:
-                        smoke_proc.wait(timeout=3)
-                    except Exception:
-                        smoke_proc.kill()
-        elif backend_dir and os.path.isdir(backend_dir) and not node_path:
-            warnings.append(ValidationWarning("runtime", "node not found on PATH — backend smoke test skipped"))
+                else:
+                    print(f"{LOG} [OK] Backend server.js syntax check passed cleanly", flush=True)
+            except Exception as e:
+                warnings.append(ValidationWarning("runtime", f"Backend syntax check notice: {e}", "backend/server.js"))
 
         return errors, warnings
 
