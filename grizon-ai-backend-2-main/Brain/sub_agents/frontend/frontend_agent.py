@@ -137,7 +137,7 @@ Every page you create MUST have a <Route> in App.jsx.
 
         # Extract color palette — check state directly, then memory_context decisions as fallback
         color_palette = state.get("selected_color_palette", {})
-        theme_preference = state.get("theme_preference", "dark")
+        theme_preference = state.get("theme_preference", "light")
         custom_color_input = state.get("custom_color_input", "")
         if not color_palette:
             # Correct fallback path: memory_context.decisions, not state.decisions
@@ -145,10 +145,10 @@ Every page you create MUST have a <Route> in App.jsx.
             decisions = memory_ctx.get("decisions", {}) or {}
             color_palette = decisions.get("color_palette", {})
 
-        default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"] if theme_preference == "dark" \
-            else ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
+        default_colors = ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"] if theme_preference == "light" \
+            else ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"]
         palette_colors = color_palette.get("colors", default_colors)
-        palette_name = color_palette.get("name", "Midnight Blue" if theme_preference == "dark" else "Clean Light")
+        palette_name = color_palette.get("name", "Clean Light" if theme_preference == "light" else "Midnight Blue")
 
         # Skill resolution with caching by task category
         task_description = f"{task.get('title', '')} {task.get('description', '')}"
@@ -401,7 +401,7 @@ Every page you create MUST have a <Route> in App.jsx.
         # Initialize messages
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[FRONTEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[FRONTEND] model={self.model_id} | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         # Bind read_skill_file ONLY when skills actually exist. Otherwise Qwen burns
         # its iteration budget calling read_skill_file on project files (which the

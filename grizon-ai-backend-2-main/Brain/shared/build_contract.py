@@ -107,17 +107,46 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
         or "Untitled Project"
     )
 
-    # Color palette — prefer state, then memory_context, then hardcoded default
-    color_palette = state.get("selected_color_palette", {}) or {}
+    # Color palette — prefer state keys, then memory_context decisions, then contextual scan
+    color_palette = (
+        state.get("selected_color_palette")
+        or state.get("color_palette")
+        or {}
+    )
     if not color_palette:
         mem = state.get("memory_context", {}) or {}
-        color_palette = (mem.get("decisions", {}) or {}).get("color_palette", {})
+        decisions = mem.get("decisions", {}) or {}
+        color_palette = (
+            decisions.get("color_palette")
+            or decisions.get("selected_color_palette")
+            or decisions.get("palette")
+            or {}
+        )
 
-    # If still empty, use a clean modern light default so palette=✓ always
+    # Search in user prompt text, project_plan, or messages if still empty
+    if not color_palette:
+        try:
+            from Brain.agents.questions.questions_agent import COLOR_PALETTES
+            all_text = (
+                str(state.get("content", "")) + " " +
+                str(state.get("project_plan", "")) + " " +
+                str([m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict)])
+            ).lower()
+            for p in COLOR_PALETTES:
+                if p["name"].lower() in all_text or p["id"].lower() in all_text:
+                    color_palette = p
+                    state["theme_preference"] = p.get("theme", "dark")
+                    print(f"[CONTRACT] 🎨 Resolved palette from context: {p['name']}", flush=True)
+                    break
+        except Exception:
+            pass
+
+    # If still empty, use a clean default so palette=✓ always
     if not color_palette:
         _prompt_lower = (state.get("content", "") or "").lower()
-        if "dark" in _prompt_lower:
+        if "dark" in _prompt_lower or "coral" in _prompt_lower:
             color_palette = {
+                "id": "midnight-blue",
                 "name": "Midnight Blue",
                 "colors": ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"],
                 "theme": "dark"
@@ -125,14 +154,18 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
             contract["theme_preference"] = "dark"
         else:
             color_palette = {
+                "id": "clean-light",
                 "name": "Clean Light",
                 "colors": ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f8fafc"],
                 "theme": "light"
             }
             contract["theme_preference"] = "light"
-        print(f"[CONTRACT] 🎨 No palette in state — using default: {color_palette['name']}", flush=True)
+        print(f"[CONTRACT] 🎨 Fallback palette: {color_palette['name']}", flush=True)
+    else:
+        print(f"[CONTRACT] 🎨 Active palette bound to contract: {color_palette.get('name', 'Custom')}", flush=True)
+
     contract["color_palette"] = color_palette or {}
-    contract["theme_preference"] = state.get("theme_preference", "dark")
+    contract["theme_preference"] = state.get("theme_preference", color_palette.get("theme", "light"))
     contract["custom_color_input"] = state.get("custom_color_input", "")
 
     # Pages — prefer planner's architecture output (exact names + routes),
@@ -356,7 +389,7 @@ def _empty_contract() -> Dict[str, Any]:
     return {
         "project_name": "",
         "color_palette": {},
-        "theme_preference": "dark",
+        "theme_preference": "light",
         "custom_color_input": "",
         "pages": [],
         "planned_api_routes": [],

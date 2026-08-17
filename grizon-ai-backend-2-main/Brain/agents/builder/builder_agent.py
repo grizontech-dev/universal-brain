@@ -828,13 +828,12 @@ class BuilderAgent(BaseAgent):
                                 # Verify file exists on disk before skipping
                                 ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
                                 full_check = os.path.join(ws_root, file_path) if ws_root and file_path else None
-                                print(f"{LOG} ⚠ Skip empty check: ws_root={ws_root} file={file_path} full={full_check} exists={os.path.isfile(full_check) if full_check else False}", flush=True)
                                 if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
                                     files_saved.append(file_path)
-                                    print(f"{LOG} ✓ [{len(files_saved)}] Kept (already saved): {file_path}", flush=True)
+                                    print(f"{LOG} ✓ [{len(files_saved)}] Verified on disk: {file_path}", flush=True)
                                     continue
                                 else:
-                                    print(f"{LOG} ⚠ Skip empty (not on disk): {file_path}", flush=True)
+                                    print(f"{LOG} ⚠ File not found on disk: {file_path}", flush=True)
                                     continue
                             try:
                                 save_result = await client_save_code.ainvoke(

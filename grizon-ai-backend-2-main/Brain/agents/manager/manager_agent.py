@@ -151,8 +151,8 @@ class ManagerAgent(BaseAgent):
             # If no predefined palette matched, treat as custom color input
             if not palette_found:
                 state["custom_color_input"] = str(user_answers)
-                state["theme_preference"] = "dark"  # Default to dark for custom
-                print(f"DEBUG: Custom color input: {user_answers}", flush=True)
+                state["theme_preference"] = "dark" if "dark" in str(user_answers).lower() else "light"
+                print(f"DEBUG: Custom color input: {user_answers} (theme: {state['theme_preference']})", flush=True)
 
             # Skip LLM re-evaluation after ANY answer round — the QuestionsAgent
             # already asked targeted questions; re-evaluating adds a full LLM round

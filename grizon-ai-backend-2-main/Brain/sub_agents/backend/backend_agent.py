@@ -262,7 +262,7 @@ Respond ONLY in JSON.
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] model={self.model_id} | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         active_llm = self.bound_llm
         fallback_llm = self.fallback_llm
