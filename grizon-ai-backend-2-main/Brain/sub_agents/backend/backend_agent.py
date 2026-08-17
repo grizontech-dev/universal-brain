@@ -87,11 +87,17 @@ backend/
    // health endpoint (MANDATORY)
    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
    app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.get('/favicon.ico', (_req, res) => res.status(204).end());
    // routes
    const featureRoutes = require('./routes/feature');
    app.use('/api/feature', featureRoutes);
    app.listen(process.env.PORT || 3001, '0.0.0.0');
    ```
+   ⚠️ CRITICAL RULE: ONLY mount a route in server.js if you ACTUALLY generate that route file in this task.
+   - If you write `require('./routes/contact')` in server.js → you MUST also save `backend/routes/contact.js`.
+   - NEVER reference a route file you did not generate. This causes a validation ERROR every single time.
+   - Before saving server.js, verify: every `require('./routes/X')` has a matching saved `backend/routes/X.js`.
+
 6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
    - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
    - Backend MUST mount the route in `server.js` and frontend MUST call the exact same path through `frontend/src/lib/api.js`.
