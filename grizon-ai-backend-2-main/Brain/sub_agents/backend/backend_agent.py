@@ -406,6 +406,58 @@ Respond ONLY in JSON.
             save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
 
             if save_calls:
+                for tc in save_calls:
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
+                    code_content = tc["args"].get("code_content", "")
+                    
+                    # ── PROGRAMMATIC SERVER.JS MERGE (Bulletproof Fix for 404s) ──
+                    if file_path.endswith("server.js") and code_content and 'ws_root' in locals() and ws_root:
+                        server_js_path = os.path.join(ws_root, "backend", "server.js")
+                        if os.path.exists(server_js_path):
+                            try:
+                                with open(server_js_path, "r", encoding="utf-8") as f:
+                                    old_content = f.read()
+                                
+                                # Extract existing routes
+                                old_imports = [m.group(0) for m in re.finditer(r"const\s+\w+\s*=\s*require\(['\"].*?['\"]\);?", old_content)]
+                                old_mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"],\s*.*?\);?", old_content)]
+                                
+                                # Ignore generic middleware mounts like cors or express.json
+                                old_imports = [imp for imp in old_imports if './routes/' in imp]
+                                old_mounts = [mnt for mnt in old_mounts if '/api/' in mnt]
+                                
+                                # Find what the LLM dropped
+                                missing_imports = [imp for imp in old_imports if imp not in code_content]
+                                missing_mounts = [mnt for mnt in old_mounts if mnt not in code_content]
+                                
+                                if missing_imports or missing_mounts:
+                                    lines = code_content.splitlines()
+                                    out_lines = []
+                                    injected_imports = False
+                                    injected_mounts = False
+                                    
+                                    for line in lines:
+                                        if not injected_imports and "require('./routes/" in line:
+                                            out_lines.extend(missing_imports)
+                                            injected_imports = True
+                                        
+                                        if not injected_mounts and "app.use('/api/" in line:
+                                            out_lines.extend(missing_mounts)
+                                            injected_mounts = True
+                                            
+                                        if "app.listen" in line and not injected_mounts:
+                                            if not injected_imports:
+                                                out_lines.extend(missing_imports)
+                                            out_lines.extend(missing_mounts)
+                                            injected_mounts = True
+                                            
+                                        out_lines.append(line)
+                                    
+                                    tc["args"]["code_content"] = "\n".join(out_lines)
+                                    print(f"[BACKEND] 🛡️ Programmatically merged {len(missing_imports)} missing routes into server.js to prevent 404s", flush=True)
+                            except Exception as e:
+                                print(f"[BACKEND] ⚠️ Failed programmatic merge: {e}")
+
                 save_configs = [{"configurable": {
                     "thread_id": state.get("current_job_id"),
                     "task_title": task.get("title", ""),
