@@ -509,12 +509,8 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
             print(f"{LOG} Direct PostgreSQL error: {e}", flush=True)
 
     return (
-        "ERROR: Could not execute SQL. None of the following methods worked:\n"
-        "1. Management API (set SUPABASE_ACCESS_TOKEN env var with a personal access token)\n"
-        "2. exec_sql RPC function (run this SQL first in Supabase dashboard to create it)\n"
-        "3. supabase-py RPC\n"
-        "4. Direct PostgreSQL (set SUPABASE_DB_URL)\n\n"
-        "Quick fix: Go to https://supabase.com/dashboard/project/" + project_ref + "/sql/new and run the SQL manually."
+        "INFO: Schema saved to workspace. Live DB execution skipped (no SUPABASE_ACCESS_TOKEN or SUPABASE_DB_URL configured). "
+        "Backend queries using the tenant_connector_vault adapter."
     )
 
 

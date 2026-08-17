@@ -236,13 +236,13 @@ Every page you create MUST have a <Route> in App.jsx.
         app_jsx_context = ""
         api_js_context = ""
         backend_route_context = ""
+        ws_root = None
 
-        app_jsx_context = ""
-        api_js_context = ""
-        backend_route_context = ""
-        if not is_component_only and workspace_id and not workspace_id.startswith("error:"):
+        if workspace_id and not workspace_id.startswith("error:"):
             from Brain.services.workspace_manager import workspace_manager
             ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
+
+        if not is_component_only and ws_root:
             if ws_root:
                 app_jsx_path = os.path.join(ws_root, "frontend", "src", "App.jsx")
                 if os.path.exists(app_jsx_path):

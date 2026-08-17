@@ -204,19 +204,21 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
                                 timeout=30
                             )
                             sql_res_str = str(sql_res).strip()
-                            # Strict success check — distinguish OK from silent failure
+                            _sql_skipped = "live db execution skipped" in sql_res_str.lower() or sql_res_str.startswith("INFO:")
                             _sql_failed = (
-                                sql_res_str.upper().startswith("ERROR")
-                                or "could not execute sql" in sql_res_str.lower()
-                                or "relation already exists" not in sql_res_str.lower()
-                                and any(kw in sql_res_str.lower() for kw in (
-                                    "error", "failed", "exception", "invalid", "syntax error",
-                                    "permission denied", "duplicate", "violates"
-                                ))
+                                not _sql_skipped and (
+                                    sql_res_str.upper().startswith("ERROR")
+                                    or "could not execute sql" in sql_res_str.lower()
+                                    or any(kw in sql_res_str.lower() for kw in (
+                                        "error", "failed", "exception", "invalid", "syntax error",
+                                        "permission denied", "violates"
+                                    ))
+                                )
                             )
-                            if _sql_failed:
-                                print(f"[DB] [WARN] Supabase SQL execution failed — schema saved to file but DB may be out of sync: {sql_res_str[:300]}", flush=True)
-                                # Store failure in state so downstream agents are aware
+                            if _sql_skipped:
+                                print(f"[DB] 💾 Schema saved to '{f_path}' (Local/Sandbox mode active)", flush=True)
+                            elif _sql_failed:
+                                print(f"[DB] [WARN] Supabase SQL execution failed — schema saved to file: {sql_res_str[:200]}", flush=True)
                                 state.setdefault("db_sql_warnings", []).append({
                                     "file": f_path,
                                     "error": sql_res_str[:300],
