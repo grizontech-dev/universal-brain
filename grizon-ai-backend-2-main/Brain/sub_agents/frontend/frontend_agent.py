@@ -111,7 +111,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - Real content only. Never <h1>Home Page</h1> as the only content.
 - Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
 - Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
-- Port 9999 for Vite: --port 9999 --host 0.0.0.0 in vite.config.js
+- Vite Config (CRITICAL): MUST generate `vite.config.js` with `server: {{ port: 9999, host: '0.0.0.0', proxy: {{ '/api': 'http://localhost:3001' }} }}` so frontend API calls don't 404.
 
 ═══ PACKAGES ═══
 - All deps in frontend/package.json. Return "commands": ["cd frontend && npm install"] when adding.

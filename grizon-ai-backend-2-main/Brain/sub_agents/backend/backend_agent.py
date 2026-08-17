@@ -82,7 +82,9 @@ backend/
    ```js
    require('dotenv').config();
    const express = require('express');
+   const cors = require('cors');
    const app = express();
+   app.use(cors());
    app.use(express.json());
    // health endpoint (MANDATORY)
    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
@@ -107,7 +109,7 @@ backend/
    - `POST /api/auth/login`
    - optional `GET /api/auth/me`
    Never mount auth at only `/auth`, `/api/users/login`, or `/api/user/register`; those cause 404s.
-7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`.
+7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`. ALWAYS include `cors` in your dependencies.
 8. NEVER import browser Supabase client. Use server-side only.
    - If user has connected Supabase connector: direct table queries with `.from()`.
    - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).
