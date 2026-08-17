@@ -91,6 +91,14 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - components/ → reusable pieces imported by pages
 - lib/api.js → all fetch calls, exported by name, with ledger comment mapping name→route
 - No TypeScript. No App.tsx. Plain JSX only.
+- NO LAYOUT DUPLICATION (CRITICAL): If App.jsx already includes a layout wrapper (AppLayout) that renders Navbar, Sidebar, and Footer, then EVERY page component (Homepage.jsx, Loginpage.jsx, etc.) MUST NOT render Navbar, Sidebar, or Footer again. Pages render ONLY their own content — the layout is inherited automatically from AppLayout. Rendering layout components twice causes double Navbar and double Sidebar bugs.
+- COMPONENT-PAGE CONTRACT (CRITICAL): This applies to EVERY page, not just Login/Register. Any page component inside `pages/` MUST import and fully render its relevant components from `components/`. NEVER leave ANY page as just plain text, an empty `<div>`, or a `<p>Coming soon</p>` placeholder. Every single page MUST render real, working UI. Examples:
+  - `Loginpage.jsx` → imports and renders `<LoginForm />`
+  - `Registerpage.jsx` → imports and renders `<RegisterForm />`
+  - `Homepage.jsx` → imports and renders `<HeroSection />`, `<VideoFeed />`, etc.
+  - `Videodetailpage.jsx` → imports and renders `<VideoPlayer />`, `<VideoInfo />`, etc.
+  - `AdminDashboardPage.jsx` → imports and renders `<AdminStats />`, `<AdminTable />`, etc.
+  If a component file exists in `components/`, it MUST be used by at least one page. Dead/unused components are wasted code.
 
 ═══ ROUTING (React Router v6) ═══
 - <Routes> not <Switch>. element={{<X />}} not component={{X}}.
@@ -101,6 +109,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
     <Route path="/" element={{<Home />}} />
     <Route path="/dashboard" element={{<Dashboard />}} />
   </Routes></BrowserRouter>
+- APPSLAYOUT RULE: If you write an AppLayout wrapper in App.jsx that includes <Navbar>, <Sidebar>, <Footer>, you MUST wrap <Routes> inside it. Children pages must NOT include these layout components. App.jsx is the single source of truth for the global layout.
 
 ═══ API CONTRACT ═══
 - api.js ledger at top: // getItems -> GET /api/items
