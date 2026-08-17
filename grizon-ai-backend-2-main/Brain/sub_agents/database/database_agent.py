@@ -13,13 +13,13 @@ class DatabaseAgent(BaseAgent):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
-            model_id="deepseek-v4-flash"
+            model_id="llama-4-scout-17b-16e-instruct"
         )
         # Instance-level cache — avoids cross-build skill contamination between concurrent users
         self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         # Cache model once
-        self.llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
+        self.llm = ProviderRouter.get_model("llama-4-scout-17b-16e-instruct", temperature=0.1)
 
     def _get_skill_cache_key(self, task: Dict, task_description: str) -> str:
         """Generate granular cache key based on DB task type."""
