@@ -118,7 +118,7 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - Auth (only if requested): loginUser/registerUser → /api/auth/login, /api/auth/register
 
 ═══ UI QUALITY ═══
-- Real content only. Never <h1>Home Page</h1> as the only content.
+- ANTI-STUB RULE (CRITICAL): NEVER generate a page that just says `<h1 className="text-2xl font-bold">Homepage</h1>`. If a page is meant to be a dashboard, it MUST render the dashboard components. If it's a Homepage, it MUST render the Hero and Feed components. Generating placeholder text (e.g. "Coming soon", "Homepage", or just an empty flex container) is STRICTLY FORBIDDEN and will cause the build to fail. You MUST import and connect the components you just built!
 - Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
 - Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
 - PREMIUM HOMEPAGE: The Homepage/Landing page MUST be extremely rich and contain at least 5-6 beautifully designed, premium sections (e.g. Hero, Featured Categories grid, Bestsellers/Featured Products grid, Brand Story/Philosophy, Customer Testimonials/Reviews, Promotional/Newsletter banner, rich interactive Footer). Do NOT build a basic 1-2 section skeleton.
