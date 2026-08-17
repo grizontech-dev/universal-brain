@@ -52,6 +52,7 @@ SKILL FILES (reference only):
 4. Add GIN index on `record_data` and btree index on `(tenant_id, schema_name)` for query performance.
 5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
    ALTER TABLE public.tenant_connector_vault ENABLE ROW LEVEL SECURITY;
+   DROP POLICY IF EXISTS "allow_all" ON public.tenant_connector_vault;
    CREATE POLICY "allow_all" ON public.tenant_connector_vault FOR ALL USING (true) WITH CHECK (true);
    GRANT ALL ON public.tenant_connector_vault TO service_role, anon, authenticated;
 6. Use IF NOT EXISTS to prevent re-run errors.
