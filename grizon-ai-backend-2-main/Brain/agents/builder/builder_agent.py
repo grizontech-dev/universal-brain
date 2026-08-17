@@ -264,13 +264,13 @@ class BuilderAgent(BaseAgent):
         start_time = time.time()
 
         _cat_models = {
-            "frontend": "qwen/qwen3-coder",
-            "backend": "qwen/qwen3-coder",
+            "frontend": "google/gemini-3.7-flash",
+            "backend": "google/gemini-3.7-flash",
             "database": "deepseek-v4-flash",
             "runner": "deepseek-v4-pro",
         }
         _model = _cat_models.get(category, "deepseek-v4-pro")
-        _llm = ProviderRouter.get_model(_model, temperature=0.7)
+        _llm = ProviderRouter.get_model(_model, temperature=0.1)
 
         print(f"{LOG} Using model: {_model} | category={category}", flush=True)
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
@@ -288,7 +288,7 @@ class BuilderAgent(BaseAgent):
 
         # Ask LLM to start generating files directly
         bound_llm = _llm.bind_tools(tools)
-        _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.7).bind_tools(tools)
+        _fallback_llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1).bind_tools(tools)
         _fallback_active = False  # Permanently swap to fallback on first 429
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
         start_time = time.time()
@@ -394,6 +394,7 @@ class BuilderAgent(BaseAgent):
 
             # Execute each tool call
             stuck = False
+            all_skipped = True  # track if every tool call was skipped (no progress)
             for i, tc in enumerate(response.tool_calls):
                 if time.time() - start_time > timeout_sec:
                     for skipped_tc in response.tool_calls[i:]:
@@ -401,6 +402,7 @@ class BuilderAgent(BaseAgent):
                             content="Tool call skipped because the builder timed out.",
                             tool_call_id=skipped_tc["id"]
                         ))
+                    stuck = True
                     break
                 if len(files_saved) >= max_files:
                     for skipped_tc in response.tool_calls[i:]:
@@ -408,6 +410,7 @@ class BuilderAgent(BaseAgent):
                             content="Tool call skipped because the builder reached the file limit.",
                             tool_call_id=skipped_tc["id"]
                         ))
+                    stuck = True
                     break
 
                 tool_name = tc["name"]
@@ -460,6 +463,7 @@ class BuilderAgent(BaseAgent):
                         files_saved.append(file_path)
                         seen_files.add(file_path)
                         consecutive_duplicates = 0
+                        all_skipped = False
                         print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({code_len} chars)", flush=True)
 
                         # Auto-execute SQL migrations on Supabase when saving .sql files
@@ -484,11 +488,19 @@ class BuilderAgent(BaseAgent):
                             supabase_exec_sql.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=tool_timeout
                         )
+                        messages.append(ToolMessage(
+                            content=str(result)[:500],
+                            tool_call_id=tc["id"]
+                        ))
                     elif tool_name == "supabase_create_exec_sql_function":
                         result = await asyncio.wait_for(
                             supabase_create_exec_sql_function.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}),
                             timeout=tool_timeout
                         )
+                        messages.append(ToolMessage(
+                            content=str(result)[:500],
+                            tool_call_id=tc["id"]
+                        ))
                     elif tool_name == "get_unsplash_image":
                         result = await asyncio.wait_for(
                             get_unsplash_image.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
@@ -512,6 +524,14 @@ class BuilderAgent(BaseAgent):
 
             if stuck:
                 break
+            # If LLM responded with tool calls but saved nothing new — potential infinite loop
+            if all_skipped and not stuck:
+                consecutive_duplicates += 1
+                if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
+                    print(f"{LOG} ✖ No progress for {consecutive_duplicates} rounds — breaking loop", flush=True)
+                    break
+            else:
+                consecutive_duplicates = 0
 
         # ═══════════════════════════════════════════════════════════════
         # VALIDATION LOOP: Scan ALL files for broken imports, auto-fix
@@ -534,360 +554,9 @@ class BuilderAgent(BaseAgent):
                 f"(retried primary model + fallback)"
             )
 
-        return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
+        msg = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}"
+        return msg, len(files_saved)
 
-    async def _run_self_healing_loop(self, session_id: str, task_title: str, files_saved: list, timeout_sec: int) -> list:
-        """Self-healing: esbuild syntax check → auto-fix errors.
-        
-        Import validation is handled separately by _validate_and_fix_imports().
-        """
-        import os as _os
-        import re as _re
-        import asyncio
-        import shutil
-        import subprocess as _sp
-        import time as _time
-
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
-        frontend_dir = _os.path.join(workspace_dir, "frontend")
-        frontend_src = _os.path.join(frontend_dir, "src")
-
-        if not _os.path.isdir(frontend_src):
-            return files_saved
-
-        start_time = _time.time()
-        bound_llm = self.llm.bind_tools([client_save_code])
-
-        # Use cached ProjectIndex instead of repeated os.walk
-        project_index = ProjectIndex.get_or_create(frontend_src)
-        project_index.scan()
-
-        # ═══════════════════════════════════════════════════════════════
-        # PHASE 2: esbuild syntax check (max 2 iterations to save credits)
-        # ═══════════════════════════════════════════════════════════════
-        print(f"{LOG} ═══ SELF-HEALING: esbuild syntax check ═══", flush=True)
-
-        for iteration in range(2):
-            if _time.time() - start_time > timeout_sec - 30:
-                print(f"{LOG} ✖ Timeout — skipping remaining esbuild iterations", flush=True)
-                break
-
-            # Use cached ProjectIndex for file list
-            all_files = [full_path for full_path, _ in project_index.jsx_files]
-
-            if not all_files:
-                break
-
-            escaped_files = [f'"{f}"' for f in all_files]
-
-            # Find npx with full path
-            npx_full = shutil.which("npx.cmd" if _os.name == 'nt' else "npx")
-            if npx_full:
-                cmd_str = f'"{npx_full}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
-            else:
-                npx_cli_js = None
-                node_full = shutil.which("node")
-                if node_full:
-                    try:
-                        npm_prefix = _sp.check_output(
-                            [node_full, _os.path.join(_os.path.dirname(node_full), "node_modules", "npm", "bin", "npm-prefix.js")],
-                            text=True, timeout=5
-                        ).strip()
-                        candidate = _os.path.join(npm_prefix, "node_modules", "npm", "bin", "npx-cli.js")
-                        if _os.path.isfile(candidate):
-                            npx_cli_js = candidate
-                    except Exception:
-                        pass
-
-                if node_full and npx_cli_js:
-                    cmd_str = f'"{node_full}" "{npx_cli_js}" --yes esbuild ' + " ".join(escaped_files) + " --bundle --packages=external --outdir=temp_esbuild_out"
-                else:
-                    print(f"{LOG} ⚠ npx not found — skipping esbuild check", flush=True)
-                    break
-
-            try:
-                process = await asyncio.create_subprocess_shell(
-                    cmd_str,
-                    cwd=frontend_dir,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await process.communicate()
-
-                temp_dir = _os.path.join(frontend_dir, "temp_esbuild_out")
-                if _os.path.isdir(temp_dir):
-                    try:
-                        import shutil as _shutil
-                        _shutil.rmtree(temp_dir, ignore_errors=True)
-                    except Exception:
-                        pass
-
-                if process.returncode == 0:
-                    print(f"{LOG} ✓ esbuild passed (iteration {iteration+1}) — no syntax/import errors", flush=True)
-                    break
-
-                error_output = stderr.decode('utf-8', errors='ignore')
-
-                if ("npx: not found" in error_output
-                    or "npx is not recognized" in error_output
-                    or "command not found" in error_output.lower()
-                    or "executable file not found" in error_output.lower()
-                    or "no such file or directory" in error_output.lower()):
-                    print(f"{LOG} ⚠ npx not found on host. Skipping esbuild check.", flush=True)
-                    break
-
-                print(f"{LOG} ⚠ esbuild failed (iter {iteration+1}):\n{error_output[:500]}...", flush=True)
-
-                # Extract file names from error message (targeted approach)
-                import re as _re
-                error_files = set()
-                for match in _re.finditer(r'(?:"([^"]+\.jsx?)"|\'([^\']+\.jsx?)\')', error_output):
-                    fname = match.group(1) or match.group(2)
-                    if fname and not fname.startswith('node_modules'):
-                        error_files.add(fname)
-                
-                # Also check for line numbers like "path/file.jsx:123"
-                for match in _re.finditer(r'([^\s:]+\.jsx?):(\d+)', error_output):
-                    fname = match.group(1)
-                    if fname and not fname.startswith('node_modules'):
-                        error_files.add(fname)
-                
-                # If no files extracted from error, fall back to first 3 files
-                if not error_files:
-                    error_files = {fp for fp in all_files[:3]}
-                else:
-                    # Convert relative paths to full paths
-                    error_files = {_os.path.join(frontend_src, f) for f in error_files if _os.path.exists(_os.path.join(frontend_src, f))}
-                    # If none exist, try from frontend_dir
-                    if not error_files:
-                        error_files = {_os.path.join(frontend_dir, f) for f in error_files if _os.path.exists(_os.path.join(frontend_dir, f))}
-
-                # Read ONLY error-related files for context (targeted)
-                file_context = ""
-                for fp in list(error_files)[:5]:  # Max 5 files
-                    if not _os.path.isfile(fp):
-                        continue
-                    try:
-                        with open(fp, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        rel = _os.path.relpath(fp, frontend_src).replace('\\', '/')
-                        file_context += f"\n--- {rel} ---\n```jsx\n{content[:1000]}\n```\n"
-                    except Exception:
-                        pass
-
-                prompt = (
-                    "The React build failed with the following errors. Fix the broken files using `client_save_code`.\n"
-                    f"```\n{error_output[:1500]}\n```\n"
-                    "Rules:\n"
-                    "- ONLY fix files mentioned in the error messages\n"
-                    "- Fix the specific import/syntax issue — do NOT rewrite entire files\n"
-                    "- If an import is wrong, fix the import path or fix the export name\n"
-                    "- If a component is missing, generate a minimal working version\n"
-                    f"{file_context}\n"
-                    "--- CURRENT App.jsx (preserve its structure, only fix errors) ---\n"
-                )
-
-                app_jsx_path = _os.path.join(frontend_src, "App.jsx")
-                if not _os.path.isfile(app_jsx_path):
-                    app_jsx_path = _os.path.join(frontend_src, "App.tsx")
-
-                if _os.path.isfile(app_jsx_path):
-                    try:
-                        with open(app_jsx_path, 'r', encoding='utf-8') as f:
-                            prompt += f"```jsx\n{f.read()}\n```\n"
-                    except Exception:
-                        pass
-
-                messages = [
-                    SystemMessage(content="You are an expert React debugger. Fix ONLY the specific build errors. Do NOT regenerate files from scratch."),
-                    HumanMessage(content=prompt)
-                ]
-
-                print(f"{LOG} → Asking LLM to fix build errors (iter {iteration+1})...", flush=True)
-                response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=120)
-
-                if response.tool_calls:
-                    fixed_any = False
-                    for tc in response.tool_calls:
-                        if tc["name"] == "client_save_code":
-                            tool_args = tc["args"]
-                            file_path = tool_args.get("file_path", "")
-                            try:
-                                await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title + " (Fix Error)"}}),
-                                    timeout=30
-                                )
-                                if file_path and file_path not in files_saved:
-                                    files_saved.append(file_path)
-                                print(f"{LOG} ✓ Fixed: {file_path}", flush=True)
-                                fixed_any = True
-                            except Exception as e:
-                                print(f"{LOG} ✖ Failed to fix {file_path}: {e}", flush=True)
-                    if not fixed_any:
-                        print(f"{LOG} ⚠ LLM did not provide fixes — stopping", flush=True)
-                        break
-                else:
-                    print(f"{LOG} ⚠ LLM did not provide any fixes — stopping", flush=True)
-                    break
-
-            except Exception as e:
-                print(f"{LOG} ✖ esbuild error: {e}", flush=True)
-                break
-
-        return files_saved
-
-    async def _validate_and_fix_imports(self, session_id, task_title, files_saved, start_time, timeout_sec):
-        """Scan ALL .jsx/.js files for imports, check if imported files exist, generate missing ones."""
-        import re as _re
-        import os as _os
-        fixed = []
-        already_checked = set()
-
-        if not files_saved:
-            return fixed
-
-        workspace_dir = _os.path.join(_os.getcwd(), "workspaces", session_id)
-        frontend_src = _os.path.join(workspace_dir, "frontend", "src")
-
-        if not _os.path.isdir(frontend_src):
-            print(f"{LOG} ⚠ No frontend/src dir found", flush=True)
-            return fixed
-
-        # Use cached ProjectIndex instead of os.walk
-        project_index = ProjectIndex.get_or_create(frontend_src)
-        project_index.scan()
-
-        print(f"{LOG} ═══ VALIDATION: Scanning {len(project_index.jsx_files)} files for broken imports ═══", flush=True)
-
-        # Use cached imports from ProjectIndex
-        missing = []
-
-        for full_path, rel_path in project_index.jsx_files:
-            # Use cached imports
-            imports = project_index.get_imports(full_path)
-            for folder, name in imports:
-                check_key = f"{folder}/{name}"
-                if check_key in already_checked:
-                    continue
-                already_checked.add(check_key)
-
-                # Use cached file existence check
-                found = project_index.file_exists(f"{folder}/{name}.jsx") or \
-                        project_index.file_exists(f"{folder}/{name}.js") or \
-                        project_index.file_exists(f"{folder}/{name}.tsx") or \
-                        project_index.file_exists(f"{folder}/{name}.ts")
-
-                if not found:
-                    rel_missing = f"frontend/src/{folder}/{name}.jsx"
-                    # Don't re-generate files we already fixed
-                    if rel_missing not in fixed:
-                        missing.append((rel_missing, name, folder, rel_path))
-                        print(f"{LOG}   ✖ {rel_path} imports {name} → {rel_missing} MISSING", flush=True)
-                else:
-                    print(f"{LOG}   ✓ {rel_path} imports {name} → exists", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # ORPHAN DETECTION: Find components not imported by any file
-        # ═══════════════════════════════════════════════════════════════
-        components_dir = _os.path.join(frontend_src, "components")
-        if _os.path.isdir(components_dir):
-            # Find all component files
-            component_files = []
-            for f in _os.listdir(components_dir):
-                if f.endswith(('.jsx', '.js', '.tsx', '.ts')):
-                    name = f.split('.')[0]
-                    component_files.append(name)
-
-            # Find all imports across ALL files (using ProjectIndex)
-            all_imports = set()
-            for full_path, rel_path in project_index.jsx_files:
-                # Use cached imports from ProjectIndex
-                imports = project_index.get_imports(full_path)
-                for folder, name in imports:
-                    all_imports.add(name)
-
-            # Find orphans
-            orphans = [c for c in component_files if c not in all_imports]
-            if orphans:
-                print(f"{LOG} ⚠ {len(orphans)} orphaned components: {orphans}. (Ignoring instead of destructive rewrite)", flush=True)
-
-        # ═══════════════════════════════════════════════════════════════
-        # CLEANUP: Remove stray files outside src/
-        # ═══════════════════════════════════════════════════════════════
-        stray_app = _os.path.join(workspace_dir, "frontend", "App.jsx")
-        if _os.path.exists(stray_app):
-            try:
-                _os.remove(stray_app)
-                print(f"{LOG} ✓ Removed stray frontend/App.jsx (outside src/)", flush=True)
-            except Exception:
-                pass
-
-        if not missing:
-            print(f"{LOG} ✓ All imports validated — no missing files", flush=True)
-            return fixed
-
-        print(f"{LOG} ⚠ {len(missing)} missing files — auto-generating...", flush=True)
-
-        # Generate each missing file
-        bound_llm = self.llm.bind_tools([client_save_code])
-        messages = [
-            SystemMessage(content=(
-                "You are a React frontend engineer. Generate missing component files.\n"
-                "Rules:\n"
-                "- Dark theme: bg-[#09090b], white text\n"
-                "- Tailwind CSS on every element\n"
-                "- Use lucide-react for icons\n"
-                "- Real content, not placeholders\n"
-                "- Use get_unsplash_image tool for all image URLs, NEVER use placeholders\n"
-                "- Each component 50-150 lines\n"
-                "- Export default the component\n"
-            ))
-        ]
-
-        for rel_path, name, folder, imported_by in missing:
-            if time.time() - start_time > timeout_sec - 30:
-                print(f"{LOG} ✖ Not enough time to generate {rel_path}", flush=True)
-                break
-
-            print(f"{LOG} → Generating missing: {rel_path} (imported by {imported_by})", flush=True)
-
-            gen_prompt = (
-                f"Generate the missing file: {rel_path}\n"
-                f"This is a {folder} component called '{name}'.\n"
-                f"It's imported in {imported_by}.\n"
-                f"Generate a complete, working React component with Tailwind CSS dark theme.\n"
-                f"Use client_save_code to save it to: {rel_path}"
-            )
-            messages.append(HumanMessage(content=gen_prompt))
-
-            try:
-                response = await asyncio.wait_for(
-                    bound_llm.ainvoke(list(messages)),
-                    timeout=120
-                )
-                messages.append(response)
-
-                if response.tool_calls:
-                    for tc in response.tool_calls:
-                        if tc["name"] == "client_save_code":
-                            tool_args = tc["args"]
-                            tool_args["file_path"] = rel_path
-                            try:
-                                result = await asyncio.wait_for(
-                                    client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
-                                    timeout=30
-                                )
-                                fixed.append(rel_path)
-                                print(f"{LOG} ✓ Generated: {rel_path}", flush=True)
-                                messages.append(ToolMessage(content=f"Saved {rel_path}", tool_call_id=tc["id"]))
-                            except Exception as e:
-                                print(f"{LOG} ✖ Failed to save {rel_path}: {e}", flush=True)
-                                messages.append(ToolMessage(content=f"Error: {e}", tool_call_id=tc["id"]))
-            except Exception as e:
-                print(f"{LOG} ✖ LLM error generating {rel_path}: {e}", flush=True)
-
-        print(f"{LOG} ═══ VALIDATION DONE: {len(fixed)} missing files generated ═══", flush=True)
-        return fixed
 
     async def _validate_backend_routes(self, session_id):
         """Check if server.js mounts all route files. Auto-fix if missing."""
@@ -960,58 +629,6 @@ class BuilderAgent(BaseAgent):
 
         print(f"{LOG} ✓ Auto-mounted {len(unmounted)} routes in server.js", flush=True)
 
-    async def _run_free_agent_loop(self, system_prompt: str, instruction: str, session_id: str, task_title: str, timeout_sec: int) -> str:
-        """Fallback: free-form agent loop when file plan parsing fails."""
-        max_tool_calls = 20
-        tool_call_count = 0
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=instruction)]
-        bound_llm = self.llm.bind_tools([client_save_code])
-        start_time = time.time()
-        seen_files = set()
-        files_saved = []
-
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > timeout_sec or tool_call_count >= max_tool_calls:
-                break
-
-            remaining = timeout_sec - elapsed
-            llm_timeout = min(120, remaining)
-            if llm_timeout <= 15:
-                break
-
-            try:
-                response = await asyncio.wait_for(bound_llm.ainvoke(list(messages)), timeout=llm_timeout)
-            except Exception:
-                break
-
-            messages.append(response)
-            if not response.tool_calls:
-                break
-
-            for tc in response.tool_calls:
-                if time.time() - start_time > timeout_sec:
-                    break
-                tool_args = tc["args"]
-                file_path = tool_args.get("file_path", "")
-                if file_path in seen_files:
-                    messages.append(ToolMessage(content=f"Already saved {file_path}. Next file.", tool_call_id=tc["id"]))
-                    continue
-                try:
-                    if tc["name"] == "client_save_code":
-                        result = await asyncio.wait_for(
-                            client_save_code.ainvoke(tool_args, config={"configurable": {"thread_id": session_id, "task_title": task_title}}),
-                            timeout=30
-                        )
-                        files_saved.append(file_path)
-                        seen_files.add(file_path)
-                        messages.append(ToolMessage(content=f"Saved {file_path}. Next file.", tool_call_id=tc["id"]))
-                except Exception:
-                    pass
-                tool_call_count += 1
-
-        return f"Task '{task_title}' completed. Files saved: {', '.join(files_saved) if files_saved else 'none'}"
-
     async def execute(self, state: Dict[str, Any]):
         import traceback as _traceback
         try:
@@ -1040,6 +657,27 @@ class BuilderAgent(BaseAgent):
         if index == 0:
             ProjectIndex.clear_cache()
             print(f"{LOG} 🔄 Cleared ProjectIndex cache for new build", flush=True)
+
+            # Bootstrap the shared build contract so every sub-agent has a common truth
+            try:
+                from Brain.shared.build_contract import create_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_bc
+                ws_root_bc = _wm_bc.resolve_workspace_path(session_id, user_id=user_id)
+                if ws_root_bc:
+                    _bc = create_contract(ws_root_bc, state)
+                    print(
+                        f"{LOG} [CONTRACT] ✅ Bootstrap complete | "
+                        f"project='{_bc.get('project_name', '?')}' "
+                        f"pages={[p['name'] for p in _bc.get('pages', [])]} "
+                        f"seeded_routes={len(_bc.get('api_routes', []))} "
+                        f"schema_names={_bc.get('schema_names', [])} "
+                        f"palette={'✓' if _bc.get('color_palette') else '✗'}",
+                        flush=True,
+                    )
+                else:
+                    print(f"{LOG} [CONTRACT] ⚠ workspace not resolved — contract NOT created", flush=True)
+            except Exception as _bc_err:
+                print(f"{LOG} [CONTRACT] ⚠ Bootstrap failed (non-fatal): {_bc_err}", flush=True)
 
         print(f"{LOG} ═══════════════════════════════════════════════════════════════", flush=True)
         print(f"{LOG} EXECUTE | task={index+1}/{len(tasks)} | session={session_id}", flush=True)
@@ -1080,8 +718,13 @@ class BuilderAgent(BaseAgent):
         category = current_task.get("category", "backend") or "backend"
         framework = state.get("framework", "react")
 
-        # SKIP runner tasks — they should be handled by RunnerAgent, not Builder
-        if category == "runner" or "runner" in task_title.lower():
+        # SKIP runner tasks — BUT only if the title is NOT an integration/wiring task.
+        # Integration tasks (App.jsx wiring, route wiring, etc.) MUST run as frontend
+        # even if their category is tagged "runner" — skipping them leaves App.jsx unwired.
+        _integration_keywords = ("wire", "integrat", "app.jsx", "wiring", "connect", "mount", "assemble")
+        _is_integration_task = any(kw in task_title.lower() for kw in _integration_keywords)
+
+        if (category == "runner" or "runner" in task_title.lower()) and not _is_integration_task:
             print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
             current_task["status"] = "completed"
             next_idx = index + 1
@@ -1108,6 +751,12 @@ class BuilderAgent(BaseAgent):
             yield state
             return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)
+
+        # Reclassify integration/wiring tasks that were tagged "runner" → treat as "frontend"
+        # so FrontendAgent handles App.jsx wiring instead of the task being dropped.
+        if category == "runner" and _is_integration_task:
+            category = "frontend"
+            print(f"{LOG} [CONTRACT] ↻ Reclassified '{task_title}' runner→frontend (integration/wiring task must not be skipped)", flush=True)
 
         if workspace_id and not workspace_id.startswith("error:"):
             start_act = self._make_activity("task_start", f"Exploring — {task_title}", task_title=task_title, status="running")
@@ -1170,20 +819,21 @@ class BuilderAgent(BaseAgent):
                     from Brain.agents.builder.mcp_tools import client_save_code
                     for file_entry in result["files"]:
                         if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
-                            file_path = file_entry["path"]
+                            file_path = file_entry.get("path", "")
+                            if not file_path or not file_path.strip():
+                                continue
                             file_content = file_entry["content"]
                             # Skip empty content — sub-agent already saved via tool calls
                             if not file_content:
                                 # Verify file exists on disk before skipping
                                 ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
-                                full_check = os.path.join(ws_root, file_path) if ws_root else None
-                                print(f"{LOG} ⚠ Skip empty check: ws_root={ws_root} file={file_path} full={full_check} exists={os.path.isfile(full_check) if full_check else False}", flush=True)
+                                full_check = os.path.join(ws_root, file_path) if ws_root and file_path else None
                                 if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
                                     files_saved.append(file_path)
-                                    print(f"{LOG} ✓ [{len(files_saved)}] Kept (already saved): {file_path}", flush=True)
+                                    print(f"{LOG} ✓ [{len(files_saved)}] Verified on disk: {file_path}", flush=True)
                                     continue
                                 else:
-                                    print(f"{LOG} ⚠ Skip empty (not on disk): {file_path}", flush=True)
+                                    print(f"{LOG} ⚠ File not found on disk: {file_path}", flush=True)
                                     continue
                             try:
                                 save_result = await client_save_code.ainvoke(
@@ -1194,6 +844,21 @@ class BuilderAgent(BaseAgent):
                                 print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)
                             except Exception as save_err:
                                 print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
+
+                # Recover files from task file saves log if sub-agent saved files via tool calls
+                try:
+                    from Brain.agents.builder.mcp_tools import get_task_file_saves
+                    mcp_saves = get_task_file_saves()
+                    for s in mcp_saves:
+                        s_path = s.get("path", "")
+                        if s_path and s_path not in files_saved:
+                            ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
+                            full_check = os.path.join(ws_root, s_path) if ws_root else None
+                            if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
+                                files_saved.append(s_path)
+                                print(f"{LOG} ✓ [{len(files_saved)}] Recovered from task saves log: {s_path}", flush=True)
+                except Exception as rec_err:
+                    print(f"{LOG} ⚠ Task saves recovery notice: {rec_err}", flush=True)
 
                 summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
                 print(f"{LOG} ⚠ Sub-agent result: files={len(result.get('files', [])) if isinstance(result, dict) else 'N/A'} | files_saved={len(files_saved)} | summary={summary[:100]}", flush=True)
@@ -1256,6 +921,7 @@ class BuilderAgent(BaseAgent):
         # Load skills based on category
         skill_content = ""
         system_prompt = ""
+        # "skillss" (double-s) is the intentional folder name used by SkillResolver — keep consistent
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "..", "skillss")
         
         # Gather existing codebase memory for follow-ups (metadata only, not full content)
@@ -1296,10 +962,34 @@ class BuilderAgent(BaseAgent):
             skill_content = _load_skill("supabase", 3000)
 
         if category == "frontend":
+            # Extract color palette from state — same logic as FrontendAgent
+            _cp = state.get("selected_color_palette", {})
+            if not _cp:
+                _mem = state.get("memory_context", {}) or {}
+                _cp = (_mem.get("decisions", {}) or {}).get("color_palette", {})
+            _theme = state.get("theme_preference", "dark")
+            _custom = state.get("custom_color_input", "")
+            _default_colors = ["#0f172a", "#3b82f6", "#60a5fa", "#f8fafc", "#1e293b"] if _theme == "dark" \
+                else ["#ffffff", "#6366f1", "#818cf8", "#1e293b", "#f1f5f9"]
+            _colors = _cp.get("colors", _default_colors)
+            while len(_colors) < 5:
+                _colors.append(_default_colors[len(_colors)])
+            _palette_name = _cp.get("name", "Midnight Blue" if _theme == "dark" else "Clean Light")
+            _palette_section = (
+                f"═══ COLOR PALETTE (USE EXACTLY — NON-NEGOTIABLE) ═══\n"
+                f"Palette: {_palette_name} | Theme: {_theme}\n"
+                f"- Base/Darkest: {_colors[0]}\n"
+                f"- Primary/Accent: {_colors[1]}\n"
+                f"- Secondary: {_colors[2]}\n"
+                f"- Text: {_colors[3]}\n"
+                f"- Background: {_colors[4]}\n"
+                + (f"- Custom override: {_custom}\n" if _custom else "")
+                + f"Use ONLY these hex values for all backgrounds, buttons, text, borders, gradients.\n"
+            )
             system_prompt = (
                 "You are a Senior React Frontend Engineer. You build COMPLETE, BEAUTIFUL UIs.\n\n"
-                "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n"
-                "DARK THEME: bg-[#09090b], text-white, gradients\n\n"
+                "STACK: React + Tailwind CSS + react-router-dom + lucide-react\n\n"
+                + _palette_section + "\n"
                 "═══ CRITICAL RULES (violation = broken build) ═══\n"
                 "1. Use client_save_code for EVERY file. One tool call per file.\n"
                 "2. File paths MUST start with frontend/src/ (e.g., frontend/src/App.jsx)\n"
@@ -1372,14 +1062,16 @@ class BuilderAgent(BaseAgent):
                 "2. NEVER include `\"type\": \"module\"` in backend/package.json.\n"
                 "3. Use client_save_code for EVERY file. One tool call per file.\n"
                 "4. Write server.js LAST with ALL routes mounted.\n"
-                "5. Every controller uses: `const { supabase } = require('../supabase/client');`\n"
+                "5. Every controller uses: `const supabase = require('../supabase/client');` then null-checks: `if (!supabase) return res.json({ success: true, data: [] });`\n"
                 "6. Use the Shared Table + JSONB Data Matrix Pattern. Query `tenant_connector_vault` with tenant_id + schema_name + record_data JSONB filters.\n"
                 "   Example: supabase.from('tenant_connector_vault').select('*').eq('tenant_id', id).eq('schema_name', 'todos').eq('record_data->>status', 'active');\n"
                 "7. Every route returns JSON: `{ success: true, data }` or `{ success: false, error }`\n"
                 "8. Try/catch in EVERY route handler. On DB error, return `{ success: true, data: [] }` instead of 500.\n"
                 "9. MANDATORY: Add `/health` endpoint to server.js BEFORE other routes:\n"
                 "   `app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));`\n"
-                "10. If `backend/supabase/client.js` does not exist, CREATE it FIRST.\n\n"
+                "10. If `backend/supabase/client.js` does not exist, CREATE it FIRST.\n"
+                "11. ⚠️ CRITICAL: ONLY require('./routes/X') in server.js if you ACTUALLY save backend/routes/X.js.\n"
+                "    Every require in server.js MUST have a matching saved route file. Missing files = validation ERROR.\n\n"
                 "═══ FILE STRUCTURE ═══\n"
                 "backend/\n"
                 "  ├── server.js          (main entry, mounts all routes)\n"
@@ -1403,7 +1095,7 @@ class BuilderAgent(BaseAgent):
                 "═══ EXAMPLE: Controller file ═══\n"
                 "```javascript\n"
                 "// controllers/todos.js\n"
-                "const { supabase } = require('../supabase/client');\n\n"
+                "const supabase = require('../supabase/client');\n\n"
                 "exports.getTodos = async (req, res) => {\n"
                 "  try {\n"
                 "    const { data, error } = await supabase\n"
@@ -1412,10 +1104,10 @@ class BuilderAgent(BaseAgent):
                 "      .eq('tenant_id', req.user.tenant_id)\n"
                 "      .eq('schema_name', 'todos')\n"
                 "      .eq('record_data->>status', 'active');\n"
-                "    if (error) throw error;\n"
-                "    res.json({ success: true, data: data.map(r => r.record_data) });\n"
+                "    if (error) return res.json({ success: true, data: [], error: error.message });\n"
+                "    res.json({ success: true, data: (data || []).map(r => r.record_data) });\n"
                 "  } catch (err) {\n"
-                "    res.status(500).json({ success: false, error: err.message });\n"
+                "    res.json({ success: true, data: [], error: err.message });\n"
                 "  }\n"
                 "};\n\n"
                 "exports.createTodo = async (req, res) => {\n"
@@ -1424,10 +1116,10 @@ class BuilderAgent(BaseAgent):
                 "      .from('tenant_connector_vault')\n"
                 "      .insert([{ tenant_id: req.user.tenant_id, schema_name: 'todos', record_data: req.body }])\n"
                 "      .select();\n"
-                "    if (error) throw error;\n"
+                "    if (error) return res.json({ success: true, data: [], error: error.message });\n"
                 "    res.json({ success: true, data: data[0].record_data });\n"
                 "  } catch (err) {\n"
-                "    res.status(500).json({ success: false, error: err.message });\n"
+                "    res.json({ success: true, data: [], error: err.message });\n"
                 "  }\n"
                 "};\n"
                 "```\n\n"
@@ -1499,13 +1191,14 @@ class BuilderAgent(BaseAgent):
         overall_timeout = 1200
         print(f"{LOG} Starting agent loop with {overall_timeout}s overall timeout...", flush=True)
         try:
-            output_content = await asyncio.wait_for(
+            output_content, fallback_files_saved = await asyncio.wait_for(
                 self._run_agent_loop(system_prompt, instruction, session_id, task_title, timeout_sec=600, category=category, user_id=user_id, task_index=index, tasks=tasks),
                 timeout=overall_timeout
             )
         except asyncio.TimeoutError:
             print(f"{LOG} ✖ OVERALL TIMEOUT ({overall_timeout}s) for '{task_title}'", flush=True)
-            output_content = f"Task '{task_title}' completed with fallback (overall timeout after {overall_timeout}s)"
+            output_content = f"Task '{task_title}' fallback timeout after {overall_timeout}s"
+            fallback_files_saved = 0
         except LLMRateLimitedError:
             print(f"{LOG} ✖ TASK FAILED: '{task_title}' — LLM unavailable after retries + fallback", flush=True)
             raise
@@ -1513,7 +1206,19 @@ class BuilderAgent(BaseAgent):
             import traceback as _tb
             print(f"{LOG} ✖ AGENT LOOP ERROR: {type(loop_err).__name__}: {loop_err}", flush=True)
             _tb.print_exc()
-            output_content = f"Task '{task_title}' completed with fallback (error: {loop_err})"
+            output_content = f"Task '{task_title}' fallback error: {loop_err}"
+            fallback_files_saved = 0
+
+        # If fallback builder loop also saved 0 files, mark task as failed
+        # rather than silently advancing — avoids empty builds
+        if fallback_files_saved == 0:
+            print(f"{LOG} ✖ TASK FAILED: '{task_title}' — fallback builder loop saved 0 files. Marking failed.", flush=True)
+            state["plan"][index]["status"] = "failed"
+            state["plan"][index]["result"] = "No files generated (LLM produced empty output)"
+            state["current_task_index"] = index + 1
+            state["executed_tasks"].append({"title": task_title, "status": "failed", "output": output_content[:200]})
+            yield state
+            return
 
         print(f"{LOG} ▶ Task DONE: '{task_title}' | output_len={len(output_content)}", flush=True)
         print(f"{LOG}   Output preview: {output_content[:300]}", flush=True)

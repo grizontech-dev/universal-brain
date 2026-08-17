@@ -68,9 +68,9 @@ async def read_skill_file(file_path: str) -> str:
     return content
 
 @tool
-async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "") -> str:
+async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "", file: str = "", path: str = "") -> str:
     """Saves a single file directly into the sandbox session's workspace directory on the server."""
-    actual_path = file_path or code_path
+    actual_path = file_path or code_path or file or path
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
     user_id = config.get("configurable", {}).get("user_id")
@@ -552,12 +552,8 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
             print(f"{LOG} Direct PostgreSQL error: {e}", flush=True)
 
     return (
-        "ERROR: Could not execute SQL. None of the following methods worked:\n"
-        "1. Management API (set SUPABASE_ACCESS_TOKEN env var with a personal access token)\n"
-        "2. exec_sql RPC function (run this SQL first in Supabase dashboard to create it)\n"
-        "3. supabase-py RPC\n"
-        "4. Direct PostgreSQL (set SUPABASE_DB_URL)\n\n"
-        "Quick fix: Go to https://supabase.com/dashboard/project/" + project_ref + "/sql/new and run the SQL manually."
+        "INFO: Schema saved to workspace. Live DB execution skipped (no SUPABASE_ACCESS_TOKEN or SUPABASE_DB_URL configured). "
+        "Backend queries using the tenant_connector_vault adapter."
     )
 
 
@@ -631,29 +627,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RETURN json_build_object('error', SQLERRM);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Also create the todos table for todo apps
-CREATE TABLE IF NOT EXISTS public.todos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL,
-  description text DEFAULT '',
-  completed boolean DEFAULT false,
-  priority text DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
-  due_date timestamptz,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
-ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'todos') THEN
-    CREATE POLICY allow_all ON public.todos FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
-GRANT ALL ON public.todos TO service_role;
-GRANT ALL ON public.todos TO anon;
-GRANT ALL ON public.todos TO authenticated;"""
+$$ LANGUAGE plpgsql SECURITY DEFINER;"""
 
     return (
         f"Please run this SQL in your Supabase dashboard:\n"

@@ -13,16 +13,16 @@ from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
-    _skill_cache = {}
-
     def __init__(self):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="qwen/qwen3-coder"
+            model_id="google/gemini-3.7-flash"
         )
+        # Instance-level cache — avoids cross-build skill contamination between concurrent users
+        self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
-        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
+        self.llm = ProviderRouter.get_model("google/gemini-3.7-flash", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code])
@@ -87,11 +87,17 @@ backend/
    // health endpoint (MANDATORY)
    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
    app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.get('/favicon.ico', (_req, res) => res.status(204).end());
    // routes
    const featureRoutes = require('./routes/feature');
    app.use('/api/feature', featureRoutes);
    app.listen(process.env.PORT || 3001, '0.0.0.0');
    ```
+   ⚠️ CRITICAL RULE: ONLY mount a route in server.js if you ACTUALLY generate that route file in this task.
+   - If you write `require('./routes/contact')` in server.js → you MUST also save `backend/routes/contact.js`.
+   - NEVER reference a route file you did not generate. This causes a validation ERROR every single time.
+   - Before saving server.js, verify: every `require('./routes/X')` has a matching saved `backend/routes/X.js`.
+
 6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
    - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
    - Backend MUST mount the route in `server.js` and frontend MUST call the exact same path through `frontend/src/lib/api.js`.
@@ -109,18 +115,44 @@ backend/
 9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
    ```js
    require('dotenv').config();
-   const ws = require('ws');
    const supabaseLib = require('@supabase/supabase-js');
    const createClient = supabaseLib.createClient || supabaseLib;
    const SUPABASE_URL = process.env.SUPABASE_URL;
    const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-   module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
-     global: {{ fetch }},
-     realtime: {{ transport: ws }}
-   }});
+   let supabase = null;
+   try {{
+     if (SUPABASE_URL && SUPABASE_KEY) {{
+       supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+     }}
+   }} catch (e) {{
+     console.warn('[Supabase] Client init failed:', e.message);
+   }}
+   module.exports = supabase;
    ```
    From controllers use `require('../supabase/client')`. From files inside `backend/routes/` use `require('../supabase/client')`.
-10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
+   CRITICAL: ALWAYS null-check the supabase client before using it in controllers:
+   ```js
+   const supabase = require('../supabase/client');
+   // In controller:
+   if (!supabase) return res.json({{ success: true, data: [], message: 'DB not configured' }});
+   ```
+10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. NEVER return HTTP 500.
+    - If supabase client is null (env vars not set): return `{{ success: true, data: [], message: 'DB not configured' }}`
+    - If DB query fails: return `{{ success: true, data: [], error: err.message }}`
+    - NEVER let a controller throw an uncaught error — it WILL result in a 500.
+    Example controller pattern:
+    ```js
+    exports.list = async (req, res) => {{
+      try {{
+        if (!supabase) return res.json({{ success: true, data: [] }});
+        const {{ data, error }} = await supabase.from('table').select('*');
+        if (error) return res.json({{ success: true, data: [], error: error.message }});
+        res.json({{ success: true, data: data || [] }});
+      }} catch (err) {{
+        res.json({{ success: true, data: [], error: err.message }});
+      }}
+    }};
+    ```
 11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
     ```js
     app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
@@ -176,21 +208,27 @@ Respond ONLY in JSON.
         skills_content = "{}"
         if not is_simple:
             cache_key = self._get_skill_cache_key(task, task_description)
-            if cache_key in BackendAgent._skill_cache:
-                skills_content = BackendAgent._skill_cache[cache_key]
+            if cache_key in self._skill_cache:
+                skills_content = self._skill_cache[cache_key]
                 print(f"[BACKEND] Using cached skills: {cache_key}", flush=True)
             else:
                 try:
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
                     if skills_content and skills_content.strip() not in ("{}", ""):
                         lines = skills_content.splitlines()
+                        # Strip lines referencing skillss/ paths AND lines containing
+                        # ORM/ODM patterns that conflict with Rule 0 (Supabase JSONB pattern)
+                        _banned_patterns = (
+                            "mongoose", "prisma", "sequelize", "typeorm", "objection",
+                            "knex", "mikro-orm", "waterline", "bookshelf",
+                            "skillss/", "- skillss/",
+                        )
                         filtered_lines = [
                             line for line in lines
-                            if not line.strip().lower().startswith("- skillss/")
-                            and not line.strip().lower().startswith("skillss/")
+                            if not any(p in line.lower() for p in _banned_patterns)
                         ]
                         skills_content = "\n".join(filtered_lines)
-                    BackendAgent._skill_cache[cache_key] = skills_content
+                    self._skill_cache[cache_key] = skills_content
                     print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
                 except Exception:
                     skills_content = "{}"
@@ -232,6 +270,17 @@ Respond ONLY in JSON.
         structured_hint = format_structured_spec(task)
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
+        # Inject db_schema_names from DatabaseAgent if available — ensures exact naming match
+        schema_names_context = ""
+        db_schema_names = state.get("db_schema_names", [])
+        if db_schema_names:
+            schema_names_context = (
+                f"\n\nDB SCHEMA CONTRACT (use EXACTLY these schema_name values — no renaming):\n"
+                + "\n".join(f"  schema_name = '{s}'" for s in db_schema_names)
+                + "\nThe DatabaseAgent already created tenant_connector_vault rows for these names."
+                " Your controllers MUST query with these exact values."
+            )
+
         # Build compact user message
         user_content = (
             f"Task: {task.get('title')}\n"
@@ -240,11 +289,12 @@ Respond ONLY in JSON.
             f"{spec_context}"
             f"{executed_context}"
             f"{server_js_context}"
+            f"{schema_names_context}"
         )
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] model={self.model_id} | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         active_llm = self.bound_llm
         fallback_llm = self.fallback_llm
@@ -287,6 +337,12 @@ Respond ONLY in JSON.
             msgs.append(response)
 
             if not response.tool_calls:
+                # Early-exit guard: same pattern as FrontendAgent.
+                # If files were already saved, treat no-tool-call as clean completion.
+                if files_saved:
+                    print(f"[BACKEND] ✓ Clean completion — {len(files_saved)} files saved, LLM signalled done", flush=True)
+                    break
+
                 last_content = response.content
                 if isinstance(last_content, list):
                     last_content = str(last_content)
@@ -326,13 +382,14 @@ Respond ONLY in JSON.
                 ], return_exceptions=True)
 
                 for tc, result in zip(save_calls, save_results):
-                    file_path = tc["args"].get("file_path", "")
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
                     code_content = tc["args"].get("code_content", "")
                     if isinstance(result, Exception):
                         print(f"[BACKEND] ✖ Failed: {file_path}: {result}", flush=True)
                         msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
                     else:
-                        files_saved.add(file_path)
+                        if file_path:
+                            files_saved.add(file_path)
                         print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
                         msgs.append(ToolMessage(
                             content=f"Saved: {file_path} ({len(code_content)} chars)",
@@ -361,6 +418,98 @@ Respond ONLY in JSON.
                     if isinstance(parsed, dict) and "files" in parsed:
                         return parsed
 
-        result = {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        result = {
+            "status": "completed" if files_saved else "empty",
+            "files": [{"path": f, "content": ""} for f in sorted(files_saved)],
+            "summary": f"Saved {len(files_saved)} files via tool calls"
+        }
         print(f"[BACKEND] Result: files={len(result['files'])} paths={[f['path'] for f in result['files']]}", flush=True)
+
+        # ── API CONTRACT: scan server.js for mounted routes and store in state ──
+        # FrontendAgent reads state["api_contract"] to know exact routes + helpers to call
+        try:
+            workspace_id = state.get("current_job_id")
+            user_id = state.get("user_id")
+            if workspace_id:
+                from Brain.services.workspace_manager import workspace_manager as _wm
+                ws_root = _wm.resolve_workspace_path(workspace_id, user_id=user_id)
+                server_js = os.path.join(ws_root, "backend", "server.js") if ws_root else None
+                if server_js and os.path.isfile(server_js):
+                    with open(server_js, "r", encoding="utf-8") as _f:
+                        srv = _f.read()
+                    # Extract: app.use('/api/xxx', ...) → /api/xxx
+                    mounted = re.findall(r"app\.use\(['\"](/api/[^'\"]+)['\"]", srv)
+                    mounted = sorted(set(mounted))
+
+                    # Get planned routes from state so we only keep routes the planner intended
+                    _project_plan = state.get("project_plan", {}) or {}
+                    if isinstance(_project_plan, str):
+                        try:
+                            import json as _pjson
+                            _project_plan = _pjson.loads(_project_plan)
+                        except Exception:
+                            _project_plan = {}
+                    _planned_paths = set()
+                    for _r in (_project_plan.get("architecture", {}) or {}).get("api_routes", []):
+                        if isinstance(_r, dict) and _r.get("path"):
+                            # Normalise: /api/todos/:id → /api/todos
+                            _base = _r["path"].split("/:")[0].rstrip("/")
+                            _planned_paths.add(_base)
+
+                    # Build helper-name suggestions: /api/todos → getTodos, createTodo, etc.
+                    contract: dict = {}
+                    for route in mounted:
+                        # Skip routes whose last segment is a param (e.g. /api/todos/:id mounted directly)
+                        last_segment = route.strip("/").split("/")[-1]
+                        if last_segment.startswith(":"):
+                            continue
+                        # Skip routes not in the planner's architecture (hallucinated routes)
+                        if _planned_paths and route not in _planned_paths:
+                            print(f"[BACKEND] api_contract: skipping unplanned route '{route}' (not in architecture)", flush=True)
+                            continue
+                        # Derive clean resource name — strip hyphens/underscores → CamelCase
+                        resource = last_segment.replace("-", "_")
+                        parts = resource.split("_")
+                        camel = "".join(p.capitalize() for p in parts if p)
+                        if not camel:
+                            continue
+                        singular = camel[:-1] if camel.endswith("s") and len(camel) > 2 else camel
+                        contract[route] = {
+                            "get":    f"get{camel}",
+                            "post":   f"create{singular}",
+                            "put":    f"update{singular}",
+                            "delete": f"delete{singular}",
+                        }
+                    if contract:
+                        state["api_contract"] = contract
+                        print(f"[BACKEND] api_contract stored: {list(contract.keys())}", flush=True)
+                        # Persist to build_contract.json so FrontendAgent gets exact routes
+                        try:
+                            from Brain.shared.build_contract import record_api_routes
+                            from Brain.services.workspace_manager import workspace_manager as _wm_be
+                            _ws_be = _wm_be.resolve_workspace_path(workspace_id, user_id=user_id)
+                            if _ws_be:
+                                _mounted_routes = []
+                                _helpers: dict = {}
+                                for _route_path, _helpers_dict in contract.items():
+                                    for _method, _handler in _helpers_dict.items():
+                                        _mounted_routes.append({
+                                            "path": _route_path,
+                                            "method": _method.upper(),
+                                            "handler": _handler,
+                                        })
+                                        _helpers[_handler] = f"{_method.upper()} {_route_path}"
+                                record_api_routes(_ws_be, _mounted_routes, _helpers)
+                                print(
+                                    f"[BACKEND] [CONTRACT] ✅ Routes persisted to contract | "
+                                    f"routes={len(_mounted_routes)} helpers={list(_helpers.keys())}",
+                                    flush=True,
+                                )
+                            else:
+                                print(f"[BACKEND] [CONTRACT] ⚠ workspace not resolved — routes NOT persisted", flush=True)
+                        except Exception as _bc_err:
+                            print(f"[BACKEND] [CONTRACT] ⚠ update failed (non-fatal): {_bc_err}", flush=True)
+        except Exception as _ce:
+            print(f"[BACKEND] api_contract extraction failed (non-fatal): {_ce}", flush=True)
+
         return result

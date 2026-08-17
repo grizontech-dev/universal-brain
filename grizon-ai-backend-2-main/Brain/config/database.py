@@ -10,11 +10,18 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+if not DATABASE_URL:
+    raise RuntimeError(
+        "[DATABASE] FATAL: DATABASE_URL environment variable is not set. "
+        "The Brain backend cannot start without a database connection. "
+        "Set DATABASE_URL in your .env file."
+    )
+
 engine = create_engine(
     DATABASE_URL,
     pool_size=10,
     max_overflow=20,
-    pool_timeout=5,
+    pool_timeout=30,  # increased from 5s — prevents pool exhaustion under load
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
