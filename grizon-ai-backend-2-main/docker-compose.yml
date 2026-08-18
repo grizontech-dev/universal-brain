@@ -116,7 +116,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://grizon_user:grizon_password_123@postgres:5432/grizon_db
+      DATABASE_URL: postgresql://grizon_user:grizon_password_123@grizon-postgres:5432/grizon_db
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
       UNSTRUCTURED_API_URL: http://grizon-ai_unstructured:8000
