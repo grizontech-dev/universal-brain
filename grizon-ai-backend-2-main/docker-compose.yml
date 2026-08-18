@@ -114,7 +114,7 @@ services:
       grizon-ai_unstructured:
         condition: service_started
     env_file:
-      - .env.docker
+      - .env
     environment:
       DATABASE_URL: postgresql://grizon_user:grizon_password_123@postgres:5432/grizon_db
       REDIS_URL: redis://redis:6379
