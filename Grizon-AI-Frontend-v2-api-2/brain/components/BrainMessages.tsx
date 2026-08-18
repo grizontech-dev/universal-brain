@@ -136,7 +136,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const pathname = usePathname();
     const { isAuthenticated, openAuthModal, user, isLoading: isAuthLoading, getAccessToken } = useAuth();
     const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
-    const { currentConversationId, conversations, addConversation, touchConversation, fetchConversations, setConversationId } = useConversations();
+    const { currentConversationId, conversations, addConversation, touchConversation, fetchConversations, setConversationId, selectConversation } = useConversations();
     const { selectedModel } = useModels();
     const { balance, refreshBalance } = useCredits();
     const { setThreadListOpen } = useThreadList();
@@ -612,6 +612,31 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             },
         ]);
     }, [appendBuildActivities]);
+
+    const projectComplete =
+        !!buildFinishedAt || (buildTodos.length > 0 && isBuildTodosComplete(buildTodos));
+
+    const handleNewChat = useCallback(() => {
+        window.dispatchEvent(new CustomEvent('clear-chat-state'));
+        setMessages([]);
+        setInput('');
+        setIsBuildMode(false);
+        setBuildActivities([]);
+        setBuildTodos([]);
+        setBuildJob(null);
+        setBuildStartedAt(null);
+        setBuildFinishedAt(null);
+        setIsBuildSyncing(false);
+        setIsLoading(false);
+        setAgentStep('idle');
+        setActiveSandboxJob(null);
+        setIsEditorOpen(false);
+        useExecutionStore.getState().setStreamingMessage(null);
+        selectConversation(null);
+        if (pathname !== '/brain') {
+            router.push('/brain');
+        }
+    }, [selectConversation, pathname, router]);
 
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
@@ -2394,6 +2419,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             <span className="text-[13px] font-bold text-text-primary tracking-tight truncate max-w-[180px] sm:max-w-[250px] font-display">
                                 {activeConversation?.title || 'New Chat'}
                             </span>
+                            {projectComplete && (
+                                <button
+                                    type="button"
+                                    onClick={handleNewChat}
+                                    className="ml-1 flex items-center gap-1.5 px-3 h-8 rounded-full bg-accent text-white border border-accent text-[12px] font-bold tracking-tight hover:brightness-110 transition-all shadow-md shrink-0 animate-in fade-in zoom-in-95 duration-300"
+                                    title="Start a new chat"
+                                >
+                                    <Plus size={14} strokeWidth={2.5} />
+                                    New Chat
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

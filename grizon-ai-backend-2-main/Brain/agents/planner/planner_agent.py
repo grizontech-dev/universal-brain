@@ -10,23 +10,34 @@ LOG = "[PLANNER]"
 
 
 def _is_frontend_only_request(prompt: str) -> bool:
-    """Landing pages / frontend-only prompts should not auto-create backend or database work."""
+    """Landing pages and frontend-only prompts should not auto-create backend or database work."""
     if not isinstance(prompt, str):
         return False
     text = prompt.lower()
-    frontend_only_markers = [
+    strong_frontend_markers = [
         "landing page", "homepage", "hero section", "marketing page", "portfolio page",
         "frontend only", "front-end only", "ui only", "design only", "no backend",
-        "no database", "static website", "single page website", "splash page", "promo page"
+        "no database", "static website", "single page website", "splash page", "promo page",
+        "frontend", "front-end", "ui design", "website design",
     ]
     backend_markers = [
         "backend", "api", "database", "supabase", "postgres", "auth", "login system",
-        "crud", "rest api", "server", "schema", "db"
+        "crud", "rest api", "server", "models", "schema", "db", "signup", "login",
+        "user accounts", "payments", "stripe", "data storage", "user authentication",
+        "manage users", "fetch data", "store data", "save data", "admin panel",
     ]
-    if any(marker in text for marker in frontend_only_markers):
-        return True
     if any(marker in text for marker in backend_markers):
         return False
+    weak_frontend_markers = [
+        "landing", "webpage", "one page website", "website ui", "responsive website",
+        "static page", "blog website", "business website", "website", "page with",
+        "portfolio", "landing page", "about section", "features section",
+        "testimonial", "pricing section",
+    ]
+    if any(marker in text for marker in strong_frontend_markers):
+        return True
+    if any(marker in text for marker in weak_frontend_markers):
+        return True
     return False
 
 

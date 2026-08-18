@@ -10,7 +10,9 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 LOG = "[TODO]"
 MIN_TODOS = 3
-MAX_TODOS = 15
+MAX_TODOS = 10
+FRONTEND_ONLY_MIN_TODOS = 3
+FRONTEND_ONLY_MAX_TODOS = 4
 
 
 def _is_frontend_only_request(prompt: str) -> bool:
@@ -18,19 +20,33 @@ def _is_frontend_only_request(prompt: str) -> bool:
     if not isinstance(prompt, str):
         return False
     text = prompt.lower()
-    frontend_only_markers = [
+    # Explicit frontend-only intent — these ALWAYS win.
+    strong_frontend_markers = [
         "landing page", "homepage", "hero section", "marketing page", "portfolio page",
         "frontend only", "front-end only", "ui only", "design only", "no backend",
-        "no database", "static website", "single page website", "splash page", "promo page"
+        "no database", "static website", "single page website", "splash page", "promo page",
+        "frontend", "front-end", "ui design", "website design",
     ]
+    # Explicit backend/database intent — any of these means full-stack.
     backend_markers = [
         "backend", "api", "database", "supabase", "postgres", "auth", "login system",
-        "crud", "rest api", "server", "models", "schema", "db"
+        "crud", "rest api", "server", "models", "schema", "db", "signup", "login",
+        "user accounts", "payments", "stripe", "data storage", "user authentication",
+        "manage users", "fetch data", "store data", "save data", "admin panel",
     ]
-    if any(marker in text for marker in frontend_only_markers):
-        return True
     if any(marker in text for marker in backend_markers):
         return False
+    # Weak frontend-only hints — only after confirming no backend intent above.
+    weak_frontend_markers = [
+        "landing", "webpage", "one page website", "website ui", "responsive website",
+        "static page", "blog website", "business website", "website", "page with",
+        "portfolio", "landing page", "about section", "features section",
+        "testimonial", "pricing section",
+    ]
+    if any(marker in text for marker in strong_frontend_markers):
+        return True
+    if any(marker in text for marker in weak_frontend_markers):
+        return True
     return False
 
 
@@ -140,7 +156,11 @@ def _normalize_task(task: Dict[str, Any]) -> Dict[str, Any]:
     return task
 
 
-def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def clamp_todo_list(
+    tasks: List[Dict[str, Any]],
+    min_todos: int = MIN_TODOS,
+    max_todos: int = MAX_TODOS,
+) -> List[Dict[str, Any]]:
     if not isinstance(tasks, list):
         return tasks
 
@@ -152,8 +172,8 @@ def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         else:
             rest.append(t)
 
-    if len(rest) > MAX_TODOS - 1:
-        rest = rest[: MAX_TODOS - 1]
+    if len(rest) > max_todos - 1:
+        rest = rest[: max_todos - 1]
 
     merged = rest + ([runner] if runner else [])
     if not runner and merged:
@@ -170,7 +190,7 @@ def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     has_runner = runner or any(t.get("category") == "runner" for t in merged)
     non_runner = [t for t in merged if t.get("category") != "runner"]
     pad_guard = 0
-    while len(non_runner) < MIN_TODOS and len(merged) < MAX_TODOS and pad_guard < 5:
+    while len(non_runner) < min_todos and len(merged) < max_todos and pad_guard < 5:
         pad_guard += 1
         n = len(merged) + 1
         merged.insert(
@@ -186,14 +206,14 @@ def clamp_todo_list(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
         non_runner = [t for t in merged if t.get("category") != "runner"]
 
-    if len(merged) > MAX_TODOS:
-        merged = merged[:MAX_TODOS]
+    if len(merged) > max_todos:
+        merged = merged[:max_todos]
 
-    merged = _ensure_integration_task(merged)
+    merged = _ensure_integration_task(merged, max_todos=max_todos)
     return merged
 
 
-def _ensure_integration_task(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _ensure_integration_task(tasks: List[Dict[str, Any]], max_todos: int = MAX_TODOS) -> List[Dict[str, Any]]:
     """Penultimate task: wire App.jsx, router, server.js mounts, API forms."""
     runner_idx = next(
         (i for i, t in enumerate(tasks) if t.get("category") == "runner"),
@@ -212,10 +232,10 @@ def _ensure_integration_task(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]
         tasks.append(wire)
     else:
         tasks.insert(runner_idx, wire)
-    if len(tasks) > MAX_TODOS:
+    if len(tasks) > max_todos:
         runners = [t for t in tasks if t.get("category") == "runner"][:1]
         others = [t for t in tasks if t.get("category") != "runner" and t is not wire]
-        budget = max(0, MAX_TODOS - len(runners) - 1)
+        budget = max(0, max_todos - len(runners) - 1)
         tasks = others[:budget] + [wire] + runners
     return tasks
 
@@ -369,10 +389,14 @@ def _merge_scoped_tasks(build_tasks: List[Dict[str, Any]], fe_tasks: List[Dict[s
     return merged
 
 
-def _enforce_file_limit(tasks: List[Dict[str, Any]], max_files: int = 5) -> List[Dict[str, Any]]:
+def _enforce_file_limit(
+    tasks: List[Dict[str, Any]],
+    max_files: int = 5,
+    max_todos: int = MAX_TODOS,
+) -> List[Dict[str, Any]]:
     """Split tasks with more than max_files files into chained tasks so the
     Builder never receives an oversized task. If the list is already at
-    MAX_TODOS, truncate files instead (log it)."""
+    max_todos, truncate files instead (log it)."""
     if not isinstance(tasks, list):
         return tasks
     out: List[Dict[str, Any]] = []
@@ -384,7 +408,7 @@ def _enforce_file_limit(tasks: List[Dict[str, Any]], max_files: int = 5) -> List
         if not isinstance(files, list) or len(files) <= max_files:
             out.append(t)
             continue
-        if len(out) >= MAX_TODOS:
+        if len(out) >= max_todos:
             dropped = len(files) - max_files
             print(f"{LOG} ⚠ {t.get('id')}: task budget full — truncated {dropped} files to {max_files}", flush=True)
             t["files"] = files[:max_files]
@@ -447,7 +471,7 @@ class TodoAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Todo",
-            description="Converts the approved plan into executable tasks (3–15).",
+            description="Converts the approved plan into executable tasks (3–10; frontend-only 3–4).",
             model_id="llama-4-scout-17b-16e-instruct",
         )
 
@@ -473,6 +497,10 @@ class TodoAgent(BaseAgent):
         frontend_only = _is_frontend_only_request(prompt_text)
         if frontend_only:
             print(f"{LOG} Frontend-only request detected — suppressing backend/database task generation", flush=True)
+
+        min_todos = FRONTEND_ONLY_MIN_TODOS if frontend_only else MIN_TODOS
+        max_todos = FRONTEND_ONLY_MAX_TODOS if frontend_only else MAX_TODOS
+        print(f"{LOG} Todo limits → min={min_todos}, max={max_todos} (frontend_only={frontend_only})", flush=True)
 
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
@@ -501,12 +529,14 @@ class TodoAgent(BaseAgent):
         - React/Vite: use existing `frontend/` react-template (do NOT re-scaffold).
 
         HARD LIMITS:
-        - Between {MIN_TODOS} and {MAX_TODOS} tasks (including runner).
+        - Between {min_todos} and {max_todos} tasks (including runner).
         - MAX 5 FILES PER TASK (any category — frontend, backend, database).
         - If a task needs more than 5 files, SPLIT it into multiple tasks.
         - Frontend: max 2-3 components per task.
         - Backend: max 3-4 routes/controllers per task.
         - Each file generates one LLM call (~30-60s), so 5 files = ~5 minutes per task.
+        - Frontend-only / landing-page requests: keep it TIGHT, exactly {FRONTEND_ONLY_MIN_TODOS}-{FRONTEND_ONLY_MAX_TODOS} tasks (3-4), e.g. sections, components, and App.jsx wiring.
+        - Full-stack requests: at most {MAX_TODOS} tasks total (including runner) — do NOT exceed {MAX_TODOS} under any circumstance.
 
         CRITICAL: FOLLOW THE PLAN EXACTLY. Do NOT add generic components (Hero, Features, Contact) unless the plan specifically mentions them.
         If the plan includes an "ARCHITECTURE SPEC" block, it is AUTHORITATIVE — use it as the primary source:
@@ -667,6 +697,18 @@ class TodoAgent(BaseAgent):
         tasks = _merge_scoped_tasks(build_tasks, fe_tasks)
         tasks = [_normalize_task(t) for t in tasks]
 
+        # Deterministic fallback: if no database/backend task survived, treat as
+        # frontend-only regardless of prompt keyword detection and clamp to 3-4.
+        if not frontend_only and tasks:
+            has_backend_work = any(
+                t.get("category") in ("database", "backend") for t in tasks
+            )
+            if not has_backend_work:
+                frontend_only = True
+                min_todos = FRONTEND_ONLY_MIN_TODOS
+                max_todos = FRONTEND_ONLY_MAX_TODOS
+                print(f"{LOG} No database/backend tasks generated — forcing frontend-only limits min={min_todos}, max={max_todos}", flush=True)
+
         # Shared frontend enrichment (route hints + no-duplicate guard)
         for task in tasks:
             if task.get("category") == "frontend":
@@ -680,8 +722,8 @@ class TodoAgent(BaseAgent):
                 if not task.get("api") and backend_routes:
                     task["api"] = list(backend_routes)
 
-        tasks = clamp_todo_list(tasks)
-        tasks = _enforce_file_limit(tasks)
+        tasks = clamp_todo_list(tasks, min_todos=min_todos, max_todos=max_todos)
+        tasks = _enforce_file_limit(tasks, max_todos=max_todos)
         tasks = _validate_dependencies(tasks)
 
         import re as _re
@@ -693,7 +735,7 @@ class TodoAgent(BaseAgent):
                 title = title[:80].rsplit(' ', 1)[0]
             task["title"] = title or f"Task {task.get('id', 'unknown')}"
 
-        print(f"DEBUG: TodoAgent produced {len(tasks)} tasks (clamp {MIN_TODOS}-{MAX_TODOS})")
+        print(f"DEBUG: TodoAgent produced {len(tasks)} tasks (clamp {min_todos}-{max_todos})")
 
         state["tasks"] = tasks
         state["status"] = "tasks_ready"
