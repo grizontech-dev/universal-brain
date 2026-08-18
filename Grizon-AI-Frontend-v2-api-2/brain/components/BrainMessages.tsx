@@ -2885,7 +2885,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 </div>
 
                 {/* Middle Side: Build Plan / Task List (real-time Pending → Running → Completed) */}
-                {isBuildMode && (
+                {isBuildMode && !projectComplete && (
                     <BrainBuildPlan
                         todos={buildTodos}
                         isSyncing={isBuildSyncing}
