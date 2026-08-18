@@ -313,7 +313,7 @@ class BrainChatService:
             "runtime": runtime,
             "framework": framework,
             "await_preview": sandbox_available,
-            "sync_url": f"ws://localhost:8001/brain/sandbox/sync/{job_id}",
+            "sync_url": f"{os.getenv('WS_BASE_URL', 'ws://localhost:8001')}/brain/sandbox/sync/{job_id}",
         }
 
         if sandbox_available:
