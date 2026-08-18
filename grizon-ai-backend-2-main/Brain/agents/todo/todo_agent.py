@@ -13,6 +13,27 @@ MIN_TODOS = 3
 MAX_TODOS = 15
 
 
+def _is_frontend_only_request(prompt: str) -> bool:
+    """Landing pages and frontend-only prompts should not auto-create backend/database tasks."""
+    if not isinstance(prompt, str):
+        return False
+    text = prompt.lower()
+    frontend_only_markers = [
+        "landing page", "homepage", "hero section", "marketing page", "portfolio page",
+        "frontend only", "front-end only", "ui only", "design only", "no backend",
+        "no database", "static website", "single page website", "splash page", "promo page"
+    ]
+    backend_markers = [
+        "backend", "api", "database", "supabase", "postgres", "auth", "login system",
+        "crud", "rest api", "server", "models", "schema", "db"
+    ]
+    if any(marker in text for marker in frontend_only_markers):
+        return True
+    if any(marker in text for marker in backend_markers):
+        return False
+    return False
+
+
 def _compact_plan(plan: dict) -> str:
     """Return task-relevant sections of the plan. Falls back to a generous
     portion of the full markdown when sections are thin, so context is never
@@ -233,13 +254,13 @@ def _fallback_from_architecture(plan: dict, backend_routes: List[str], scope: st
         tasks.append({
             "id": next_id(),
             "title": f"Supabase schema: {', '.join(table_names[:5])}",
-            "description": f"Create tables {', '.join(table_names)} in backend/supabase/schema.sql using the Shared Table + JSONB Data Matrix Pattern. Run via supabase_exec_sql.",
+            "description": f"Provision database schema for {', '.join(table_names)} in backend/supabase/schema.sql. Use physical domain tables for connected Supabase users (default) and shared tenant_connector_vault mode otherwise. Run via supabase_exec_sql.",
             "category": "database",
             "skill_required": "database",
             "files": ["backend/supabase/schema.sql"],
             "ui": [],
             "api": [],
-            "acceptance": [f"Tables {', '.join(table_names[:3])} created with correct columns", "Tenant data stays isolated"],
+            "acceptance": [f"Schema for {', '.join(table_names[:3])} created in selected storage mode", "RLS and indexes are applied", "Tenant data stays isolated"],
             "depends_on": [],
         })
 
@@ -448,6 +469,11 @@ class TodoAgent(BaseAgent):
         
         print(f"{LOG} ═══ EXECUTE ═══ plan_name='{plan.get('project_name', 'N/A')}' | framework={framework} | plan_type={type(state.get('project_plan')).__name__}", flush=True)
 
+        prompt_text = str(state.get("content") or "")
+        frontend_only = _is_frontend_only_request(prompt_text)
+        if frontend_only:
+            print(f"{LOG} Frontend-only request detected — suppressing backend/database task generation", flush=True)
+
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
         active_decisions = memory_context.get("decisions", {})
@@ -545,12 +571,16 @@ class TodoAgent(BaseAgent):
             "\n\nSCOPE: Return ONLY database and backend tasks (Supabase tables + Express API routes/controllers). "
             "Do NOT create frontend or runner tasks. For dependencies within this list use the ids you assign."
         )
+        if frontend_only:
+            build_prompt += "\n\nIMPORTANT: This request is frontend-only / landing-page focused. Do NOT create database or backend tasks. Return an empty JSON array for the build scope."
         fe_prompt = system_prompt + (
             "\n\nSCOPE: Return ONLY frontend tasks (pages with their nested components, shared components, and the "
             "final App.jsx wiring/integration task). Do NOT create database, backend, or runner tasks. "
             "For dependencies on database/backend work use the placeholder '@db' (tables) or '@backend' (API routes). "
             "Within this list use the ids you assign."
         )
+        if frontend_only:
+            fe_prompt += "\n\nIMPORTANT: This is a landing-page/frontend-only request. Keep the scope strictly on UI: sections, components, and App.jsx wiring only. No backend, database, auth, or server tasks."
 
         async def _scope_call(sys: str, timeout: float, max_tok: int):
             """Call LLM with automatic fallback to deepseek-v4-flash on rate limit."""
@@ -613,10 +643,22 @@ class TodoAgent(BaseAgent):
         if not backend_routes:
             route_hint = "Use frontend/src/lib/api.js (apiGet/apiPost/apiPut/apiDelete) for any data calls; see backend tasks for exact /api/* routes."
 
+        if frontend_only:
+            backend_routes = []
+            build_tasks = []
+            plan = plan.copy() if isinstance(plan, dict) else plan
+            if isinstance(plan, dict):
+                arch = plan.setdefault("architecture", {})
+                arch["tables"] = []
+                arch["api_routes"] = []
+                arch["pages"] = arch.get("pages") or [{"name": "Landing Page", "route": "/", "components": ["HeroSection", "Features", "Testimonials", "CTASection"]}]
+            print(f"{LOG} frontend-only request: forcing build scope empty and clearing API/database architecture", flush=True)
         if not isinstance(build_tasks, list):
             print(f"{LOG} ⚠ build scope failed ({build_tasks.get('error') if isinstance(build_tasks, dict) else str(build_tasks)[:150]}) — deterministic fallback", flush=True)
             build_tasks = [t for t in _fallback_from_architecture(plan, backend_routes, "build")
                            if t.get("category") in ("database", "backend")]
+        if frontend_only:
+            build_tasks = []
         if not isinstance(fe_tasks, list):
             print(f"{LOG} ⚠ frontend scope failed ({fe_tasks.get('error') if isinstance(fe_tasks, dict) else str(fe_tasks)[:150]}) — deterministic fallback", flush=True)
             fe_tasks = [t for t in _fallback_from_architecture(plan, backend_routes, "frontend")

@@ -8,6 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.agents.builder.mcp_tools import client_save_code
 from Brain.services.provider_router import ProviderRouter
+from Brain.shared.db_storage_mode import resolve_db_storage_mode
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.shared.llm_retry import ainvoke_with_retry
 
@@ -36,14 +37,43 @@ class BackendAgent(BaseAgent):
         except Exception as e:
             return e
 
-    def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
+    def _build_system_prompt(self, task: Dict, skills_content: str, db_storage_mode: str) -> str:
+        is_physical_mode = db_storage_mode == "physical"
+        database_line = (
+            "- Database: Supabase PostgreSQL via physical domain tables in `public` schema. No ORM."
+            if is_physical_mode
+            else "- Database: Supabase PostgreSQL via shared `tenant_connector_vault` table (JSONB pattern). No ORM."
+        )
+        architecture_rule = (
+            "0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase physical table pattern for connected users. "
+            "NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. Create and query real domain tables requested by the user."
+            if is_physical_mode
+            else "0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase + shared JSONB table pattern. NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. NEVER create domain-specific tables like users, todos, messages. ALL data goes through the shared `tenant_connector_vault` table or the Python Backend Proxy API."
+        )
+        db_access_rule = (
+            "8. NEVER import browser Supabase client. Use server-side only.\n"
+            "   - If user has connected Supabase connector: query physical domain tables directly with `.from('<table_name>')`.\n"
+            "   - Otherwise: fallback storage mode from planner/database agent context.\n"
+            "   - Never expose credentials to frontend code."
+            if is_physical_mode
+            else "8. NEVER import browser Supabase client. Use server-side only.\n"
+            "   - If user has connected Supabase connector: direct table queries with `.from()`.\n"
+            "   - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).\n"
+            "   - Never expose credentials to frontend code."
+        )
+        auth_rule = (
+            "13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): in physical mode, use a physical `auth_users` table (or `users` if explicitly requested), "
+            "with unique email and password hash. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated."
+            if is_physical_mode
+            else "13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated."
+        )
         prompt = f"""You are a Senior Backend Engineer building production-grade Node.js + Express APIs.
 
 ═══ STACK ═══
 - Runtime: Node.js 20 LTS
 - Framework: Express.js 4.x
 - Module system: CommonJS ONLY. Every file MUST use `require()` and `module.exports`. NEVER use `import`/`export`.
-- Database: Supabase PostgreSQL via shared `tenant_connector_vault` table (JSONB pattern). No ORM.
+{database_line}
 - Env: dotenv for secrets. Never hardcode credentials.
 - Port: `process.env.PORT || 3001`, bind `0.0.0.0`. Vite uses 9999; Express API uses 3001.
 
@@ -62,7 +92,7 @@ backend/
 ```
 
 ═══ RULES (VIOLATION = BROKEN BUILD) ═══
-0. PROJECT ARCHITECTURE OVERRIDES GENERIC SKILL FILES. This project uses Supabase + shared JSONB table pattern. NEVER use Mongoose, Prisma, Sequelize, TypeORM, or any other ORM/ODM. NEVER create domain-specific tables like users, todos, messages. ALL data goes through the shared `tenant_connector_vault` table or the Python Backend Proxy API.
+{architecture_rule}
 1. For every required file:
    a. Generate the COMPLETE file with all logic — no placeholders, no TODOs, no stubs.
    b. Immediately call client_save_code.
@@ -110,10 +140,7 @@ backend/
    - optional `GET /api/auth/me`
    Never mount auth at only `/auth`, `/api/users/login`, or `/api/user/register`; those cause 404s.
 7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`. ALWAYS include `cors` in your dependencies.
-8. NEVER import browser Supabase client. Use server-side only.
-   - If user has connected Supabase connector: direct table queries with `.from()`.
-   - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).
-   - Never expose credentials to frontend code.
+{db_access_rule}
 9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
    ```js
    require('dotenv').config();
@@ -163,7 +190,7 @@ backend/
     ```
     Place it BEFORE all other route mounts, right after middleware setup.
 12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
-13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated.
+{auth_rule}
 14. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
@@ -236,7 +263,9 @@ Respond ONLY in JSON.
                 except Exception:
                     skills_content = "{}"
 
-        system_prompt = self._build_system_prompt(task, skills_content)
+        db_storage_mode = resolve_db_storage_mode(state)
+        state["db_storage_mode"] = db_storage_mode
+        system_prompt = self._build_system_prompt(task, skills_content, db_storage_mode)
 
         # server.js metadata — routes and imports only
         server_js_context = ""
@@ -274,14 +303,23 @@ Respond ONLY in JSON.
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
         # Inject db_schema_names from DatabaseAgent if available — ensures exact naming match
+        # Inject DB schema/table contracts from DatabaseAgent.
         schema_names_context = ""
         db_schema_names = state.get("db_schema_names", [])
+        db_storage_mode = state.get("db_storage_mode", "shared")
+        db_table_names = state.get("db_table_names", [])
         if db_schema_names:
             schema_names_context = (
                 f"\n\nDB SCHEMA CONTRACT (use EXACTLY these schema_name values — no renaming):\n"
                 + "\n".join(f"  schema_name = '{s}'" for s in db_schema_names)
                 + "\nThe DatabaseAgent already created tenant_connector_vault rows for these names."
                 " Your controllers MUST query with these exact values."
+            )
+        if db_storage_mode == "physical" and db_table_names:
+            schema_names_context += (
+                f"\n\nDB TABLE CONTRACT (physical mode):\n"
+                + "\n".join(f"  table = '{t}'" for t in db_table_names)
+                + "\nUse these exact physical table names in Supabase `.from()` queries."
             )
 
         # ── Read build contract ──

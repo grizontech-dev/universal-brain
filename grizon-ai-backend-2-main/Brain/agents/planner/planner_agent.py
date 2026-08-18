@@ -2,10 +2,33 @@ from typing import Any, Dict, List
 import json
 import os
 from Brain.shared.agent import BaseAgent
+from Brain.shared.db_storage_mode import resolve_db_storage_mode
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.modules.connectors.supabase.service import SupabaseOAuthService
 
 LOG = "[PLANNER]"
+
+
+def _is_frontend_only_request(prompt: str) -> bool:
+    """Landing pages / frontend-only prompts should not auto-create backend or database work."""
+    if not isinstance(prompt, str):
+        return False
+    text = prompt.lower()
+    frontend_only_markers = [
+        "landing page", "homepage", "hero section", "marketing page", "portfolio page",
+        "frontend only", "front-end only", "ui only", "design only", "no backend",
+        "no database", "static website", "single page website", "splash page", "promo page"
+    ]
+    backend_markers = [
+        "backend", "api", "database", "supabase", "postgres", "auth", "login system",
+        "crud", "rest api", "server", "schema", "db"
+    ]
+    if any(marker in text for marker in frontend_only_markers):
+        return True
+    if any(marker in text for marker in backend_markers):
+        return False
+    return False
+
 
 _STOPWORDS = {
     "make", "build", "create", "develop", "design", "app", "application",
@@ -23,7 +46,7 @@ def _topic_fallback(prompt: str, current_plan: dict) -> dict:
     raw = (str(prompt or "") + " " + str(current_plan.get("project_name", ""))).lower()
     name = current_plan.get("project_name") if isinstance(current_plan, dict) else None
     if not name or name in ("New Project", "Project"):
-        words = [w for w in raw.split() if len(w) > 3 and w.isalnum() and w not in _STOPWORDS]
+        words = [w for w in raw.split() if len(w) > 3 and w.replace("-", "").isalnum() and w not in _STOPWORDS]
         subject = " ".join(words[:3]).title() if words else "App"
         name = f"{subject} App"
     else:
@@ -39,7 +62,7 @@ def _topic_fallback(prompt: str, current_plan: dict) -> dict:
     arch_pages = [{"name": p[0], "route": p[1], "components": p[2]} for p in pages]
     lines = [
         f"## Overview\nPlan for **{name}** created with default assumptions based on your request.",
-        "\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Company-owned Supabase via Python Backend Proxy\n- **Data Model:** Shared Table + JSONB Data Matrix Pattern",
+        "\n## Architecture\n- **Frontend:** React + Tailwind\n- **Backend:** Node.js + Express\n- **Database:** Supabase PostgreSQL\n- **Data Model:** Relational Tables",
         "\n## Key Pages & Components\n" + "\n".join(f"- {p[0]} (`{p[1]}`): {', '.join(p[2])}" for p in pages),
         "\n## Implementation Steps\n- Build database schema\n- Build backend API routes for CRUD operations\n- Build frontend pages and wire into App.jsx\n- Runner: install dependencies and start servers",
     ]
@@ -64,7 +87,11 @@ class PlannerAgent(BaseAgent):
 
     def _resolve_supabase_source(self, state: Dict[str, Any], prompt: str) -> str:
         request_text = f"{prompt} {state.get('content', '')} {json.dumps(state.get('project_plan', {}), default=str)}".lower()
-        if "supabase" not in request_text and "database" not in request_text:
+        db_intent_markers = (
+            "supabase", "database", "db", "postgres", "sql", "schema", "table", "tables",
+            "auth", "login", "register", "signup", "signin", "jwt", "api", "crud",
+        )
+        if not any(marker in request_text for marker in db_intent_markers):
             return "not_requested"
 
         user_id = state.get("user_id")
@@ -95,7 +122,7 @@ class PlannerAgent(BaseAgent):
             elif role == "ASSISTANT" and content.strip() and not content.startswith("{"):
                 context_lines.append(f"Context: {content.strip()[:200]}")
         context_lines.append(f"Final Request: {prompt}")
-        return "\n".join(context_lines[-10:])  # Last 10 exchanges
+        return "\n".join(context_lines[-10:])
 
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -105,7 +132,11 @@ class PlannerAgent(BaseAgent):
         print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | has_feedback={bool(state.get('plan_feedback'))}", flush=True)
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
-        current_plan = state.get("project_plan", {})
+        frontend_only = _is_frontend_only_request(prompt)
+        current_plan = {} if frontend_only else state.get("project_plan", {})
+        if frontend_only:
+            state["project_plan"] = {}
+            print(f"{LOG} Frontend-only request detected — cleared stale project plan and kept architecture frontend-only", flush=True)
 
         supabase_source = self._resolve_supabase_source(state, prompt)
         if supabase_source != "not_requested":
@@ -115,6 +146,20 @@ class PlannerAgent(BaseAgent):
             decisions["supabase_mode"] = "connected-user" if supabase_source == "user_connector" else "company-fallback"
             state.setdefault("active_decisions", {})["supabase_source"] = supabase_source
             state["active_decisions"]["supabase_mode"] = "connected-user" if supabase_source == "user_connector" else "company-fallback"
+        if frontend_only:
+            memory_context = state.setdefault("memory_context", {})
+            decisions = memory_context.setdefault("decisions", {})
+            decisions["frontend_only"] = True
+            state.setdefault("active_decisions", {})["frontend_only"] = True
+
+        db_storage_mode = resolve_db_storage_mode(state)
+        state.setdefault("active_decisions", {})["db_storage_mode"] = db_storage_mode
+        print(
+            f"{LOG} DB mode selected: {db_storage_mode} "
+            f"| supabase_source={supabase_source} "
+            f"| supabase_mode={state.get('active_decisions', {}).get('supabase_mode', 'n/a')}",
+            flush=True,
+        )
 
         memory_context = state.get("memory_context", {})
         session_state = memory_context.get("session_state", {})
@@ -143,7 +188,7 @@ class PlannerAgent(BaseAgent):
             arch_lines = [f"  {p['pattern']}: used {p['uses']}x, {p['success_rate']*100:.0f}% success" for p in architecture_patterns]
             arch_context = "[Proven Architecture Patterns]\n" + "\n".join(arch_lines)
 
-        # SkillMemory — best performing agents (only when genuinely relevant)
+        # SkillMemory — best performing agents
         skills_context = ""
         if best_skills:
             skills_lines = [
@@ -154,7 +199,7 @@ class PlannerAgent(BaseAgent):
             if skills_lines:
                 skills_context = "[Best Performing Agents]\n" + "\n".join(skills_lines)
 
-        # LongTermMemory — similar past projects (only above similarity threshold)
+        # LongTermMemory — similar past projects
         similar_context = ""
         if similar_projects:
             similar_lines = [
@@ -165,39 +210,45 @@ class PlannerAgent(BaseAgent):
             if similar_lines:
                 similar_context = "[Similar Past Projects]\n" + "\n".join(similar_lines)
 
-        # Build a clean context summary from history
+        # Build clean context summary
         context_summary = self._build_context_summary(history, prompt)
 
-        system_prompt = """You are the Strategic Planner Agent for Grizon AI. Your job is to read the user's request carefully and produce a complete, accurate technical plan.
+        db_rule = (
+            "- Database: Physical relational PostgreSQL tables in public schema (e.g., CREATE TABLE public.<resource>)."
+            if db_storage_mode == "physical"
+            else "- Database: Company-owned Supabase using shared JSONB data matrix pattern."
+        )
+
+        system_prompt = f"""You are the Strategic Planner Agent for Grizon AI. Your job is to read the user's request carefully and produce a complete, accurate technical plan.
 
 ABSOLUTE RULE: Every page, route, table, and component you plan MUST directly come from something the user asked for. Do NOT add generic pages (Hero, Features, Landing, Contact) unless the user explicitly requested them. Do NOT invent features. Do NOT pad the plan with filler.
 
 ═══ OUTPUT FORMAT ═══
 Return ONLY valid JSON — no markdown fences, no extra text. Structure:
-{
+{{
   "project_name": "<descriptive name matching the user's actual project>",
   "markdown_plan": "<Complete Markdown — MUST contain ALL sections below with 3-8 bullets each: ## Overview, ## Architecture, ## Frontend Stack, ## Data Models, ## API Design, ## Key Pages & Components, ## Components to Build, ## Implementation Steps, ## Data Storage. One line per bullet. Cover every feature the user asked for.>",
   "tech_stack": ["React", "Express", "Supabase", "Tailwind CSS"],
-  "stack": {"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind CSS"},
-  "architecture": {
+  "stack": {{"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind CSS"}},
+  "architecture": {{
     "pages": [
-      {"name": "<PascalCase component name>", "route": "<exact route path>", "components": ["<Component1>", "<Component2>"]}
+      {{"name": "<PascalCase component name>", "route": "<exact route path>", "components": ["<Component1>", "<Component2>"]}}
     ],
     "components": ["<SharedComponent1>", "<SharedComponent2>"],
     "tables": [
-      {"name": "<resource_name>", "columns": ["id", "<col1>", "<col2>", "created_at"]}
+      {{"name": "<resource_name>", "columns": ["id", "<col1>", "<col2>", "created_at"]}}
     ],
     "api_routes": [
-      {"path": "/api/<resource>", "method": "GET"},
-      {"path": "/api/<resource>/:id", "method": "GET"},
-      {"path": "/api/<resource>", "method": "POST"},
-      {"path": "/api/<resource>/:id", "method": "PUT"},
-      {"path": "/api/<resource>/:id", "method": "DELETE"}
+      {{"path": "/api/<resource>", "method": "GET"}},
+      {{"path": "/api/<resource>/:id", "method": "GET"}},
+      {{"path": "/api/<resource>", "method": "POST"}},
+      {{"path": "/api/<resource>/:id", "method": "PUT"}},
+      {{"path": "/api/<resource>/:id", "method": "DELETE"}}
     ],
     "dependencies": ["react-router-dom"]
-  },
+  }},
   "status": "proposed"
-}
+}}
 
 ═══ PLANNING RULES ═══
 
@@ -213,7 +264,7 @@ TABLES — derive from the user's data model:
 - One table per primary resource the user mentioned
 - Columns MUST be real domain fields (not just id/created_at)
 - Use snake_case for column names
-- auth_users schema_name for user authentication rows (no physical users table)
+- auth_users table or resource for user authentication rows
 
 API ROUTES — derive from the user's features:
 - Cover the full CRUD surface for each resource (GET list, GET by id, POST, PUT, DELETE)
@@ -229,7 +280,7 @@ COMPLETENESS — scale to the user's request:
 PLATFORM:
 - Always React + Vite SPA. Never mobile, desktop, or native apps.
 - All styling: Tailwind CSS. No custom CSS files.
-- Backend: Express + Supabase (company-owned, JSONB pattern).
+{db_rule}
 
 ANTI-HALLUCINATION:
 - If the user asked for a todo app, do NOT add a dashboard with analytics
@@ -250,10 +301,9 @@ ANTI-HALLUCINATION:
         if similar_context:
             messages.append(SystemMessage(content=similar_context))
 
-        # Inject the clean context summary as the primary input
         messages.append(HumanMessage(content=f"Project Context (including Q&A answers):\n{context_summary}"))
 
-        if current_plan:
+        if current_plan and not frontend_only:
             messages.append(SystemMessage(content=f"Current Plan to Update: {json.dumps(current_plan)[:1000]}"))
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
@@ -264,8 +314,6 @@ ANTI-HALLUCINATION:
         print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)
         plan = self._format_json_response(response_content)
 
-        # Accept only complete plans — if required fields are missing, treat as
-        # failure so the light retry path runs instead of using partial output.
         if isinstance(plan, dict) and not plan.get("error"):
             required = ["project_name", "markdown_plan", "tech_stack", "stack", "architecture", "status"]
             missing = [k for k in required if k not in plan]
@@ -273,9 +321,6 @@ ANTI-HALLUCINATION:
                 print(f"{LOG} ⚠ Full structured call returned JSON but missing fields: {missing}. Retrying with light prompt...", flush=True)
                 plan = {"error": f"missing required fields: {missing}"}
 
-        # If the full structured call failed/timed out, retry once with a lighter
-        # prompt (markdown only) so the user ALWAYS gets a real plan instead of
-        # the generic fallback.
         if not isinstance(plan, dict) or plan.get("error"):
             fail_reason = plan.get("error") if isinstance(plan, dict) else f"not a dict ({str(plan)[:200]})"
             print(f"{LOG} ⚠ Full structured call failed. Reason: {fail_reason}. Retrying with light prompt...", flush=True)
@@ -313,7 +358,18 @@ ANTI-HALLUCINATION:
             print(f"{LOG} ⚠ Light retry also failed ({light_reason}). Using topic-based fallback.", flush=True)
             plan = _topic_fallback(prompt, current_plan)
 
-        # Ensure structured keys always exist (backend/todo rely on them)
+        if frontend_only and isinstance(plan, dict):
+            plan["architecture"] = {
+                "pages": [{"name": "Landing Page", "route": "/", "components": ["HeroSection", "FeatureGrid", "Testimonials", "CTASection"]}],
+                "components": ["NavBar", "HeroSection", "FeatureGrid", "Testimonials", "CTASection", "Footer"],
+                "tables": [],
+                "api_routes": [],
+                "dependencies": ["react-router-dom"],
+            }
+            plan["tech_stack"] = ["React", "Tailwind CSS"]
+            plan["stack"] = {"frontend": "React", "backend": "None", "db": "None", "auth": "None", "styling": "Tailwind CSS"}
+            plan["status"] = "proposed"
+
         if not isinstance(plan.get("architecture"), dict):
             plan["architecture"] = {}
         if not isinstance(plan.get("stack"), dict):
@@ -331,14 +387,11 @@ ANTI-HALLUCINATION:
                 elif "jwt" in tl: stack_map["auth"] = t
             plan["stack"] = stack_map or {"frontend": "React", "backend": "Express", "db": "Supabase", "styling": "Tailwind"}
 
-        # Ensure markdown_plan exists
         if not plan.get("markdown_plan"):
             plan["markdown_plan"] = "## Overview\nPlan created successfully.\n\n## Details\n" + str(plan.get("summary_points", "No detailed plan available."))
 
-        # Minimal report text (just used internally, not displayed in chat)
         report = f"## {plan.get('project_name', 'New Project')} - Implementation Plan\n{plan.get('summary', '')}"
 
-        # Ensure project_plan is always stored as dict, never as a JSON string
         if isinstance(plan, str):
             try:
                 import json as _j

@@ -2,6 +2,7 @@ from typing import Any, Dict
 import asyncio
 from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import DATABASE_BUILD_STANDARDS
+from Brain.shared.db_storage_mode import resolve_db_storage_mode
 from Brain.shared.skills.resolver import SkillResolver
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.services.provider_router import ProviderRouter
@@ -37,18 +38,29 @@ class DatabaseAgent(BaseAgent):
         else:
             return "database_general"
 
-    def _build_system_prompt(self, task: Dict, skills_content: str) -> str:
-        prompt = f"""You are the Database Agent for Grizon Brain. Supabase/PostgreSQL schema design.
-
-{DATABASE_BUILD_STANDARDS}
-
-SKILL FILES (reference only):
-{skills_content}
-
-=== RULES (NON-NEGOTIABLE) ===
-1. Output SQL in `backend/supabase/schema.sql` ONLY.
-2. CRITICAL: Use ONLY the shared `tenant_connector_vault` table. NEVER create domain-specific tables like `users`, `tasks`, `messages`, etc. All data lives in `tenant_connector_vault` as JSONB rows, filtered by `tenant_id` + `schema_name`.
-3. Ensure `tenant_connector_vault` exists with: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{{}}'::jsonb, created_at timestamptz DEFAULT now().
+    def _build_system_prompt(self, task: Dict, skills_content: str, db_storage_mode: str) -> str:
+        is_physical_mode = db_storage_mode == "physical"
+        mode_banner = (
+            "DATABASE STORAGE MODE: PHYSICAL TABLES (for connected Supabase projects). "
+            "Create real domain tables in public schema so users can see them in Supabase dashboard."
+            if is_physical_mode
+            else "DATABASE STORAGE MODE: SHARED TABLE JSONB (tenant_connector_vault)."
+        )
+        rules_block = (
+            """2. CRITICAL: Create physical domain tables in `public` schema for requested resources (e.g. `reviews`, `destinations`, `orders`).
+3. Do NOT use `tenant_connector_vault` in physical mode.
+4. Use `CREATE TABLE IF NOT EXISTS` with explicit columns, sensible data types, `created_at`, `updated_at`, and primary keys.
+5. Add indexes and foreign keys where relationships are requested.
+6. Enable Row Level Security (RLS) for every created table and add permissive bootstrap policies for `anon`, `authenticated`, and `service_role`.
+7. Use IF NOT EXISTS to prevent re-run errors.
+8. After DDL, append: NOTIFY pgrst, 'reload schema';
+9. commands: always [].
+10. For auth features, create physical `auth_users` table when requested, with unique email and password hash fields.
+11. SEED DATA IS MANDATORY: include INSERT statements with 5-10 realistic rows for each core table.
+12. In your `summary`, include `table_names_used` with every physical table name you created."""
+            if is_physical_mode
+            else """2. CRITICAL: Use ONLY the shared `tenant_connector_vault` table. NEVER create domain-specific tables like `users`, `tasks`, `messages`, etc. All data lives in `tenant_connector_vault` as JSONB rows, filtered by `tenant_id` + `schema_name`.
+3. Ensure `tenant_connector_vault` exists with: id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id text NOT NULL, schema_name text NOT NULL, record_data jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz DEFAULT now().
 4. Add GIN index on `record_data` and btree index on `(tenant_id, schema_name)` for query performance.
 5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
    ALTER TABLE public.tenant_connector_vault ENABLE ROW LEVEL SECURITY;
@@ -59,7 +71,20 @@ SKILL FILES (reference only):
 8. commands: always [].
 9. UNIVERSAL DATA CONTRACT: For each requested feature/resource, store rows in `tenant_connector_vault` with `schema_name = '<canonical_resource>'` using lowercase snake_case or kebab-derived snake_case (for example `projects`, `invoices`, `contact_messages`). Do NOT create physical domain tables for any app feature.
 10. AUTH DATA CONTRACT (ONLY WHEN REQUESTED): Do NOT create a `users` table for login/register. Auth rows are stored with `schema_name = 'auth_users'` and JSONB keys such as email, name, passwordHash, role, createdAt. Add expression indexes only when useful, for example lower(record_data->>'email') where schema_name = 'auth_users'.
-11. SEED DATA IS MANDATORY: You MUST include INSERT statements to populate the database with 5-10 rows of realistic dummy data tailored EXACTLY to the user's specific theme and business logic (e.g. for a clothing brand, insert actual shirts/pants data, not generic tech hardware). Do NOT leave the database empty.
+11. SEED DATA IS MANDATORY: You MUST include INSERT statements to populate the database with 5-10 rows of realistic dummy data tailored EXACTLY to the user's specific theme and business logic (e.g. for a clothing brand, insert actual shirts/pants data, not generic tech hardware). Do NOT leave the database empty."""
+        )
+        prompt = f"""You are the Database Agent for Grizon Brain. Supabase/PostgreSQL schema design.
+
+{DATABASE_BUILD_STANDARDS}
+
+{mode_banner}
+
+SKILL FILES (reference only):
+{skills_content}
+
+=== RULES (NON-NEGOTIABLE) ===
+1. Output SQL in `backend/supabase/schema.sql` ONLY.
+{rules_block}
 
 === OUTPUT FORMAT ===
 Respond ONLY in JSON. The JSON `content` field contains SQL — follow these rules to keep JSON valid:
@@ -95,7 +120,9 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
             except Exception:
                 skills_content = "{}"
 
-        system_prompt = self._build_system_prompt(task, skills_content)
+        db_storage_mode = resolve_db_storage_mode(state)
+        state["db_storage_mode"] = db_storage_mode
+        system_prompt = self._build_system_prompt(task, skills_content, db_storage_mode)
 
         # Compact structured spec
         structured_hint = format_structured_spec(task)
@@ -136,7 +163,10 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
 
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[DB] model=deepseek-v4-flash | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(
+            f"[DB] model=deepseek-v4-flash | temp=0.1 | mode={db_storage_mode} | task={task.get('title', 'N/A')}",
+            flush=True,
+        )
 
         # Execute with retry on timeout OR parse failure
         max_attempts = 3
@@ -201,6 +231,25 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
                         found = _re2.findall(r"schema_name\s*=\s*['\"]([^'\"]+)['\"]", sql_text)
                         schema_names.extend(found)
                     schema_names = sorted(set(schema_names))
+
+                if db_storage_mode == "physical":
+                    table_names = generated_json.get("table_names_used", [])
+                    if not table_names:
+                        import re as _re3
+                        for f_item in generated_json.get("files", []):
+                            sql_text = f_item.get("content", "")
+                            table_names.extend(
+                                _re3.findall(
+                                    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?(\w+)",
+                                    sql_text,
+                                    _re3.IGNORECASE,
+                                )
+                            )
+                    table_names = sorted(set(table_names))
+                    if table_names:
+                        state["db_table_names"] = table_names
+                        print(f"[DB] table_names_used: {table_names}", flush=True)
+
                 if schema_names:
                     state["db_schema_names"] = schema_names
                     print(f"[DB] schema_names_used: {schema_names} → stored in state for BackendAgent", flush=True)
@@ -228,7 +277,16 @@ must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case
                             print(f"[DB] 🗄 Auto-executing SQL schema '{f_path}' on Supabase database...", flush=True)
                             job_id = state.get("current_job_id")
                             sql_res = await asyncio.wait_for(
-                                supabase_exec_sql.ainvoke({"sql_query": f_content}, config={"configurable": {"thread_id": job_id, "task_title": task.get("title", "")}}),
+                                supabase_exec_sql.ainvoke(
+                                    {"sql_query": f_content},
+                                    config={
+                                        "configurable": {
+                                            "thread_id": job_id,
+                                            "task_title": task.get("title", ""),
+                                            "user_id": state.get("user_id"),
+                                        }
+                                    },
+                                ),
                                 timeout=30
                             )
                             sql_res_str = str(sql_res).strip()

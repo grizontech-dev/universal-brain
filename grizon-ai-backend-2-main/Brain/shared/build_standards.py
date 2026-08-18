@@ -147,7 +147,7 @@ DATABASE_BUILD_STANDARDS = """
 ### Schema Pattern
 - Shared Table + JSONB Data Matrix: one shared tenant-scoped table with JSONB payload fields.
 - NOT one table per user. Use tenant_id + JSONB for flexibility.
-- Feature data uses a canonical `schema_name` derived from the resource in `tenant_connector_vault`. If auth is requested, login/register data uses `schema_name = 'auth_users'`. Never create physical domain tables.
+- Feature data uses a canonical `schema_name` derived from the resource in `tenant_connector_vault` when shared mode is active. If auth is requested in shared mode, login/register data uses `schema_name = 'auth_users'`. Physical-table mode may create real domain tables when explicitly enabled.
 - Schema files: `backend/supabase/*.sql` only. No Supabase CLI commands.
 
 ### Connector Priority

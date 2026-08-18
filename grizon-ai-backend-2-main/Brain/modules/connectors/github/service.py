@@ -84,9 +84,14 @@ class GitHubConnectorService:
         self.webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
         self.api_base = GITHUB_API_BASE.rstrip("/")
         self.upload_base = GITHUB_UPLOAD_BASE.rstrip("/")
-        self.qdrant = QdrantClient(url=QDRANT_URL)
+        self.qdrant = None
         self.collection_name = os.getenv("GITHUB_QDRANT_COLLECTION", "github_repository_chunks")
-        self._ensure_collection()
+        try:
+            self.qdrant = QdrantClient(url=QDRANT_URL)
+            self._ensure_collection()
+        except Exception as exc:
+            print(f"[GITHUB_CONNECTOR] Qdrant unavailable during init: {exc}", flush=True)
+            self.qdrant = None
 
     def get_encryption_key(self):
         secret = os.getenv("JWT_SECRET", "default-secret-key-1234")
