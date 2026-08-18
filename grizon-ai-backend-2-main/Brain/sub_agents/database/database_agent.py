@@ -14,13 +14,13 @@ class DatabaseAgent(BaseAgent):
         super().__init__(
             name="Database Agent",
             description="Specialized in company-owned Supabase schema design and MCP connectors.",
-            model_id="deepseek-v4-flash"
+            model_id="llama-4-scout-17b-16e-instruct"
         )
         # Instance-level cache — avoids cross-build skill contamination between concurrent users
         self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
         # Cache model once
-        self.llm = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
+        self.llm = ProviderRouter.get_model("llama-4-scout-17b-16e-instruct", temperature=0.1)
 
     def _get_skill_cache_key(self, task: Dict, task_description: str) -> str:
         """Generate granular cache key based on DB task type."""
@@ -64,6 +64,7 @@ class DatabaseAgent(BaseAgent):
 4. Add GIN index on `record_data` and btree index on `(tenant_id, schema_name)` for query performance.
 5. Enable Row Level Security (RLS) with a permissive policy for initial setup:
    ALTER TABLE public.tenant_connector_vault ENABLE ROW LEVEL SECURITY;
+   DROP POLICY IF EXISTS "allow_all" ON public.tenant_connector_vault;
    CREATE POLICY "allow_all" ON public.tenant_connector_vault FOR ALL USING (true) WITH CHECK (true);
    GRANT ALL ON public.tenant_connector_vault TO service_role, anon, authenticated;
 6. Use IF NOT EXISTS to prevent re-run errors.
@@ -87,18 +88,19 @@ SKILL FILES (reference only):
 {rules_block}
 
 === OUTPUT FORMAT ===
-Respond ONLY in JSON. The JSON `content` field contains SQL — follow these rules to keep JSON valid:
-- Use $$ dollar-quoting for SQL strings/functions instead of single quotes where possible
-- Escape any single quotes inside SQL strings as: '' (two single quotes)
-- NEVER use unescaped backslashes inside the JSON string
-- Keep the entire response as one valid JSON object — no markdown, no code fences
+You MUST respond with ONLY a raw JSON block.
+Do NOT write any introduction (e.g., "Sure, here is the schema") or explanation.
+Do NOT wrap the JSON in markdown code blocks or code fences (e.g., do not use ```json ... ```).
+Your response MUST start directly with `{{` and end directly with `}}`. Any conversational text will crash the system.
 
-SCHEMA_NAMES CONTRACT (critical for backend/frontend alignment):
-In your `summary` field, list EVERY schema_name you used, like this:
-  "schema_names_used": ["invoices", "auth_users", "products"]
-The backend agent MUST query these exact schema_name values. If you use 'invoice' the backend
-must also use 'invoice' — not 'invoices'. Be consistent. Use plural snake_case by default.
+=== SQL-IN-JSON SAFETY (CRITICAL) ===
+The SQL content goes inside a JSON string. You MUST follow these rules or JSON parsing will fail:
+- NEVER use unescaped single quotes inside INSERT VALUES. Use '' (two single-quotes) for SQL string literals. e.g. 'men''s watch' NOT 'men's watch'
+- NEVER use real newlines inside the `content` string — use \n as a literal escape sequence.
+- NEVER use real tab characters — use spaces instead.
+- NEVER use backslashes in SQL unless escaped as \\\\ in the JSON string.
 
+Format:
 {{"files": [{{"path": "backend/supabase/schema.sql", "content": "-- SQL here"}}], "commands": [], "summary": "...", "schema_names_used": ["resource1", "resource2"]}}
 """
         return prompt

@@ -953,7 +953,7 @@ export default function BrainEditorCanvas({
         : `fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-app text-text-primary border border-border-default shadow-2xl overflow-hidden font-sans
             ${isFullScreen ? 'inset-4 rounded-xl' : 'right-4 top-4 bottom-4 w-[calc(100vw-450px)] max-w-[1400px] rounded-xl'}`;
 
-    const globalBuildingOverlay = (!buildComplete && !hasLiveFrontendPreview) && (
+    const globalBuildingOverlay = (!embedded && !buildComplete && !hasLiveFrontendPreview) && (
         <div className="absolute inset-0 z-[100] flex flex-col bg-app text-text-primary overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-3 px-6 py-4 border-b border-border-subtle shrink-0 bg-sidebar">
@@ -1014,21 +1014,24 @@ export default function BrainEditorCanvas({
                     <div className="flex items-center bg-white/[0.03] border border-white/5 p-0.5 rounded-lg ml-1 shrink-0">
                         <button
                             onClick={() => setViewMode('preview')}
-                            className={`p-1.5 px-2 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'preview' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
+                            className={`p-1.5 px-2.5 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'preview' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
                         >
                             <Eye size={14} />
+                            <span className="hidden md:inline">Preview</span>
                         </button>
                         <button
                             onClick={() => setViewMode('code')}
-                            className={`p-1.5 px-2 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'code' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
+                            className={`p-1.5 px-2.5 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'code' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
                         >
                             <Code size={14} />
+                            <span className="hidden md:inline">Code</span>
                         </button>
                         <button
                             onClick={() => setViewMode('terminal')}
-                            className={`p-1.5 px-2 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'terminal' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
+                            className={`p-1.5 px-2.5 rounded-md flex items-center gap-2 text-[12px] font-medium transition-all ${viewMode === 'terminal' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/60'}`}
                         >
                             <Database size={14} />
+                            <span className="hidden md:inline">Terminal</span>
                         </button>
                     </div>
                 </div>

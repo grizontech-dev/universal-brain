@@ -91,15 +91,25 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - components/ → reusable pieces imported by pages
 - lib/api.js → all fetch calls, exported by name, with ledger comment mapping name→route
 - No TypeScript. No App.tsx. Plain JSX only.
+- NO LAYOUT DUPLICATION (CRITICAL): If App.jsx already includes a layout wrapper (AppLayout) that renders Navbar, Sidebar, and Footer, then EVERY page component (Homepage.jsx, Loginpage.jsx, etc.) MUST NOT render Navbar, Sidebar, or Footer again. Pages render ONLY their own content — the layout is inherited automatically from AppLayout. Rendering layout components twice causes double Navbar and double Sidebar bugs.
+- COMPONENT-PAGE CONTRACT (CRITICAL): This applies to EVERY page, not just Login/Register. Any page component inside `pages/` MUST import and fully render its relevant components from `components/`. NEVER leave ANY page as just plain text, an empty `<div>`, or a `<p>Coming soon</p>` placeholder. Every single page MUST render real, working UI. Examples:
+  - `Loginpage.jsx` → imports and renders `<LoginForm />`
+  - `Registerpage.jsx` → imports and renders `<RegisterForm />`
+  - `Homepage.jsx` → imports and renders `<HeroSection />`, `<VideoFeed />`, etc.
+  - `Videodetailpage.jsx` → imports and renders `<VideoPlayer />`, `<VideoInfo />`, etc.
+  - `AdminDashboardPage.jsx` → imports and renders `<AdminStats />`, `<AdminTable />`, etc.
+  If a component file exists in `components/`, it MUST be used by at least one page. Dead/unused components are wasted code.
 
 ═══ ROUTING (React Router v6) ═══
 - <Routes> not <Switch>. element={{<X />}} not component={{X}}.
 - Navigation: <Link to="/path"> not <a href>.
+- ADMIN PANEL ROUTING (CRITICAL): If an Admin/CMS dashboard is generated, you MUST implement a login gate on route `/admin`. Logins with Email `admin@grizonai.com` and Password `admin123` must redirect to `/admin/dashboard` (the actual dashboard panel). Store the session state (e.g. in localStorage) so the admin session is persisted on page refresh.
 - App.jsx example:
   <BrowserRouter><Routes>
     <Route path="/" element={{<Home />}} />
     <Route path="/dashboard" element={{<Dashboard />}} />
   </Routes></BrowserRouter>
+- APPSLAYOUT RULE: If you write an AppLayout wrapper in App.jsx that includes <Navbar>, <Sidebar>, <Footer>, you MUST wrap <Routes> inside it. Children pages must NOT include these layout components. App.jsx is the single source of truth for the global layout.
 
 ═══ API CONTRACT ═══
 - api.js ledger at top: // getItems -> GET /api/items
@@ -108,10 +118,11 @@ Use ONLY these hex values. Gradients: {c[1]}→{c[2]} | Buttons: {c[1]} | Text o
 - Auth (only if requested): loginUser/registerUser → /api/auth/login, /api/auth/register
 
 ═══ UI QUALITY ═══
-- Real content only. Never <h1>Home Page</h1> as the only content.
+- ANTI-STUB RULE (CRITICAL): NEVER generate a page that just says `<h1 className="text-2xl font-bold">Homepage</h1>`. If a page is meant to be a dashboard, it MUST render the dashboard components. If it's a Homepage, it MUST render the Hero and Feed components. Generating placeholder text (e.g. "Coming soon", "Homepage", or just an empty flex container) is STRICTLY FORBIDDEN and will cause the build to fail. You MUST import and connect the components you just built!
 - Animations: framer-motion on every page (AnimatePresence, motion.div, whileHover).
 - Glass cards: bg-white/10 backdrop-blur-xl border border-white/20
 - PREMIUM HOMEPAGE: The Homepage/Landing page MUST be extremely rich and contain at least 5-6 beautifully designed, premium sections (e.g. Hero, Featured Categories grid, Bestsellers/Featured Products grid, Brand Story/Philosophy, Customer Testimonials/Reviews, Promotional/Newsletter banner, rich interactive Footer). Do NOT build a basic 1-2 section skeleton.
+- DEFENSIVE PROGRAMMING (CRITICAL): Always use optional chaining, null-coalescing, and safety checks for all dynamic variables, API data, and React Context states. Never call methods like `.toLocaleString()`, `.toFixed()`, `.map()`, or `.length` on values without checking if they exist (e.g., use `(subtotal ?? 0).toLocaleString()` instead of `subtotal.toLocaleString()`, and `cartItems?.length` instead of `cartItems.length`). If a value could be undefined, provide a safe fallback so the page never crashes to a blank white screen.
 - Vite Config (CRITICAL): MUST generate `vite.config.js` with `server: {{ port: 9999, host: '0.0.0.0', proxy: {{ '/api': 'http://localhost:3001' }} }}` so frontend API calls don't 404.
 
 ═══ PACKAGES ═══

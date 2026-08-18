@@ -1,0 +1,47 @@
+DEBUG: Workspace path: /app/workspaces
+Grizon Brain Backend v2.5.2 starting up...
+[SANDBOX_MCP] Initializing... URL=https://nano-cross-begins-rely.trycloudflare.com/m...
+[SANDBOX_MCP] Connecting to MCP server...
+[SANDBOX_MCP] Connected OK | tools=['save_code', 'execute_in_sandbox', 'execute_workspace_archive', 'get_sandbox_status', 'list_sandboxes', 'get_sandbox_logs', 'delete_sandbox']
+[STARTUP] Sandbox cleanup loop started (TTL=30min)
+[SANDBOX_MCP] Cleanup loop running (checking every 60s, TTL=30min)
+INFO:     127.0.0.1:50735 - "GET /brain/memory/session/8f4f7d49-b984-43d2-917a-f0fa26fb49ce HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57464 - "GET /brain/conversations/8f4f7d49-b984-43d2-917a-f0fa26fb49ce HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59624 - "GET /brain/memory/session/8f4f7d49-b984-43d2-917a-f0fa26fb49ce HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59625 - "GET /brain/memory/session/8f4f7d49-b984-43d2-917a-f0fa26fb49ce HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63556 - "POST /brain/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63557 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+[CHAT-SERVICE] TIMING: persistence done in 0.1s
+[CHAT-SERVICE] TIMING: memory_context built in 0.4s
+DEBUG: NODE [analyze_ingress] started
+INFO:     127.0.0.1:49873 - "GET /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49874 - "PUT /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+ERROR in stream: 'charmap' codec can't encode characters in position 15-77: character maps to <undefined>
+INFO:     127.0.0.1:63455 - "GET /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63456 - "GET /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56872 - "GET /brain/conversations/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56882 - "GET /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56883 - "GET /brain/memory/session/014dd3d1-8432-42a2-af5a-151a9268a04b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58318 - "POST /brain/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58319 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+[CHAT-SERVICE] TIMING: persistence done in 0.1s
+[CHAT-SERVICE] TIMING: memory_context built in 0.1s
+DEBUG: NODE [analyze_ingress] started
+ERROR in stream: 'charmap' codec can't encode characters in position 15-77: character maps to <undefined>
+INFO:     127.0.0.1:51094 - "GET /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51095 - "PUT /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54681 - "GET /brain/conversations/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62848 - "GET /brain/conversations/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62847 - "GET /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62850 - "GET /brain/conversations/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62849 - "GET /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65428 - "GET /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65429 - "GET /brain/memory/session/69f52b2c-31ea-41fa-9447-8c2e5114a510 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65338 - "POST /brain/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65339 - "POST /brain/chat/stream HTTP/1.1" 200 OK
+[CHAT-SERVICE] TIMING: persistence done in 0.1s
+[CHAT-SERVICE] TIMING: memory_context built in 0.1s
+DEBUG: NODE [analyze_ingress] started
+ERROR in stream: 'charmap' codec can't encode characters in position 15-77: character maps to <undefined>
+INFO:     127.0.0.1:54094 - "GET /brain/memory/session/8ae4f9df-adef-4f40-8c09-a4871d01befc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54095 - "PUT /brain/memory/session/8ae4f9df-adef-4f40-8c09-a4871d01befc HTTP/1.1" 200 OK

@@ -266,7 +266,7 @@ class BuilderAgent(BaseAgent):
         _cat_models = {
             "frontend": "google/gemini-3.7-flash",
             "backend": "google/gemini-3.7-flash",
-            "database": "deepseek-v4-flash",
+            "database": "llama-4-scout-17b-16e-instruct",
             "runner": "deepseek-v4-pro",
         }
         _model = _cat_models.get(category, "deepseek-v4-pro")
@@ -801,12 +801,14 @@ class BuilderAgent(BaseAgent):
                 
                 # Adaptive timeout based on task complexity
                 task_desc = current_task.get("description", "") + current_task.get("title", "")
-                if len(task_desc) > 200 or "dashboard" in task_desc.lower() or "complex" in task_desc.lower():
+                if category == "database" or "database" in task_desc.lower() or "schema" in task_desc.lower() or "seed" in task_desc.lower():
+                    subagent_timeout = 360  # 6 min for database tasks (DeepSeek can be slow)
+                elif len(task_desc) > 200 or "dashboard" in task_desc.lower() or "complex" in task_desc.lower():
                     subagent_timeout = 300  # 5 min for complex tasks
                 elif len(task_desc) > 100:
-                    subagent_timeout = 180  # 3 min for medium tasks
+                    subagent_timeout = 240  # 4 min for medium tasks
                 else:
-                    subagent_timeout = 120  # 2 min for simple tasks
+                    subagent_timeout = 180  # 3 min for simple tasks
                 
                 result = await asyncio.wait_for(
                     agent.execute(current_task, state),
