@@ -111,25 +111,23 @@ class SkillResolver:
         return collected
 
     def _load_local_skills(self, task_description: str) -> str:
-        """Return relevant skill FILE PATHS for on-demand reading — not content.
-        
-        Agents read skill files when needed via MCP read_file tool, avoiding
-        45-50k token overload and hallucination from irrelevant context.
+        """Return relevant skill content DIRECTLY — not paths.
+
+        Previously returned only file paths, relying on agents to call
+        read_skill_file on demand. In practice agents skip that step and
+        produce generic code. We now inline the content (trimmed to stay
+        within budget) so every agent always has real guidance.
         """
         here = os.path.dirname(__file__)
-        skillss_dir = os.path.join(here, "..", "..", "skillss")
-        skills_dir = os.path.join(here, "..", "..", "skills")
-        skillss_dir = os.path.abspath(skillss_dir)
-        skills_dir = os.path.abspath(skills_dir)
+        skillss_dir = os.path.abspath(os.path.join(here, "..", "..", "skillss"))
+        skills_dir  = os.path.abspath(os.path.join(here, "..", "..", "skills"))
 
         t = (task_description or "").lower()
         frontend_kw = any(k in t for k in ["frontend", "react", "ui", "component", "landing", "page", "css", "html", "design"])
-        backend_kw = any(k in t for k in ["backend", "express", "api", "server", "endpoint", "fastify", "node", "microservice"])
-        db_kw = any(k in t for k in ["supabase", "database", "postgres", "sql", "query", "vector"])
+        backend_kw  = any(k in t for k in ["backend", "express", "api", "server", "endpoint", "fastify", "node", "microservice"])
+        db_kw       = any(k in t for k in ["supabase", "database", "postgres", "sql", "query", "vector"])
 
         def relevance(path: str) -> bool:
-            # Paths are relative (e.g. "frontend-design/SKILL.md") — match on path segments,
-            # NOT leading-slash substrings (those never match relative paths).
             p = path.lower().replace("\\", "/")
             parts = [seg for seg in p.split("/") if seg]
             if frontend_kw and any(d in parts for d in ["frontend", "frontend-design", "shadcn"]):
@@ -141,26 +139,33 @@ class SkillResolver:
             return False
 
         skillss_files = self._collect_local_markdown(skillss_dir, allowed_names={"SKILL.md"})
-        skills_files = self._collect_local_markdown(skills_dir)
+        skills_files  = self._collect_local_markdown(skills_dir)
         all_files = [(name, text, "skillss") for name, text in skillss_files]
-        all_files += [(name, text, "skills") for name, text in skills_files]
-
+        all_files += [(name, text, "skills")  for name, text in skills_files]
         filtered = [x for x in all_files if relevance(x[0])]
 
         if not filtered:
             print(f"[SkillResolver] 🗂️ No relevant skill files found for task.")
             return ""
 
-        # Return ONLY file paths — agent reads on demand via read_skill_file tool.
-        # Paths must be relative to the Brain root so read_skill_file can resolve them.
-        paths = [f"{src}/{name}".replace("\\", "/") for name, _, src in filtered]
-        print(f"[SkillResolver] 🗂️ Found {len(paths)} relevant skill files (paths returned, agent reads on demand).")
-        
-        path_list = "\n".join(f"- {p}" for p in paths)
-        return f"""SKILL FILES (read these when you need guidance — do NOT load all at once):
-{path_list}
+        print(f"[SkillResolver] 🗂️ Injecting content from {len(filtered)} skill file(s) directly.")
 
-When you need help with a specific topic, use the read_skill_file tool to read the relevant skill file above. Only read what you need for the current task."""
+        # Inline content — cap each file at 1200 chars, total at 3000 chars
+        # so we don't blow the context window while still giving real guidance.
+        MAX_PER_FILE = 1200
+        MAX_TOTAL    = 3000
+        parts = []
+        total = 0
+        for name, text, src in filtered:
+            if total >= MAX_TOTAL:
+                break
+            trimmed = text[:MAX_PER_FILE]
+            if len(text) > MAX_PER_FILE:
+                trimmed += f"\n... (truncated, {len(text)} chars total)"
+            parts.append(f"### {name}\n{trimmed}")
+            total += len(trimmed)
+
+        return "SKILL REFERENCE (follow these patterns):\n\n" + "\n\n---\n\n".join(parts)
 
     def resolve_skills_for_task(self, task_description: str) -> str:
         """End-to-end pipeline to get compiled JSON rules for a task.

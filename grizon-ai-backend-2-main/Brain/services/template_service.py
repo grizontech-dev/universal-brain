@@ -215,5 +215,3 @@ def inject_company_supabase_to_workspace(workspace_id: str, user_id: Optional[st
     with open(env_path, "w", encoding="utf-8") as f:
         f.write(new_content)
     return True
-
-    return False

@@ -367,106 +367,6 @@ class BrainChatService:
             "report": report_msg,
         }
 
-    async def node_execute_sandbox(self, state: BrainState) -> Dict[str, Any]:
-        """Executes the next task in the build plan."""
-        print("DEBUG: NODE [execute_sandbox] started")
-        tasks = state.get("plan", [])
-        index = state.get("current_task_index", 0)
-        sandbox_job = state.get("sandbox_job")
-
-        if index >= len(tasks):
-            return {"status": "building_complete"}
-
-        agent = BuilderAgent()
-        print(f"DEBUG: Starting agent.execute for Task {index+1}/{len(tasks)}")
-
-        last_event = {}
-        accumulated_ops: List[Dict[str, Any]] = []
-        accumulated_activities: List[Dict[str, Any]] = []
-        async for event in agent.execute(state):
-            if isinstance(event, dict):
-                if event.get("execute_sandbox"):
-                    exe = event["execute_sandbox"]
-                    if exe.get("workspace_ops"):
-                        accumulated_ops.extend(exe["workspace_ops"])
-                    if exe.get("activities"):
-                        accumulated_activities.extend(exe["activities"])
-                    last_event = event
-                else:
-                    last_event = event
-            else:
-                state = event
-
-        # Final state after one task execution
-        tasks = state.get("plan", [])
-        index = state.get("current_task_index", 0)
-
-        # index = next task to run (builder increments after each task)
-        for i, task in enumerate(tasks):
-            if task.get("status") == "failed":
-                continue
-            if index >= len(tasks):
-                if task.get("category") == "runner":
-                    task["status"] = "pending"
-                else:
-                    task["status"] = "completed"
-            elif i < index:
-                task["status"] = "completed"
-            elif i == index:
-                task["status"] = "executing"
-            else:
-                task["status"] = "pending"
-
-        exe_payload = last_event.get("execute_sandbox", {})
-        if sandbox_job:
-            exe_payload["sandbox_job"] = sandbox_job
-        if accumulated_ops:
-            exe_payload["workspace_ops"] = accumulated_ops
-        if accumulated_activities:
-            exe_payload["activities"] = accumulated_activities
-        exe_payload["plan"] = tasks
-
-        return {
-            "plan": tasks,
-            "current_task_index": index,
-            "executed_tasks": state.get("executed_tasks", []),
-            "status": state.get("status"),
-            "current_job_id": state.get("current_job_id"),
-            "sandbox_job": sandbox_job,
-            "execute_sandbox": exe_payload
-        }
-
-    async def node_runner(self, state: BrainState) -> Dict[str, Any]:
-        print(f"DEBUG: NODE [runner] started | session={state.get('current_job_id')}", flush=True)
-        agent = RunnerAgent()
-        async for ev in agent.execute(state):
-            if isinstance(ev, dict):
-                state = ev
-        print(f"DEBUG: NODE [runner] complete | status={state.get('status')}", flush=True)
-
-        sandbox_job = state.get("sandbox_job")
-        runner_exe = state.get("execute_sandbox") or {}
-
-        tasks = list(state.get("plan", []))
-        for t in tasks:
-            if t.get("status") == "failed":
-                continue
-            t["status"] = "completed"
-
-        return {
-            "status": "complete",
-            "report": state.get("run_report"),
-            "plan": tasks,
-            "current_task_index": len(tasks),
-            "execute_sandbox": {
-                "sandbox_job": sandbox_job,
-                "plan": tasks,
-                "status": "complete",
-                "workspace_ops": runner_exe.get("workspace_ops", []),
-                "progress_msg": runner_exe.get("progress_msg"),
-            },
-        }
-
     # --- Stream Method ---
 
     def _node_to_workflow_state(self, node_name: str, state: Dict[str, Any]) -> tuple:
@@ -504,9 +404,8 @@ class BrainChatService:
 
         mg: MemoryGateway = state.get("memory_gateway")
         if mg:
-            import asyncio
             try:
-                asyncio.get_event_loop().create_task(
+                asyncio.create_task(
                     mg.short_term.append("assistant", report or "", node_name)
                 )
             except RuntimeError:
@@ -516,7 +415,7 @@ class BrainChatService:
         if mg:
             wf_state, agent = self._node_to_workflow_state(node_name, state)
             try:
-                asyncio.get_event_loop().create_task(
+                asyncio.create_task(
                     mg.session.update_workflow_state(wf_state, agent)
                 )
             except RuntimeError:
@@ -603,10 +502,17 @@ class BrainChatService:
         if is_new:
             async def _bg_title_gen():
                 try:
-                    from Brain.agents.leader_agent import LeaderAgent
+                    from Brain.services.provider_router import ProviderRouter
+                    from langchain_core.messages import SystemMessage, HumanMessage
                     prompt = initial_state.get("content") or ""
-                    model_id = initial_state.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"))
-                    title = await LeaderAgent.generate_title(prompt, model_id)
+                    _model_id = initial_state.get("model_id", os.getenv("DEFAULT_CHEAP_MODEL", "deepseek-chat"))
+                    _llm = ProviderRouter.get_model(_model_id, temperature=0.3)
+                    _msgs = [
+                        SystemMessage(content="Generate a concise title (max 50 chars) for this project request. Return ONLY the title text, no quotes, no punctuation at the end."),
+                        HumanMessage(content=prompt[:300]),
+                    ]
+                    _resp = await _llm.ainvoke(_msgs)
+                    title = (_resp.content or "").strip().strip('"').strip("'")[:60]
                     if title:
                         conversation_service.update_titles(conv_id, title)
                         print(f"DEBUG: Generated title for new conversation {conv_id}: {title}")
@@ -628,17 +534,10 @@ class BrainChatService:
 
         # Initialize session on start
         if mg:
-            import asyncio as _asyncio
             try:
-                _asyncio.get_event_loop().create_task(
-                    mg.session.set("started_at", datetime.utcnow().isoformat())
-                )
-                _asyncio.get_event_loop().create_task(
-                    mg.session.set("project_id", mg.project_id)
-                )
-                _asyncio.get_event_loop().create_task(
-                    mg.session.update_workflow_state("starting", "LeaderAgent")
-                )
+                asyncio.create_task(mg.session.set("started_at", datetime.utcnow().isoformat()))
+                asyncio.create_task(mg.session.set("project_id", mg.project_id))
+                asyncio.create_task(mg.session.update_workflow_state("starting", "LeaderAgent"))
             except RuntimeError:
                 pass
 
@@ -742,14 +641,13 @@ class BrainChatService:
                                 metadata=metadata,
                                 credits_deducted=deducted_credits
                             )
-                            if mg:
-                                import asyncio
-                                try:
-                                    asyncio.get_event_loop().create_task(
-                                        mg.short_term.append("assistant", report or "", node_name)
-                                    )
-                                except RuntimeError:
-                                    pass
+                        if mg:
+                            try:
+                                asyncio.create_task(
+                                    mg.short_term.append("assistant", report or "", node_name)
+                                )
+                            except RuntimeError:
+                                pass
             except Exception as phase1_err:
                 print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
                 print(f"[CHAT-SERVICE] ✖ Phase 1 error: {type(phase1_err).__name__}: {phase1_err}", flush=True)
@@ -760,8 +658,7 @@ class BrainChatService:
                 yield f"data: {json.dumps({'error': f'Phase 1 error: {type(phase1_err).__name__}: {str(phase1_err)[:300]}'})}\n\n"
                 if mg:
                     try:
-                        import asyncio as _asyncio_ph1
-                        _asyncio_ph1.get_event_loop().create_task(
+                        asyncio.create_task(
                             mg.session.update_workflow_state("error", str(phase1_err)[:200])
                         )
                     except RuntimeError:
@@ -817,15 +714,13 @@ class BrainChatService:
                     print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
 
                 # Run builder in background task to survive client disconnect
-                import asyncio as _bgio
-                _builder_task = _bgio.get_event_loop().create_task(
+                _builder_task = asyncio.create_task(
                     self._run_builder_background(state, plan, conv_id, mg)
                 )
                 print(f"[CHAT-SERVICE] Builder started as background task for {len(plan)} tasks", flush=True)
                 if mg:
-                    import asyncio as _asyncio2
                     try:
-                        _asyncio2.get_event_loop().create_task(
+                        asyncio.create_task(
                             mg.session.update_workflow_state("building", "BuilderAgent")
                         )
                     except RuntimeError:
@@ -845,9 +740,8 @@ class BrainChatService:
                 if _builder_task.cancelled():
                     print(f"[CHAT-SERVICE] WARN: Builder task cancelled for {conv_id}", flush=True)
                 if mg:
-                    import asyncio as _asyncio3
                     try:
-                        _asyncio3.get_event_loop().create_task(
+                        asyncio.create_task(
                             mg.session.update_workflow_state("deploying", "RunnerAgent")
                         )
                     except RuntimeError:
@@ -964,9 +858,8 @@ class BrainChatService:
             traceback.print_exc()
             print(f"[CHAT-SERVICE] ═══════════════════════════════════════════════════════════════", flush=True)
             if mg:
-                import asyncio as _asyncio5
                 try:
-                    _asyncio5.get_event_loop().create_task(
+                    asyncio.create_task(
                         mg.session.update_workflow_state("error", "")
                     )
                 except RuntimeError:
@@ -1236,7 +1129,7 @@ class BrainChatService:
 
                 if mg:
                     try:
-                        asyncio.get_event_loop().create_task(
+                        asyncio.create_task(
                             mg.short_term.append("assistant", f"Task {index+1} completed", "builder")
                         )
                     except RuntimeError:

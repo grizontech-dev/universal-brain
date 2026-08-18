@@ -65,6 +65,15 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
     const projectName = parsedPlan?.project_name || "Implementation Plan";
     let markdownPlan = parsedPlan?.markdown_plan;
     
+    // Ensure markdownPlan is a string
+    if (markdownPlan !== undefined && markdownPlan !== null) {
+        if (Array.isArray(markdownPlan)) {
+            markdownPlan = markdownPlan.join('\n');
+        } else if (typeof markdownPlan !== 'string') {
+            markdownPlan = JSON.stringify(markdownPlan, null, 2);
+        }
+    }
+    
     // Pre-process markdown to fix AI formatting quirks
     if (markdownPlan) {
         // Fix Windows line endings

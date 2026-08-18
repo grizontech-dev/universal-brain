@@ -1,8 +1,19 @@
+# Python cache & bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Custom project folders & archives
 .agents/
 Grizon-AI-Backend/
 Grizon-AI-Frontend-v2/
-Grizon-AI-Superadmin-master/__pycache__/
 Grizon-AI-Superadmin-master/
+<<<<<<< HEAD
 grizon-ai-backend-2-main.zip
 __pycache__/
 *.py[cod]
+=======
+grizon-ai-backend-2-main.zip
+>>>>>>> 5697e2da37941e8fb6cb26742acc0c88e9e89d86

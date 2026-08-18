@@ -15,7 +15,7 @@ class Project(Base):
     css_framework = Column(String, name="css_framework")
     auth_method = Column(String, name="auth_method")
     folder_structure = Column(JSON, name="folder_structure")
-    requirements = Column(ARRAY(String), default=[])
+    requirements = Column(ARRAY(String), default=list)   # callable — not shared []
     roadmap = Column(JSON)
     status = Column(String, default="active")
     owner_id = Column(String, name="owner_id")
@@ -54,7 +54,7 @@ class ExecutionLog(Base):
     completed_at = Column(DateTime, name="completed_at")
     duration_ms = Column(Integer, name="duration_ms")
     token_count = Column(Integer, name="token_count")
-    log_metadata = Column(JSON, name="metadata", default={})
+    log_metadata = Column(JSON, name="metadata", default=dict)   # callable — not shared {}
 
 
 class Artifact(Base):
@@ -66,8 +66,8 @@ class Artifact(Base):
     file_path = Column(String, nullable=False, name="file_path")
     version = Column(Integer, default=1)
     content_hash = Column(String, name="content_hash")
-    dependencies = Column(ARRAY(String), default=[])
-    exports = Column(ARRAY(String), default=[])
+    dependencies = Column(ARRAY(String), default=list)   # callable — not shared []
+    exports = Column(ARRAY(String), default=list)         # callable — not shared []
     language = Column(String)
     size_bytes = Column(Integer, name="size_bytes")
     is_active = Column(Boolean, default=True, name="is_active")
@@ -101,7 +101,7 @@ class KnownError(Base):
     success_rate = Column(Float, default=1.0, name="success_rate")
     last_seen = Column(DateTime, default=datetime.utcnow, name="last_seen")
     first_seen = Column(DateTime, default=datetime.utcnow, name="first_seen")
-    tags = Column(ARRAY(String), default=[])
+    tags = Column(ARRAY(String), default=list)   # callable — not shared []
 
 
 class SkillPerformance(Base):
@@ -134,7 +134,7 @@ class ArchitecturePattern(Base):
     success_rate = Column(Float, default=0, name="success_rate")
     avg_build_time_min = Column(Integer, name="avg_build_time_min")
     project_ids = Column(ARRAY(String), name="project_ids")
-    tags = Column(ARRAY(String), default=[])
+    tags = Column(ARRAY(String), default=list)   # callable — not shared []
     last_used = Column(DateTime, name="last_used")
     created_at = Column(DateTime, default=datetime.utcnow, name="created_at")
 

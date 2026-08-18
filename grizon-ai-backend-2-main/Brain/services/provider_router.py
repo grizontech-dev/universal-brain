@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Optional
@@ -77,11 +76,17 @@ class ProviderRouter:
             )
 
         def _make_openrouter(model: str):
+            extra_headers = {
+                "HTTP-Referer": "https://grizon.ai",
+                "X-Title": "Grizon AI",
+            }
             return ChatOpenAI(
                 model=model,
                 api_key=openrouter_key,
                 base_url=openrouter_base,
                 temperature=temperature,
+                streaming=True,
+                default_headers=extra_headers,
                 max_retries=1,
                 timeout=120,
                 request_timeout=120,
@@ -108,8 +113,8 @@ class ProviderRouter:
                 return _make_deepseek(model_id)
             return get_fallback_model()
 
-        # Qwen Models -> OpenRouter
-        elif "qwen" in model_id.lower() or "openrouter" in model_id.lower():
+        # Qwen / OpenRouter / Google OpenRouter Models -> OpenRouter
+        elif "qwen" in model_id.lower() or "openrouter" in model_id.lower() or "google/" in model_id.lower():
             if openrouter_key:
                 print(f"{LOG} → OpenRouter '{model_id}' (base={openrouter_base})", flush=True)
                 return _make_openrouter(model_id)
@@ -140,8 +145,21 @@ class ProviderRouter:
                 )
             return get_fallback_model()
 
-        # Llama Models — prefer Groq (fastest), else DeepInfra, else fallback
+        # Llama Models — prefer OpenRouter (most reliable, handles load balancing),
+        # else Groq (fastest but strict rate limits), else DeepInfra, else fallback
         elif "llama" in model_id.lower():
+            # Map short IDs to full OpenRouter model strings
+            _openrouter_llama_aliases = {
+                "llama-4-scout-17b-16e-instruct": "meta-llama/llama-4-scout",
+                "llama-4-scout": "meta-llama/llama-4-scout",
+                "llama-4-maverick": "meta-llama/llama-4-maverick",
+                "llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct",
+                "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
+            }
+            if openrouter_key:
+                or_model = _openrouter_llama_aliases.get(model_id.lower(), f"meta-llama/{model_id}")
+                print(f"{LOG} → OpenRouter '{or_model}' (base={openrouter_base})", flush=True)
+                return _make_openrouter(or_model)
             if groq_key:
                 print(f"{LOG} → Groq '{model_id}' (base={groq_base})", flush=True)
                 return ChatOpenAI(
@@ -158,7 +176,7 @@ class ProviderRouter:
                 target = _deepinfra_aliases.get(model_id, model_id)
                 print(f"{LOG} → DeepInfra '{target}' (base={deepinfra_base})", flush=True)
                 return _make_deepinfra(target)
-            print(f"{LOG} → Llama '{model_id}' — no Groq/DeepInfra key → fallback", flush=True)
+            print(f"{LOG} → Llama '{model_id}' — no OpenRouter/Groq/DeepInfra key → fallback", flush=True)
             return get_fallback_model()
 
         # Claude Models or Unknown IDs - Fallback

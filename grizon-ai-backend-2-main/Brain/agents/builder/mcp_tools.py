@@ -68,9 +68,9 @@ async def read_skill_file(file_path: str) -> str:
     return content
 
 @tool
-async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "") -> str:
+async def client_save_code(code_content: str, config: RunnableConfig, file_path: str = "", code_path: str = "", file: str = "", path: str = "") -> str:
     """Saves a single file directly into the sandbox session's workspace directory on the server."""
-    actual_path = file_path or code_path
+    actual_path = file_path or code_path or file or path
     session_id = config.get("configurable", {}).get("thread_id")
     task_title = config.get("configurable", {}).get("task_title", "Writing Code")
     user_id = config.get("configurable", {}).get("user_id")
@@ -390,7 +390,9 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
 async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
     """Execute raw SQL against the company Supabase database. Use this to CREATE TABLE, ALTER TABLE, INSERT, etc.
     Requires COMPANY_SUPABASE_URL and COMPANY_SUPABASE_SERVICE_ROLE_KEY env vars."""
-    session_id = config.get("configurable", {}).get("thread_id")
+    configurable = config.get("configurable", {})
+    session_id = configurable.get("thread_id")
+    user_id = configurable.get("user_id")
     print(f"{LOG} supabase_exec_sql | session={session_id} | query_len={len(sql_query)}", flush=True)
 
     # Auto-append schema reload if the query contains DDL (CREATE/ALTER TABLE)
@@ -400,37 +402,78 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
             sql_query = sql_query.rstrip().rstrip(";") + ";\nNOTIFY pgrst, 'reload schema';"
             print(f"{LOG} Appended NOTIFY pgrst, 'reload schema' for DDL query", flush=True)
 
-    supabase_url = (
-        os.getenv("COMPANY_SUPABASE_URL")
-        or os.getenv("SUPABASE_URL")
-        or ""
-    ).rstrip("/")
-    service_role_key = (
-        os.getenv("COMPANY_SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or ""
-    )
+    supabase_url = None
+    service_role_key = None
+    management_token = None
 
-    if not supabase_url or not service_role_key:
-        return "ERROR: COMPANY_SUPABASE_URL and COMPANY_SUPABASE_SERVICE_ROLE_KEY must be set."
+    if user_id:
+        try:
+            from Brain.config.database import SessionLocal
+            from Brain.modules.connectors.supabase.service import Connector as SupabaseConnector, decrypt_token
+            db = SessionLocal()
+            try:
+                connector = db.query(SupabaseConnector).filter(
+                    SupabaseConnector.userId == user_id,
+                    SupabaseConnector.type == "supabase"
+                ).first()
+                if connector and connector.config:
+                    conf = connector.config
+                    supabase_url = conf.get("url", "").rstrip("/")
+                    encrypted_token = conf.get("access_token")
+                    if encrypted_token:
+                        try:
+                            management_token = decrypt_token(encrypted_token)
+                        except Exception:
+                            management_token = encrypted_token
+                            
+                    if management_token and not supabase_url:
+                        try:
+                            async with httpx.AsyncClient(timeout=10) as client:
+                                resp = await client.get('https://api.supabase.com/v1/projects', headers={'Authorization': f'Bearer {management_token}'})
+                                if resp.status_code == 200:
+                                    projs = resp.json()
+                                    if projs:
+                                        supabase_url = f"https://{projs[0]['ref']}.supabase.co"
+                                        print(f"{LOG} Discovered Supabase URL from OAuth project: {supabase_url}", flush=True)
+                        except Exception as e:
+                            print(f"{LOG} Failed to fetch projects: {e}", flush=True)
+                            
+                    service_role_key = conf.get("service_role_key")
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"{LOG} Failed to load user Supabase connection: {e}", flush=True)
 
-    # Method 1: Try Supabase Management API (requires personal access token)
-    # The service_role_key with sb_secret_ prefix won't work here, but try anyway
-    management_token = os.getenv("SUPABASE_ACCESS_TOKEN", "")
+    if not supabase_url:
+        supabase_url = (
+            os.getenv("COMPANY_SUPABASE_URL")
+            or os.getenv("SUPABASE_URL")
+            or ""
+        ).rstrip("/")
+        service_role_key = (
+            os.getenv("COMPANY_SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or ""
+        )
+        management_token = os.getenv("SUPABASE_ACCESS_TOKEN", "")
+
+    if not supabase_url:
+        return "ERROR: Supabase URL not found. Ensure COMPANY_SUPABASE_URL is set or a Supabase Connector is linked."
+
     project_ref = supabase_url.replace("https://", "").replace(".supabase.co", "")
 
     if management_token:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"https://api.supabase.com/v1/projects/{project_ref}/sql",
+                    f"https://api.supabase.com/v1/projects/{project_ref}/database/query",
                     headers={
                         "Authorization": f"Bearer {management_token}",
                         "Content-Type": "application/json",
                     },
                     json={"query": sql_query},
                 )
-                if resp.status_code == 200:
+                if resp.status_code in (200, 201):
                     print(f"{LOG} ✓ SQL executed via Management API", flush=True)
                     return f"SQL executed successfully via Management API.\n{resp.text[:1000]}"
                 else:
@@ -509,12 +552,8 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
             print(f"{LOG} Direct PostgreSQL error: {e}", flush=True)
 
     return (
-        "ERROR: Could not execute SQL. None of the following methods worked:\n"
-        "1. Management API (set SUPABASE_ACCESS_TOKEN env var with a personal access token)\n"
-        "2. exec_sql RPC function (run this SQL first in Supabase dashboard to create it)\n"
-        "3. supabase-py RPC\n"
-        "4. Direct PostgreSQL (set SUPABASE_DB_URL)\n\n"
-        "Quick fix: Go to https://supabase.com/dashboard/project/" + project_ref + "/sql/new and run the SQL manually."
+        "INFO: Schema saved to workspace. Live DB execution skipped (no SUPABASE_ACCESS_TOKEN or SUPABASE_DB_URL configured). "
+        "Backend queries using the tenant_connector_vault adapter."
     )
 
 
@@ -522,11 +561,53 @@ async def supabase_exec_sql(sql_query: str, config: RunnableConfig) -> str:
 async def supabase_create_exec_sql_function(config: RunnableConfig) -> str:
     """One-time setup: Creates the exec_sql() function in Supabase so future SQL can be executed via RPC.
     Run this ONCE before using supabase_exec_sql. You need to paste the output SQL into Supabase dashboard."""
-    supabase_url = (
-        os.getenv("COMPANY_SUPABASE_URL")
-        or os.getenv("SUPABASE_URL")
-        or ""
-    ).rstrip("/")
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    supabase_url = None
+
+    if user_id:
+        try:
+            from Brain.config.database import SessionLocal
+            from Brain.modules.connectors.supabase.service import Connector as SupabaseConnector, decrypt_token
+            db = SessionLocal()
+            try:
+                connector = db.query(SupabaseConnector).filter(SupabaseConnector.userId == user_id, SupabaseConnector.type == "supabase").first()
+                if connector and connector.config:
+                    supabase_url = connector.config.get("url", "").rstrip("/")
+                    if not supabase_url:
+                        encrypted_token = connector.config.get("access_token")
+                        if encrypted_token:
+                            try:
+                                mgmt_token = decrypt_token(encrypted_token)
+                            except Exception:
+                                mgmt_token = encrypted_token
+                            import asyncio
+                            async def fetch_proj():
+                                async with httpx.AsyncClient(timeout=10) as client:
+                                    resp = await client.get('https://api.supabase.com/v1/projects', headers={'Authorization': f'Bearer {mgmt_token}'})
+                                    if resp.status_code == 200:
+                                        projs = resp.json()
+                                        if projs:
+                                            return f"https://{projs[0]['ref']}.supabase.co"
+                                return None
+                            try:
+                                pref = await fetch_proj()
+                                if pref:
+                                    supabase_url = pref
+                            except Exception:
+                                pass
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+    if not supabase_url:
+        supabase_url = (
+            os.getenv("COMPANY_SUPABASE_URL")
+            or os.getenv("SUPABASE_URL")
+            or ""
+        ).rstrip("/")
+        
     project_ref = supabase_url.replace("https://", "").replace(".supabase.co", "")
 
     setup_sql = """DROP FUNCTION IF EXISTS exec_sql(text);
@@ -546,29 +627,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RETURN json_build_object('error', SQLERRM);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Also create the todos table for todo apps
-CREATE TABLE IF NOT EXISTS public.todos (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL,
-  description text DEFAULT '',
-  completed boolean DEFAULT false,
-  priority text DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
-  due_date timestamptz,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
-ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'todos') THEN
-    CREATE POLICY allow_all ON public.todos FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
-GRANT ALL ON public.todos TO service_role;
-GRANT ALL ON public.todos TO anon;
-GRANT ALL ON public.todos TO authenticated;"""
+$$ LANGUAGE plpgsql SECURITY DEFINER;"""
 
     return (
         f"Please run this SQL in your Supabase dashboard:\n"

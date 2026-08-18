@@ -84,7 +84,7 @@ class BaseAgent(ABC):
         return str(content)
 
     def _repair_json(self, s: str) -> str:
-        """Sanitize malformed JSON: handle unescaped quotes/backslashes/newlines in strings."""
+        """Sanitize malformed JSON: handle unescaped quotes/backslashes/newlines/tabs in strings."""
         result = []
         in_string = False
         escaped = False
@@ -93,7 +93,7 @@ class BaseAgent(ABC):
             ch = s[i]
             if in_string:
                 if escaped:
-                    if ch == '"' or ch == '\\' or ch == '/' or ch == 'b' or ch == 'f' or ch == 'n' or ch == 'r' or ch == 't' or ch == 'u':
+                    if ch in '"\\/' or ch in 'bfnrtu':
                         result.append('\\' + ch)
                     elif ch in '\n\r\t':
                         result.append('\\n' if ch == '\n' else '\\r' if ch == '\r' else '\\t')
@@ -102,9 +102,8 @@ class BaseAgent(ABC):
                     escaped = False
                 elif ch == '\\':
                     escaped = True
-                    # Don't append yet — wait for next char
                 elif ch == '"':
-                    # Look ahead: valid string terminator if followed by , : } ] or EOF
+                    # Look ahead: valid string terminator if followed by , : } ] or whitespace then those
                     j = i + 1
                     while j < len(s) and s[j] in ' \t\n\r':
                         j += 1
@@ -113,8 +112,14 @@ class BaseAgent(ABC):
                         result.append('"')
                     else:
                         result.append('\\"')
-                elif ch in '\n\r\t':
-                    result.append('\\n' if ch == '\n' else '\\r' if ch == '\r' else '\\t')
+                elif ch in '\n\r':
+                    # Raw newlines inside JSON strings break parsing — escape them
+                    result.append('\\n')
+                elif ch == '\t':
+                    result.append('\\t')
+                elif ord(ch) < 32:
+                    # Strip other control characters (DEL, BEL, etc.)
+                    pass
                 else:
                     result.append(ch)
             else:
@@ -130,6 +135,22 @@ class BaseAgent(ABC):
         if not content or not isinstance(content, str):
             print(f"{LOG} [{self.name}] ✖ JSON parse: empty or non-string response", flush=True)
             return {"error": "Empty or non-string response from agent"}
+
+        # Strategy 0: Strip leading conversational preamble and trailing text outside JSON
+        # This handles: "Sure! Here is the schema: { ... } Hope this helps!"
+        stripped_content = content.strip()
+        first_brace = stripped_content.find('{')
+        last_brace = stripped_content.rfind('}')
+        if first_brace > 0 and last_brace > first_brace:
+            stripped_content = stripped_content[first_brace:last_brace + 1]
+            try:
+                return json.loads(stripped_content, strict=False)
+            except Exception:
+                try:
+                    repaired = self._repair_json(stripped_content)
+                    return json.loads(repaired, strict=False)
+                except Exception:
+                    pass  # Fall through to other strategies
 
         # Strategy 1: Look for JSON within markdown code blocks
         blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', content)

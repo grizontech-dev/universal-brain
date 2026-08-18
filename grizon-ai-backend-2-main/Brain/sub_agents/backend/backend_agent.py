@@ -13,16 +13,16 @@ from Brain.shared.llm_retry import ainvoke_with_retry
 
 
 class BackendAgent(BaseAgent):
-    _skill_cache = {}
-
     def __init__(self):
         super().__init__(
             name="Backend Agent",
             description="Specialized in Node.js and Express.js.",
-            model_id="qwen/qwen3-coder"
+            model_id="google/gemini-3.7-flash"
         )
+        # Instance-level cache — avoids cross-build skill contamination between concurrent users
+        self._skill_cache: dict = {}
         self.skill_resolver = SkillResolver()
-        self.llm = ProviderRouter.get_model("qwen/qwen3-coder", temperature=0.1)
+        self.llm = ProviderRouter.get_model("google/gemini-3.7-flash", temperature=0.1)
         self.fallback_model = ProviderRouter.get_model("deepseek-v4-flash", temperature=0.1)
         self.bound_llm = self.llm.bind_tools([client_save_code])
         self.fallback_llm = self.fallback_model.bind_tools([client_save_code])
@@ -78,20 +78,30 @@ backend/
    module.exports = router;
    ```
 4. Controllers in `backend/controllers/<feature>.js`: async functions with try/catch. Return `{{ success: true, data }}` or `{{ success: false, error }}`.
-5. server.js MUST be saved LAST. It imports routes and mounts them:
+5. server.js MUST be saved LAST in every task. It imports routes and mounts them:
    ```js
    require('dotenv').config();
    const express = require('express');
+   const cors = require('cors');
    const app = express();
+   app.use(cors());
    app.use(express.json());
    // health endpoint (MANDATORY)
    app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
    app.get('/api/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
+   app.get('/favicon.ico', (_req, res) => res.status(204).end());
    // routes
    const featureRoutes = require('./routes/feature');
    app.use('/api/feature', featureRoutes);
    app.listen(process.env.PORT || 3001, '0.0.0.0');
    ```
+   ⚠️ CRITICAL — SERVER.JS MERGE RULE (prevents 404s): Each backend task generates its own route file AND updates server.js. Since multiple tasks run sequentially, each task MUST include ALL previously mounted routes in its server.js output PLUS its new route. DO NOT write a minimal server.js with only the current task's route — that will OVERWRITE and ERASE routes from previous tasks, causing 404 errors on all other endpoints.
+   - When generating server.js, you will be given the current file contents. READ them carefully and PRESERVE every existing `require('./routes/X')` and `app.use('/api/X', ...)` line.
+   - Then ADD your new route at the end of the existing route list.
+   - The final server.js MUST contain ALL routes from ALL tasks combined.
+   - If you write `require('./routes/contact')` in server.js → you MUST also save `backend/routes/contact.js`.
+   - NEVER reference a route file you did not generate OR that didn't already exist.
+
 6. Frontend contract: paths must match `/api/...` exactly. For every backend feature, choose ONE canonical route family and reuse it everywhere:
    - Feature route format: `/api/<resource>` using lowercase kebab-case plural nouns when natural, e.g. `/api/projects`, `/api/invoices`, `/api/contact-messages`.
    - Backend MUST mount the route in `server.js` and frontend MUST call the exact same path through `frontend/src/lib/api.js`.
@@ -101,7 +111,7 @@ backend/
    - `POST /api/auth/login`
    - optional `GET /api/auth/me`
    Never mount auth at only `/auth`, `/api/users/login`, or `/api/user/register`; those cause 404s.
-7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`.
+7. ALL packages MUST be in backend/package.json. If you add a package, include it in the returned `commands`: `["cd backend && npm install"]`. ALWAYS include `cors` in your dependencies.
 8. NEVER import browser Supabase client. Use server-side only.
    - If user has connected Supabase connector: direct table queries with `.from()`.
    - Otherwise: Python Backend Proxy with shared `tenant_connector_vault` table (JSONB pattern).
@@ -109,18 +119,45 @@ backend/
 9. Shared Supabase client (`backend/supabase/client.js`) — create this FIRST if missing:
    ```js
    require('dotenv').config();
-   const ws = require('ws');
    const supabaseLib = require('@supabase/supabase-js');
    const createClient = supabaseLib.createClient || supabaseLib;
    const SUPABASE_URL = process.env.SUPABASE_URL;
    const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-   module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {{
-     global: {{ fetch }},
-     realtime: {{ transport: ws }}
-   }});
+   let supabase = null;
+   try {{
+     if (SUPABASE_URL && SUPABASE_KEY) {{
+       supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+     }}
+   }} catch (e) {{
+     console.warn('[Supabase] Client init failed:', e.message);
+   }}
+   module.exports = supabase;
    ```
    From controllers use `require('../supabase/client')`. From files inside `backend/routes/` use `require('../supabase/client')`.
-10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. If DB table is not ready or returns error, return `{{ success: true, data: [] }}` instead of HTTP 500!
+   CRITICAL: ALWAYS null-check the supabase client before using it in controllers:
+   ```js
+   const supabase = require('../supabase/client');
+   // In controller:
+   if (!supabase) return res.json({{ success: true, data: [], message: 'DB not configured' }});
+   ```
+10. RESILIENT CONTROLLERS: ALWAYS wrap DB queries in try/catch. NEVER return HTTP 500.
+    - BE PERMISSIVE: Do NOT return 400 Bad Request for missing fields in POST/PUT payloads unless it is Auth (email/password). For normal CRUD, accept `req.body` as-is and store it. Strict backend validation causes 400 errors when frontend payloads don't perfectly match.
+    - If supabase client is null (env vars not set): return `{{ success: true, data: [], message: 'DB not configured' }}`
+    - If DB query fails: return `{{ success: true, data: [], error: err.message }}`
+    - NEVER let a controller throw an uncaught error — it WILL result in a 500.
+    Example controller pattern:
+    ```js
+    exports.list = async (req, res) => {{
+      try {{
+        if (!supabase) return res.json({{ success: true, data: [] }});
+        const {{ data, error }} = await supabase.from('table').select('*');
+        if (error) return res.json({{ success: true, data: [], error: error.message }});
+        res.json({{ success: true, data: data || [] }});
+      }} catch (err) {{
+        res.json({{ success: true, data: [], error: err.message }});
+      }}
+    }};
+    ```
 11. MANDATORY HEALTH ENDPOINT — Validation Gate will FAIL if missing:
     ```js
     app.get('/health', (req, res) => res.status(200).json({{ status: 'ok' }}));
@@ -129,7 +166,15 @@ backend/
     Place it BEFORE all other route mounts, right after middleware setup.
 12. Schema files go in `backend/supabase/*.sql`. No Supabase CLI commands.
 13. AUTH IMPLEMENTATION (ONLY WHEN REQUESTED): Store app auth records in `tenant_connector_vault` using `schema_name = 'auth_users'` and JSONB fields such as email, name, passwordHash, role, createdAt. Never create a physical `users` table. Use bcryptjs for password hashing and jsonwebtoken for tokens; include both packages in `backend/package.json` when auth is generated.
-14. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
+14. ADMIN AUTH (ALWAYS REQUIRED when Admin panel is in scope): ALWAYS create a `POST /api/auth/admin-login` endpoint in `backend/routes/auth.js`. This route must:
+    - Accept `{{ email, password }}` from the request body.
+    - Compare against the hardcoded admin credentials: Email `admin@grizonai.com`, Password `admin123` (plain text comparison is fine for MVP, no hashing needed for admin credentials).
+    - On success: return `{{ success: true, token: 'admin-token-grizon', role: 'admin' }}`.
+    - On failure: return `{{ success: false, error: 'Invalid admin credentials' }}` with HTTP 401.
+    - Mount this route in `server.js` as `app.use('/api/auth', authRoutes)`.
+    - Frontend admin login page MUST call `POST /api/auth/admin-login` and redirect on success.
+15. UNIVERSAL CRUD CONTRACT: For any resource CRUD feature, expose list/create/update/delete under the chosen canonical `/api/<resource>` route family. Use that same route family in frontend API helpers and never call an unmounted path.
+
 
 ═══ QUALITY (NON-NEGOTIABLE) ═══
 - Generate COMPLETE files. No placeholders. No `// TODO`. No `/* implement */`.
@@ -176,21 +221,27 @@ Respond ONLY in JSON.
         skills_content = "{}"
         if not is_simple:
             cache_key = self._get_skill_cache_key(task, task_description)
-            if cache_key in BackendAgent._skill_cache:
-                skills_content = BackendAgent._skill_cache[cache_key]
+            if cache_key in self._skill_cache:
+                skills_content = self._skill_cache[cache_key]
                 print(f"[BACKEND] Using cached skills: {cache_key}", flush=True)
             else:
                 try:
                     skills_content = self.skill_resolver.resolve_skills_for_task(task_description)
                     if skills_content and skills_content.strip() not in ("{}", ""):
                         lines = skills_content.splitlines()
+                        # Strip lines referencing skillss/ paths AND lines containing
+                        # ORM/ODM patterns that conflict with Rule 0 (Supabase JSONB pattern)
+                        _banned_patterns = (
+                            "mongoose", "prisma", "sequelize", "typeorm", "objection",
+                            "knex", "mikro-orm", "waterline", "bookshelf",
+                            "skillss/", "- skillss/",
+                        )
                         filtered_lines = [
                             line for line in lines
-                            if not line.strip().lower().startswith("- skillss/")
-                            and not line.strip().lower().startswith("skillss/")
+                            if not any(p in line.lower() for p in _banned_patterns)
                         ]
                         skills_content = "\n".join(filtered_lines)
-                    BackendAgent._skill_cache[cache_key] = skills_content
+                    self._skill_cache[cache_key] = skills_content
                     print(f"[BACKEND] Cached skills for: {cache_key}", flush=True)
                 except Exception:
                     skills_content = "{}"
@@ -210,15 +261,14 @@ Respond ONLY in JSON.
                     try:
                         with open(server_js_path, "r", encoding="utf-8") as f:
                             content = f.read()
-                        imports = [m.group(0) for m in re.finditer(r"const\s+\w+\s*=\s*require\(['\"].*?['\"]\)", content)]
-                        mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"].*?\)", content)]
-                        parts = []
-                        if imports:
-                            parts.append(f"Imports ({len(imports)}): " + "; ".join(imports[:6]))
-                        if mounts:
-                            parts.append(f"Mounts ({len(mounts)}): " + "; ".join(mounts[:8]))
-                        parts.append(f"Lines: {len(content.splitlines())}")
-                        server_js_context = f"\n\nCURRENT server.js: {' | '.join(parts)}\nUpdate server.js ONLY if this task changes routing. Otherwise leave it unchanged."
+                        # Send FULL server.js content so agent can MERGE routes, not overwrite
+                        content_preview = content[:3000] + ("\n... (truncated)" if len(content) > 3000 else "")
+                        server_js_context = (
+                            f"\n\n═══ EXISTING server.js (READ AND MERGE — DO NOT OVERWRITE) ═══\n"
+                            f"{content_preview}\n"
+                            f"═══════════════════════════════════════════════════════════════\n"
+                            f"INSTRUCTION: Your output server.js MUST include ALL existing require() and app.use() lines ABOVE, PLUS your new route. Never remove an existing route mount."
+                        )
                     except Exception:
                         pass
 
@@ -232,19 +282,55 @@ Respond ONLY in JSON.
         structured_hint = format_structured_spec(task)
         spec_context = f"\nSpec: {structured_hint[:800]}" if structured_hint else ""
 
-        # Build compact user message
+        # Inject db_schema_names from DatabaseAgent if available — ensures exact naming match
+        schema_names_context = ""
+        db_schema_names = state.get("db_schema_names", [])
+        if db_schema_names:
+            schema_names_context = (
+                f"\n\nDB SCHEMA CONTRACT (use EXACTLY these schema_name values — no renaming):\n"
+                + "\n".join(f"  schema_name = '{s}'" for s in db_schema_names)
+                + "\nThe DatabaseAgent already created tenant_connector_vault rows for these names."
+                " Your controllers MUST query with these exact values."
+            )
+
+        # ── Read build contract ──
+        proj_name = ""
+        try:
+            if workspace_id and not workspace_id.startswith("error:"):
+                from Brain.shared.build_contract import read_contract
+                from Brain.services.workspace_manager import workspace_manager as _wm_be
+                _ws_be = _wm_be.resolve_workspace_path(workspace_id, user_id=user_id)
+                if _ws_be:
+                    _contract = read_contract(_ws_be)
+                    proj_name = _contract.get("project_name", "")
+        except Exception:
+            pass
+
+        # Build user message — compact
+        project_context = ""
+        orig_prompt = state.get("content", "")
+        if proj_name or orig_prompt:
+            project_context = "═══ PROJECT CONTEXT ═══\n"
+            if proj_name:
+                project_context += f"Project Name: {proj_name}\n"
+            if orig_prompt:
+                project_context += f"Original User Goal: {orig_prompt}\n"
+            project_context += "═══════════════════════\n\n"
+
         user_content = (
+            f"{project_context}"
             f"Task: {task.get('title')}\n"
             f"Description: {task.get('description', '')}\n"
             f"Acceptance: {task.get('acceptance_criteria', '')}"
             f"{spec_context}"
             f"{executed_context}"
             f"{server_js_context}"
+            f"{schema_names_context}"
         )
 
         msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
 
-        print(f"[BACKEND] model=qwen/qwen3-coder | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
+        print(f"[BACKEND] model={self.model_id} | temp=0.1 | task={task.get('title', 'N/A')}", flush=True)
 
         active_llm = self.bound_llm
         fallback_llm = self.fallback_llm
@@ -287,6 +373,12 @@ Respond ONLY in JSON.
             msgs.append(response)
 
             if not response.tool_calls:
+                # Early-exit guard: same pattern as FrontendAgent.
+                # If files were already saved, treat no-tool-call as clean completion.
+                if files_saved:
+                    print(f"[BACKEND] ✓ Clean completion — {len(files_saved)} files saved, LLM signalled done", flush=True)
+                    break
+
                 last_content = response.content
                 if isinstance(last_content, list):
                     last_content = str(last_content)
@@ -314,6 +406,58 @@ Respond ONLY in JSON.
             save_calls = [tc for tc in response.tool_calls if tc["name"] == "client_save_code"]
 
             if save_calls:
+                for tc in save_calls:
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
+                    code_content = tc["args"].get("code_content", "")
+                    
+                    # ── PROGRAMMATIC SERVER.JS MERGE (Bulletproof Fix for 404s) ──
+                    if file_path.endswith("server.js") and code_content and 'ws_root' in locals() and ws_root:
+                        server_js_path = os.path.join(ws_root, "backend", "server.js")
+                        if os.path.exists(server_js_path):
+                            try:
+                                with open(server_js_path, "r", encoding="utf-8") as f:
+                                    old_content = f.read()
+                                
+                                # Extract existing routes
+                                old_imports = [m.group(0) for m in re.finditer(r"const\s+\w+\s*=\s*require\(['\"].*?['\"]\);?", old_content)]
+                                old_mounts = [m.group(0) for m in re.finditer(r"app\.use\(['\"].*?['\"],\s*.*?\);?", old_content)]
+                                
+                                # Ignore generic middleware mounts like cors or express.json
+                                old_imports = [imp for imp in old_imports if './routes/' in imp]
+                                old_mounts = [mnt for mnt in old_mounts if '/api/' in mnt]
+                                
+                                # Find what the LLM dropped
+                                missing_imports = [imp for imp in old_imports if imp not in code_content]
+                                missing_mounts = [mnt for mnt in old_mounts if mnt not in code_content]
+                                
+                                if missing_imports or missing_mounts:
+                                    lines = code_content.splitlines()
+                                    out_lines = []
+                                    injected_imports = False
+                                    injected_mounts = False
+                                    
+                                    for line in lines:
+                                        if not injected_imports and "require('./routes/" in line:
+                                            out_lines.extend(missing_imports)
+                                            injected_imports = True
+                                        
+                                        if not injected_mounts and "app.use('/api/" in line:
+                                            out_lines.extend(missing_mounts)
+                                            injected_mounts = True
+                                            
+                                        if "app.listen" in line and not injected_mounts:
+                                            if not injected_imports:
+                                                out_lines.extend(missing_imports)
+                                            out_lines.extend(missing_mounts)
+                                            injected_mounts = True
+                                            
+                                        out_lines.append(line)
+                                    
+                                    tc["args"]["code_content"] = "\n".join(out_lines)
+                                    print(f"[BACKEND] 🛡️ Programmatically merged {len(missing_imports)} missing routes into server.js to prevent 404s", flush=True)
+                            except Exception as e:
+                                print(f"[BACKEND] ⚠️ Failed programmatic merge: {e}")
+
                 save_configs = [{"configurable": {
                     "thread_id": state.get("current_job_id"),
                     "task_title": task.get("title", ""),
@@ -326,13 +470,14 @@ Respond ONLY in JSON.
                 ], return_exceptions=True)
 
                 for tc, result in zip(save_calls, save_results):
-                    file_path = tc["args"].get("file_path", "")
+                    file_path = tc["args"].get("file_path") or tc["args"].get("code_path") or tc["args"].get("file") or tc["args"].get("path") or ""
                     code_content = tc["args"].get("code_content", "")
                     if isinstance(result, Exception):
                         print(f"[BACKEND] ✖ Failed: {file_path}: {result}", flush=True)
                         msgs.append(ToolMessage(content=f"Error: {result}", tool_call_id=tc["id"]))
                     else:
-                        files_saved.add(file_path)
+                        if file_path:
+                            files_saved.add(file_path)
                         print(f"[BACKEND] ✓ Saved: {file_path} ({len(code_content)} chars)", flush=True)
                         msgs.append(ToolMessage(
                             content=f"Saved: {file_path} ({len(code_content)} chars)",
@@ -361,6 +506,98 @@ Respond ONLY in JSON.
                     if isinstance(parsed, dict) and "files" in parsed:
                         return parsed
 
-        result = {"files": [{"path": f, "content": ""} for f in sorted(files_saved)], "summary": f"Saved {len(files_saved)} files via tool calls"}
+        result = {
+            "status": "completed" if files_saved else "empty",
+            "files": [{"path": f, "content": ""} for f in sorted(files_saved)],
+            "summary": f"Saved {len(files_saved)} files via tool calls"
+        }
         print(f"[BACKEND] Result: files={len(result['files'])} paths={[f['path'] for f in result['files']]}", flush=True)
+
+        # ── API CONTRACT: scan server.js for mounted routes and store in state ──
+        # FrontendAgent reads state["api_contract"] to know exact routes + helpers to call
+        try:
+            workspace_id = state.get("current_job_id")
+            user_id = state.get("user_id")
+            if workspace_id:
+                from Brain.services.workspace_manager import workspace_manager as _wm
+                ws_root = _wm.resolve_workspace_path(workspace_id, user_id=user_id)
+                server_js = os.path.join(ws_root, "backend", "server.js") if ws_root else None
+                if server_js and os.path.isfile(server_js):
+                    with open(server_js, "r", encoding="utf-8") as _f:
+                        srv = _f.read()
+                    # Extract: app.use('/api/xxx', ...) → /api/xxx
+                    mounted = re.findall(r"app\.use\(['\"](/api/[^'\"]+)['\"]", srv)
+                    mounted = sorted(set(mounted))
+
+                    # Get planned routes from state so we only keep routes the planner intended
+                    _project_plan = state.get("project_plan", {}) or {}
+                    if isinstance(_project_plan, str):
+                        try:
+                            import json as _pjson
+                            _project_plan = _pjson.loads(_project_plan)
+                        except Exception:
+                            _project_plan = {}
+                    _planned_paths = set()
+                    for _r in (_project_plan.get("architecture", {}) or {}).get("api_routes", []):
+                        if isinstance(_r, dict) and _r.get("path"):
+                            # Normalise: /api/todos/:id → /api/todos
+                            _base = _r["path"].split("/:")[0].rstrip("/")
+                            _planned_paths.add(_base)
+
+                    # Build helper-name suggestions: /api/todos → getTodos, createTodo, etc.
+                    contract: dict = {}
+                    for route in mounted:
+                        # Skip routes whose last segment is a param (e.g. /api/todos/:id mounted directly)
+                        last_segment = route.strip("/").split("/")[-1]
+                        if last_segment.startswith(":"):
+                            continue
+                        # Skip routes not in the planner's architecture (hallucinated routes)
+                        if _planned_paths and route not in _planned_paths:
+                            print(f"[BACKEND] api_contract: skipping unplanned route '{route}' (not in architecture)", flush=True)
+                            continue
+                        # Derive clean resource name — strip hyphens/underscores → CamelCase
+                        resource = last_segment.replace("-", "_")
+                        parts = resource.split("_")
+                        camel = "".join(p.capitalize() for p in parts if p)
+                        if not camel:
+                            continue
+                        singular = camel[:-1] if camel.endswith("s") and len(camel) > 2 else camel
+                        contract[route] = {
+                            "get":    f"get{camel}",
+                            "post":   f"create{singular}",
+                            "put":    f"update{singular}",
+                            "delete": f"delete{singular}",
+                        }
+                    if contract:
+                        state["api_contract"] = contract
+                        print(f"[BACKEND] api_contract stored: {list(contract.keys())}", flush=True)
+                        # Persist to build_contract.json so FrontendAgent gets exact routes
+                        try:
+                            from Brain.shared.build_contract import record_api_routes
+                            from Brain.services.workspace_manager import workspace_manager as _wm_be
+                            _ws_be = _wm_be.resolve_workspace_path(workspace_id, user_id=user_id)
+                            if _ws_be:
+                                _mounted_routes = []
+                                _helpers: dict = {}
+                                for _route_path, _helpers_dict in contract.items():
+                                    for _method, _handler in _helpers_dict.items():
+                                        _mounted_routes.append({
+                                            "path": _route_path,
+                                            "method": _method.upper(),
+                                            "handler": _handler,
+                                        })
+                                        _helpers[_handler] = f"{_method.upper()} {_route_path}"
+                                record_api_routes(_ws_be, _mounted_routes, _helpers)
+                                print(
+                                    f"[BACKEND] [CONTRACT] ✅ Routes persisted to contract | "
+                                    f"routes={len(_mounted_routes)} helpers={list(_helpers.keys())}",
+                                    flush=True,
+                                )
+                            else:
+                                print(f"[BACKEND] [CONTRACT] ⚠ workspace not resolved — routes NOT persisted", flush=True)
+                        except Exception as _bc_err:
+                            print(f"[BACKEND] [CONTRACT] ⚠ update failed (non-fatal): {_bc_err}", flush=True)
+        except Exception as _ce:
+            print(f"[BACKEND] api_contract extraction failed (non-fatal): {_ce}", flush=True)
+
         return result

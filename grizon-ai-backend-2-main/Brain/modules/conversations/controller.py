@@ -11,9 +11,12 @@ import psycopg2
 brain_conversations_router = APIRouter(prefix="/brain/conversations", tags=["conversations"])
 
 # Fallback connection to grizon_db (Node.js backend database)
-GRIZON_DB_URL = os.environ.get("GRIZON_DB_URL", "postgresql://grizon_user:grizon_password_123@postgres:5432/grizon_db")
+# GRIZON_DB_URL must be set in .env — no default to avoid accidental credential exposure
+GRIZON_DB_URL = os.environ.get("GRIZON_DB_URL", "")
 
 def _get_grizon_db():
+    if not GRIZON_DB_URL:
+        raise RuntimeError("GRIZON_DB_URL is not configured — set it in .env to enable grizon_db fallback")
     return psycopg2.connect(GRIZON_DB_URL)
 
 def _fetch_conv_from_grizon_db(conversation_id: str):

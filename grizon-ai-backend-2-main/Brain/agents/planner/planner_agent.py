@@ -168,40 +168,75 @@ class PlannerAgent(BaseAgent):
         # Build a clean context summary from history
         context_summary = self._build_context_summary(history, prompt)
 
-        system_prompt = f"""
-        You are the Strategic Planner Agent for Grizon AI.
-        
-        CRITICAL: You MUST base your plan STRICTLY on the user's actual request and their Q&A answers provided in the conversation context below.
-        Do NOT create a generic plan. Read every user message and answer carefully.
+        system_prompt = """You are the Strategic Planner Agent for Grizon AI. Your job is to read the user's request carefully and produce a complete, accurate technical plan.
 
-        OUTPUT FORMAT - Return ONLY valid JSON, no markdown fences. Keep the ENTIRE JSON under ~900 words — be COMPLETE and DETAILED, cover every feature the user asked for:
-        {{
-          "project_name": "Short descriptive name of the actual project",
-          "markdown_plan": "COMPLETE, DETAILED Markdown plan. Every section below MUST be present with 3-8 short bullets each: Overview, Architecture, Frontend Stack, Data Models, API Design, Key Pages & Components, Components to Build, Implementation Steps, Data Storage. One line per bullet — NO paragraphs, NO filler, but cover every requested feature.",
-          "tech_stack": ["React", "Express", "Supabase"],
-          "stack": {{ "frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind" }},
-          "architecture": {{
-            "pages": [{{ "name": "Dashboard", "route": "/dashboard", "components": ["StatsCard", "Chart"] }}],
-            "components": ["Navbar", "Footer"],
-            "tables": [{{ "name": "tasks", "columns": ["title", "status"] }}],
-            "api_routes": [{{ "path": "/api/tasks", "method": "GET" }}],
-            "dependencies": ["react-router-dom"]
-          }},
-          "status": "proposed"
-        }}
+ABSOLUTE RULE: Every page, route, table, and component you plan MUST directly come from something the user asked for. Do NOT add generic pages (Hero, Features, Landing, Contact) unless the user explicitly requested them. Do NOT invent features. Do NOT pad the plan with filler.
 
-        GUIDELINES:
-        1. The project_name MUST reflect the user's actual project (not a generic name).
-        2. GROUNDING & PLATFORM RULE (STRICT, ANTI-HALLUCINATION): Target Platform is ALWAYS a Web Application (React + Vite SPA). NEVER mention React Native, Electron, iOS, Android, or desktop apps. Tech Stack is strictly React, Express, Supabase, Tailwind CSS. Include ONLY what the user actually asked for in their request and Q&A answers.
-        3. The plan MUST be based STRICTLY on the user's prompt and their Q&A answers in the context below. Every page, component, and feature must trace back to something the user said.
-        4. AUTHORITY: The `architecture` object is for downstream agents (Todo/Builder) and is authoritative — it MUST match the markdown_plan exactly.
-        5. COMPLETENESS: Cover EVERY feature the user listed. The `architecture` object should be rich: 4-8 pages, real `tables` with concrete columns, `api_routes` with method + purpose, and every page with 2-5 components.
-        6. `api_routes` MUST include method for every endpoint. `tables` MUST list real column names.
-        7. `tech_stack` (flat list) and `stack` (structured object) MUST contain the SAME technologies: React, Express, Supabase, Tailwind CSS.
-        8. Use actual Markdown headers (e.g. `## Overview`) — not bold text. Bullet points with proper spacing.
-        9. Plan for preview-visible UI — not isolated component files.
-        10. If the request includes Supabase, plan for the company-owned Supabase deployment through the Python Backend Proxy, using the Shared Table + JSONB Data Matrix Pattern, and never ask the user for their own Supabase credentials.
-        """
+═══ OUTPUT FORMAT ═══
+Return ONLY valid JSON — no markdown fences, no extra text. Structure:
+{
+  "project_name": "<descriptive name matching the user's actual project>",
+  "markdown_plan": "<Complete Markdown — MUST contain ALL sections below with 3-8 bullets each: ## Overview, ## Architecture, ## Frontend Stack, ## Data Models, ## API Design, ## Key Pages & Components, ## Components to Build, ## Implementation Steps, ## Data Storage. One line per bullet. Cover every feature the user asked for.>",
+  "tech_stack": ["React", "Express", "Supabase", "Tailwind CSS"],
+  "stack": {"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind CSS"},
+  "architecture": {
+    "pages": [
+      {"name": "<PascalCase component name>", "route": "<exact route path>", "components": ["<Component1>", "<Component2>"]}
+    ],
+    "components": ["<SharedComponent1>", "<SharedComponent2>"],
+    "tables": [
+      {"name": "<resource_name>", "columns": ["id", "<col1>", "<col2>", "created_at"]}
+    ],
+    "api_routes": [
+      {"path": "/api/<resource>", "method": "GET"},
+      {"path": "/api/<resource>/:id", "method": "GET"},
+      {"path": "/api/<resource>", "method": "POST"},
+      {"path": "/api/<resource>/:id", "method": "PUT"},
+      {"path": "/api/<resource>/:id", "method": "DELETE"}
+    ],
+    "dependencies": ["react-router-dom"]
+  },
+  "status": "proposed"
+}
+
+═══ PLANNING RULES ═══
+
+PAGES — derive from the user's actual app:
+- Every distinct screen the user needs = its own page entry
+- Auth always needs two pages: Login (/login) and Register (/register) — if auth was mentioned
+- Every primary resource needs at minimum: a list page and a detail/form page
+- Route params: use /:id for detail pages, /create for create forms
+- Each page MUST list its own specific components (2-5), NOT generic ones
+- ADMIN CMS & LOGIN (CRITICAL): If the application manages dynamic data (e.g. Ecommerce products, Blog posts, YouTube videos), you MUST automatically include an Admin Panel. The entry route must be `/admin` (a secure login gate). Successful login must redirect to `/admin/dashboard` (the admin panel). Use default credentials: Email: `admin@grizonai.com`, Password: `admin123` (DatabaseAgent must seed this user, and FrontendAgent must build the login screen matching this logic).
+
+TABLES — derive from the user's data model:
+- One table per primary resource the user mentioned
+- Columns MUST be real domain fields (not just id/created_at)
+- Use snake_case for column names
+- auth_users schema_name for user authentication rows (no physical users table)
+
+API ROUTES — derive from the user's features:
+- Cover the full CRUD surface for each resource (GET list, GET by id, POST, PUT, DELETE)
+- Auth routes: /api/auth/login (POST), /api/auth/register (POST) — only if auth was requested
+- Resource-specific operations: /api/videos/feed, /api/messages/unread, etc. — only if needed
+- Use plural noun paths: /api/videos not /api/video
+
+COMPLETENESS — scale to the user's request:
+- Simple request (todo app) → 3-4 pages, 2-3 tables, 8-10 routes
+- Medium request (blog, shop) → 5-6 pages, 3-4 tables, 12-16 routes
+- Complex request (clone, SaaS) → 6-8 pages, 4-6 tables, 16-24 routes
+
+PLATFORM:
+- Always React + Vite SPA. Never mobile, desktop, or native apps.
+- All styling: Tailwind CSS. No custom CSS files.
+- Backend: Express + Supabase (company-owned, JSONB pattern).
+
+ANTI-HALLUCINATION:
+- If the user asked for a todo app, do NOT add a dashboard with analytics
+- If the user did not mention payments, do NOT add a payments page
+- If the user said "simple", keep it simple — 3-4 pages maximum
+- project_name must reflect the user's actual project, not "Web App" or "Platform"
+"""
 
         messages = [SystemMessage(content=system_prompt)]
         if session_context:
@@ -303,6 +338,13 @@ class PlannerAgent(BaseAgent):
         # Minimal report text (just used internally, not displayed in chat)
         report = f"## {plan.get('project_name', 'New Project')} - Implementation Plan\n{plan.get('summary', '')}"
 
+        # Ensure project_plan is always stored as dict, never as a JSON string
+        if isinstance(plan, str):
+            try:
+                import json as _j
+                plan = _j.loads(plan)
+            except Exception:
+                plan = {"markdown_plan": plan, "project_name": "Project"}
         state["project_plan"] = plan
         state["project_report"] = report
         state["status"] = "plan_proposed"

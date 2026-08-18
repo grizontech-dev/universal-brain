@@ -151,8 +151,8 @@ class ManagerAgent(BaseAgent):
             # If no predefined palette matched, treat as custom color input
             if not palette_found:
                 state["custom_color_input"] = str(user_answers)
-                state["theme_preference"] = "dark"  # Default to dark for custom
-                print(f"DEBUG: Custom color input: {user_answers}", flush=True)
+                state["theme_preference"] = "dark" if "dark" in str(user_answers).lower() else "light"
+                print(f"DEBUG: Custom color input: {user_answers} (theme: {state['theme_preference']})", flush=True)
 
             # Skip LLM re-evaluation after ANY answer round — the QuestionsAgent
             # already asked targeted questions; re-evaluating adds a full LLM round
@@ -246,13 +246,19 @@ class ManagerAgent(BaseAgent):
             Keep tasks small and scoped (e.g. 1-2 tasks for a small change, up to 3-4 for a big feature).
             ALWAYS include a final 'runner' task so the user can preview the changes.
             
+            Categories available:
+            - "frontend": for React components, UI, Vite config.
+            - "backend": for Express routes, controllers, API logic.
+            - "database": for ANY Supabase schema changes, creating tables, or writing SQL migrations.
+            - "runner": to start servers.
+            
             Respond ONLY with a JSON array of tasks:
             [
               {
                 "id": "t1",
                 "title": "Task Title",
                 "description": "What exact files to modify and how to fix the issue or add the feature.",
-                "category": "frontend",
+                "category": "database", 
                 "skill_required": "implement",
                 "acceptance_criteria": "How to verify"
               },

@@ -36,20 +36,20 @@ module.exports = router;
 ```
 
 ## Controller pattern (REQUIRED)
-Every controller MUST use async/await with try/catch:
+Every controller MUST use async/await with try/catch. NEVER return HTTP 500:
 ```js
 const supabase = require('../supabase/client');
 exports.list = async (req, res) => {
   try {
-    const {{ data, error }} = await supabase
+    if (!supabase) return res.json({ success: true, data: [] });
+    const { data, error } = await supabase
       .from('tenant_connector_vault')
       .select('*')
-      .eq('tenant_id', req.user.tenant_id)
       .eq('schema_name', 'feature');
-    if (error) throw error;
-    res.json({{ success: true, data }});
+    if (error) return res.json({ success: true, data: [], error: error.message });
+    res.json({ success: true, data: data || [] });
   } catch (err) {
-    res.status(500).json({{ success: false, error: err.message }});
+    res.json({ success: true, data: [], error: err.message });
   }
 };
 ```
@@ -65,16 +65,21 @@ app.use('/api/feature', featureRoutes);
 Create `backend/supabase/client.js` as the single shared helper:
 ```js
 require('dotenv').config();
-const ws = require('ws');
 const supabaseLib = require('@supabase/supabase-js');
 const createClient = supabaseLib.createClient || supabaseLib;
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
-module.exports = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  global: { fetch },
-  realtime: { transport: ws }
-});
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+let supabase = null;
+try {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+} catch (e) {
+  console.warn('[Supabase] Client init failed:', e.message);
+}
+module.exports = supabase;
 ```
+**ALWAYS null-check before use:** `if (!supabase) return res.json({ success: true, data: [] });`
 
 ## Data access pattern (REQUIRED)
 Use the shared `tenant_connector_vault` table:

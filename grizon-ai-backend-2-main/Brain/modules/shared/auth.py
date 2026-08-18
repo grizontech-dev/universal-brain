@@ -24,15 +24,15 @@ async def get_current_user(
     if credentials:
         token = credentials.credentials
         
+    # Try query parameter for OAuth redirects where frontend can't use cookies (e.g. cross-origin or explicit token passing)
+    if not token and request.query_params:
+        token = request.query_params.get("token")
+        
     # Try cookies for browser-based redirects (OAuth flow)
     if not token and request.cookies:
         token = request.cookies.get("next-auth.session-token")
         if not token:
             token = request.cookies.get("token")
-            
-    # Try query parameter for OAuth redirects where frontend can't use cookies
-    if not token and request.query_params:
-        token = request.query_params.get("token")
         
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")

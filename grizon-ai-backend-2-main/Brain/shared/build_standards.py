@@ -49,6 +49,15 @@ FRONTEND_BUILD_STANDARDS = """
 - Dashboard: Stats cards, data tables/charts, sidebar navigation.
 - Auth pages: Form fields with validation, loading states, error handling.
 - Animations: framer-motion — page transitions, hover effects, scroll animations.
+  - ⚠️ framer-motion `AnimatePresence` RULE: Any component rendered DIRECTLY inside `<AnimatePresence>` MUST use `React.forwardRef()`. Plain function components inside AnimatePresence cause ref warnings.
+  - Correct pattern:
+    ```jsx
+    const TodoItem = React.forwardRef(({ item }, ref) => (
+      <motion.div ref={ref} ...>...</motion.div>
+    ));
+    TodoItem.displayName = 'TodoItem';
+    ```
+  - Wrong pattern: `const TodoItem = ({ item }) => <motion.div>...</motion.div>` (no forwardRef)
 - Use shadcn-style components for production quality.
 
 ### Navigation (React Router v6)
@@ -79,6 +88,7 @@ FRONTEND_BUILD_STANDARDS = """
 - Creating orphan components not imported in App.jsx
 - Home.jsx containing only `<h1>Home Page</h1>`
 - Not including FULL updated App.jsx in response (when App.jsx is modified by task)
+- Wrapping plain function components in `<AnimatePresence>` without `React.forwardRef()` — causes console ref warnings
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -91,15 +101,17 @@ BACKEND_BUILD_STANDARDS = """
 - Express.js on port 3001. CommonJS (require/module.exports). NEVER use ES modules.
 - Structure: `backend/routes/*.js`, `backend/controllers/*.js`.
 - Use Express.Router in routes: `module.exports = router;`
-- Every controller starts with: `const { supabase } = require('../supabase/client');`
+- Every controller starts with: `const supabase = require('../supabase/client');`
+- ALWAYS null-check: `if (!supabase) return res.json({ success: true, data: [] });`
 
 ### Server.js
 - `server.js` MUST start with `require('dotenv').config();` at line 1 so environment variables are loaded.
 - Every new route MUST be imported and mounted in `backend/server.js`:
-  `const contactRoutes = require('./routes/contact');`
-  `app.use('/api/contact', contactRoutes);`
+  `const featureRoutes = require('./routes/feature');`
+  `app.use('/api/feature', featureRoutes);`
 - Write server.js LAST with ALL routes mounted.
 - Preserve existing mounts when updating server.js.
+- ⚠️ ONLY mount routes in server.js whose files you ACTUALLY generate. Missing route file = validation ERROR.
 
 ### Supabase & Database
 - Check user's connected Supabase connector first; fallback to Python proxy.
@@ -114,7 +126,7 @@ BACKEND_BUILD_STANDARDS = """
 - Frontend calls `/api/...` — your routes must match exactly.
 - Every feature gets one canonical mounted `/api/<resource>` route family and frontend helpers must call that exact family. If auth is requested, use canonical `POST /api/auth/register`, `POST /api/auth/login`, optional `GET /api/auth/me`, mounted at `/api/auth`.
 - ALWAYS wrap controller logic in `try { ... } catch (err)` blocks.
-- If DB table query returns an error (e.g. table not created yet), return clean response `{ success: true, data: [], note: "Table pending initialization" }` instead of throwing HTTP 500!
+- If supabase client is null (env vars not set) or DB query fails, return `{ success: true, data: [], note: "DB not configured" }` — NEVER throw HTTP 500!
 - JSON responses: `{ success: true, data }` or `{ success: false, error: "..." }`.
 - In `server.js`, handle `/favicon.ico`: `app.get('/favicon.ico', (req, res) => res.status(204).end());`
 - List all new deps in `backend/package.json`.
