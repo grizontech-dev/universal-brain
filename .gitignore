@@ -4,3 +4,5 @@ Grizon-AI-Frontend-v2/
 Grizon-AI-Superadmin-master/__pycache__/
 Grizon-AI-Superadmin-master/
 grizon-ai-backend-2-main.zip
+__pycache__/
+*.py[cod]

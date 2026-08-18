@@ -25,6 +25,7 @@ import { createProject, getProject, appendRequirement, updateProjectStack } from
 import BrainEditorCanvas from './BrainEditorCanvas';
 import BrainFrameworkSelector from './BrainFrameworkSelector';
 import BrainWorkspaceBoot from './BrainWorkspaceBoot';
+import BrainBuildPlan from './BrainBuildPlan';
 
 import { DEFAULT_BRAIN_FRAMEWORK, type BrainFrameworkId } from '../constants/frameworks';
 import {
@@ -2419,10 +2420,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 </div>
             </header>
 
-            {/* Content Area - Split View Support */}
+            {/* Content Area - 3-Panel Split (Chat | Build Plan | Live Workspace) */}
             <div className="flex flex-1 min-h-0 w-full overflow-hidden">
                 {/* Left Side: Chat History & Input */}
-                <div className={`${isBuildMode ? 'w-full lg:w-[35%] max-w-[500px] border-r border-border-subtle shrink-0 bg-app' : 'flex-1'} flex flex-col relative z-1 overflow-hidden`}>
+                <div className={`${isBuildMode ? 'w-full lg:w-[34%] max-w-[460px] border-r border-border-subtle shrink-0 bg-app' : 'flex-1'} flex flex-col relative z-1 overflow-hidden`}>
 
                     {/* Chat Messages */}
                     <div
@@ -2847,7 +2848,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     )}
                 </div>
 
-                {/* Right Side: Brain Editor Canvas (65% when building) */}
+                {/* Middle Side: Build Plan / Task List (real-time Pending → Running → Completed) */}
+                {isBuildMode && (
+                    <BrainBuildPlan
+                        todos={buildTodos}
+                        isSyncing={isBuildSyncing}
+                        workedSeconds={buildStartedAt
+                            ? Math.floor(((buildFinishedAt || Date.now()) - buildStartedAt) / 1000)
+                            : undefined}
+                    />
+                )}
+
+                {/* Right Side: Brain Editor Canvas (Live Workspace — Preview / Code / Terminal) */}
                 {isBuildMode && (
                     <main className="flex-1 min-w-0 hidden lg:flex flex-col bg-[#0d0d0d] relative">
                         {buildJob ? (

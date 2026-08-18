@@ -827,6 +827,18 @@
   animation: stream-orb 1.4s ease-in-out infinite;
 }
 
+@keyframes buildProgress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 /* ===========================================================================
    BASE TYPOGRAPHY OVERRIDES — Exact match to grizon-ai-frontend-v3-main
    =========================================================================== */
