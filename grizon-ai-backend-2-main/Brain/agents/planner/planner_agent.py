@@ -9,11 +9,14 @@ from Brain.modules.connectors.supabase.service import SupabaseOAuthService
 LOG = "[PLANNER]"
 
 
-def _is_frontend_only_request(prompt: str) -> bool:
+def _is_frontend_only_request(prompt: str, history: list = None) -> bool:
     """Landing pages and frontend-only prompts should not auto-create backend or database work."""
-    if not isinstance(prompt, str):
-        return False
-    text = prompt.lower()
+    text = str(prompt or "").lower()
+    if history:
+        for msg in history:
+            if msg.get("role", "").upper() == "USER":
+                text += " " + str(msg.get("content", "")).lower()
+                
     strong_frontend_markers = [
         "landing page", "homepage", "hero section", "marketing page", "portfolio page",
         "frontend only", "front-end only", "ui only", "design only", "no backend",
@@ -143,7 +146,7 @@ class PlannerAgent(BaseAgent):
         print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | has_feedback={bool(state.get('plan_feedback'))}", flush=True)
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
-        frontend_only = _is_frontend_only_request(prompt)
+        frontend_only = _is_frontend_only_request(prompt, history)
         current_plan = {} if frontend_only else state.get("project_plan", {})
         if frontend_only:
             state["project_plan"] = {}
@@ -230,32 +233,40 @@ class PlannerAgent(BaseAgent):
             else "- Database: Company-owned Supabase using shared JSONB data matrix pattern."
         )
 
+        if frontend_only:
+            markdown_structure = "## Overview, ## Architecture, ## Frontend Stack, ## Key Pages & Components, ## Components to Build, ## Implementation Steps"
+            json_stack = '{"frontend": "React", "styling": "Tailwind CSS"}'
+            architecture_tables = '"tables": [],'
+            architecture_api = '"api_routes": [],'
+            db_rule_text = "- No database required for this frontend-only scope."
+            frontend_rule = "CRITICAL RULE: The user specifically requested a frontend-only/UI-only build. DO NOT include any backend, database, models, or API layers in your plan. Treat this as a pure frontend React app."
+        else:
+            markdown_structure = "## Overview, ## Architecture, ## Frontend Stack, ## Data Models, ## API Design, ## Key Pages & Components, ## Components to Build, ## Implementation Steps, ## Data Storage"
+            json_stack = '{"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind CSS"}'
+            architecture_tables = '"tables": [{"name": "<resource_name>", "columns": ["id", "<col1>", "created_at"]}],'
+            architecture_api = '"api_routes": [{"path": "/api/<resource>", "method": "GET"}],'
+            db_rule_text = db_rule
+            frontend_rule = ""
+
         system_prompt = f"""You are the Strategic Planner Agent for Grizon AI. Your job is to read the user's request carefully and produce a complete, accurate technical plan.
 
 ABSOLUTE RULE: Every page, route, table, and component you plan MUST directly come from something the user asked for. Do NOT add generic pages (Hero, Features, Landing, Contact) unless the user explicitly requested them. Do NOT invent features. Do NOT pad the plan with filler.
+{frontend_rule}
 
 ═══ OUTPUT FORMAT ═══
 Return ONLY valid JSON — no markdown fences, no extra text. Structure:
 {{
   "project_name": "<descriptive name matching the user's actual project>",
-  "markdown_plan": "<Complete Markdown — MUST contain ALL sections below with 3-8 bullets each: ## Overview, ## Architecture, ## Frontend Stack, ## Data Models, ## API Design, ## Key Pages & Components, ## Components to Build, ## Implementation Steps, ## Data Storage. One line per bullet. Cover every feature the user asked for.>",
-  "tech_stack": ["React", "Express", "Supabase", "Tailwind CSS"],
-  "stack": {{"frontend": "React", "backend": "Express", "db": "Supabase", "auth": "JWT", "styling": "Tailwind CSS"}},
+  "markdown_plan": "<Complete Markdown — MUST contain ALL sections below with 3-8 bullets each: {markdown_structure}. One line per bullet. Cover every feature the user asked for.>",
+  "tech_stack": ["React", "Tailwind CSS"],
+  "stack": {json_stack},
   "architecture": {{
     "pages": [
       {{"name": "<PascalCase component name>", "route": "<exact route path>", "components": ["<Component1>", "<Component2>"]}}
     ],
     "components": ["<SharedComponent1>", "<SharedComponent2>"],
-    "tables": [
-      {{"name": "<resource_name>", "columns": ["id", "<col1>", "<col2>", "created_at"]}}
-    ],
-    "api_routes": [
-      {{"path": "/api/<resource>", "method": "GET"}},
-      {{"path": "/api/<resource>/:id", "method": "GET"}},
-      {{"path": "/api/<resource>", "method": "POST"}},
-      {{"path": "/api/<resource>/:id", "method": "PUT"}},
-      {{"path": "/api/<resource>/:id", "method": "DELETE"}}
-    ],
+    {architecture_tables}
+    {architecture_api}
     "dependencies": ["react-router-dom"]
   }},
   "status": "proposed"
@@ -271,6 +282,7 @@ PAGES — derive from the user's actual app:
 - Each page MUST list its own specific components (2-5), NOT generic ones
 - ADMIN CMS & LOGIN (CRITICAL): If the application manages dynamic data (e.g. Ecommerce products, Blog posts, YouTube videos), you MUST automatically include an Admin Panel. The entry route must be `/admin` (a secure login gate). Successful login must redirect to `/admin/dashboard` (the admin panel). Use default credentials: Email: `admin@grizonai.com`, Password: `admin123` (DatabaseAgent must seed this user, and FrontendAgent must build the login screen matching this logic).
 
+{f'''
 TABLES — derive from the user's data model:
 - One table per primary resource the user mentioned
 - Columns MUST be real domain fields (not just id/created_at)
@@ -281,7 +293,7 @@ API ROUTES — derive from the user's features:
 - Cover the full CRUD surface for each resource (GET list, GET by id, POST, PUT, DELETE)
 - Auth routes: /api/auth/login (POST), /api/auth/register (POST) — only if auth was requested
 - Resource-specific operations: /api/videos/feed, /api/messages/unread, etc. — only if needed
-- Use plural noun paths: /api/videos not /api/video
+- Use plural noun paths: /api/videos not /api/video''' if not frontend_only else '- NO TABLES OR API ROUTES REQUIRED for frontend-only scope.'}
 
 COMPLETENESS — scale to the user's request:
 - Simple request (todo app) → 3-4 pages, 2-3 tables, 8-10 routes

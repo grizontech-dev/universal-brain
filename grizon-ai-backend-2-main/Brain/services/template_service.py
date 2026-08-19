@@ -109,7 +109,7 @@ def template_to_workspace_ops(template_name: str) -> List[Dict[str, Any]]:
     return ops
 
 
-def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -> List[Dict[str, Any]]:
+def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True, include_backend: bool = True) -> List[Dict[str, Any]]:
     """Default: express + supabase; frontend template from user framework selection."""
     ops: List[Dict[str, Any]] = []
     seen_paths: set = set()
@@ -130,15 +130,16 @@ def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -
                 seen_paths.add(op["path"])
             ops.append(op)
 
-    for name in DEFAULT_BACKEND_TEMPLATES:
-        add_ops(name)
+    if include_backend:
+        for name in DEFAULT_BACKEND_TEMPLATES:
+            add_ops(name)
 
-    # If no .env was created by templates, create one with company credentials
-    if "backend/.env" not in seen_paths:
-        from Brain.services.workspace_manager import workspace_manager
-        env_content = get_company_supabase_env()
-        if env_content:
-            ops.append(workspace_manager.build_op_write_file("backend/.env", env_content))
+        # If no .env was created by templates, create one with company credentials
+        if "backend/.env" not in seen_paths:
+            from Brain.services.workspace_manager import workspace_manager
+            env_content = get_company_supabase_env()
+            if env_content:
+                ops.append(workspace_manager.build_op_write_file("backend/.env", env_content))
 
     if include_frontend:
         fw = normalize_framework(framework)
@@ -148,11 +149,11 @@ def get_bootstrap_ops(framework: Optional[str], include_frontend: bool = True) -
     return ops
 
 
-def apply_templates_to_workspace(workspace_id: str, framework: Optional[str], user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def apply_templates_to_workspace(workspace_id: str, framework: Optional[str], user_id: Optional[str] = None, include_backend: bool = True) -> List[Dict[str, Any]]:
     from Brain.services.workspace_manager import workspace_manager
     from Brain.shared.frontend_entry import is_boilerplate_app, is_app_jsx_path
 
-    ops = get_bootstrap_ops(framework)
+    ops = get_bootstrap_ops(framework, include_backend=include_backend)
     skipped = []
     ws_root = workspace_manager.resolve_workspace_path(workspace_id, user_id=user_id)
     for op in ops:

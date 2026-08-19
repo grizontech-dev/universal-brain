@@ -350,16 +350,11 @@ class SandboxMCPService:
         vite_cfg = os.path.join(workspace_dir, "frontend", "vite.config.js")
         if os.path.exists(vite_cfg):
             try:
-                with open(vite_cfg, "r") as f:
+                with open(vite_cfg, "r", encoding="utf-8") as f:
                     content = f.read()
-                # Replace entire defineConfig block with clean version
-                clean_vite = """import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  base: "./",
-  server: {
+                
+                # Insert our server block into defineConfig
+                server_block = """server: {
     port: 9999,
     host: "0.0.0.0",
     hmr: false,
@@ -371,11 +366,44 @@ export default defineConfig({
         secure: false
       }
     }
-  }
-});"""
-                with open(vite_cfg, "w") as f:
-                    f.write(clean_vite)
-                print(f"[SANDBOX_MCP] STEP-3 Rewrote vite.config.js: clean version with proxy, port=9999")
+  },"""
+                # Check if server block exists, if so safely remove it
+                server_idx = content.find("server:")
+                if server_idx == -1:
+                    server_idx = content.find("server :")
+                
+                if server_idx != -1:
+                    # Find the opening brace
+                    brace_idx = content.find("{", server_idx)
+                    if brace_idx != -1:
+                        brace_count = 1
+                        end_idx = brace_idx + 1
+                        while end_idx < len(content) and brace_count > 0:
+                            if content[end_idx] == "{":
+                                brace_count += 1
+                            elif content[end_idx] == "}":
+                                brace_count -= 1
+                            end_idx += 1
+                        
+                        # Check for trailing comma
+                        while end_idx < len(content) and content[end_idx] in " \t\r\n":
+                            end_idx += 1
+                        if end_idx < len(content) and content[end_idx] == ",":
+                            end_idx += 1
+                            
+                        # Replace the found block
+                        content = content[:server_idx] + content[end_idx:]
+
+                # Insert right after `defineConfig({`
+                if "defineConfig({" in content:
+                    content = content.replace("defineConfig({", "defineConfig({\n  " + server_block)
+                else:
+                    # Fallback if no defineConfig({
+                    content = content.replace("export default {", "export default {\n  " + server_block)
+                
+                with open(vite_cfg, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[SANDBOX_MCP] STEP-3 Patched vite.config.js: injected server block (port=9999)")
             except Exception as e:
                 print(f"[SANDBOX_MCP] STEP-3 Could not patch vite.config.js: {e}")
 
@@ -395,14 +423,9 @@ export default defineConfig({
                 print(f"[SANDBOX_MCP] STEP-3 Could not patch package.json: {e}")
 
         # ═══ ENSURE backend/ EXISTS (runner requires it for dual-service mode) ═══
+        # We will inject this directly into the tar archive instead of writing it to the workspace.
         backend_dir = os.path.join(workspace_dir, "backend")
-        if not os.path.isdir(backend_dir):
-            print(f"[SANDBOX_MCP] STEP-3 Creating minimal backend/ folder (runner needs it for dual-service mode)")
-            os.makedirs(backend_dir, exist_ok=True)
-            with open(os.path.join(backend_dir, "server.js"), "w") as f:
-                f.write('const express = require("express");\nconst app = express();\napp.get("/api/health", (req, res) => res.json({ status: "ok" }));\napp.listen(3001, "0.0.0.0", () => console.log("Backend running on 3001"));\n')
-            with open(os.path.join(backend_dir, "package.json"), "w") as f:
-                json.dump({"name": "backend", "version": "1.0.0", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.18.0", "cors": "^2.8.5"}}, f, indent=2)
+        has_backend = os.path.isdir(backend_dir)
 
         # Validate App.jsx imports
         app_jsx = os.path.join(workspace_dir, "frontend", "src", "App.jsx")
@@ -468,6 +491,25 @@ export default defineConfig({
                         rel_path = os.path.relpath(full_path, workspace_dir)
                         tar.add(full_path, arcname=rel_path)
                         archive_files.append(rel_path)
+
+                if not has_backend:
+                    import time
+                    print(f"[SANDBOX_MCP] Injecting minimal backend into tar archive")
+                    
+                    server_js = 'const express = require("express");\nconst app = express();\napp.get("/api/health", (req, res) => res.json({ status: "ok" }));\napp.listen(3001, "0.0.0.0", () => console.log("Backend running on 3001"));\n'
+                    info = tarfile.TarInfo(name="backend/server.js")
+                    info.size = len(server_js)
+                    info.mtime = int(time.time())
+                    tar.addfile(tarinfo=info, fileobj=io.BytesIO(server_js.encode("utf-8")))
+                    archive_files.append("backend/server.js")
+                    
+                    pkg_json = json.dumps({"name": "backend", "version": "1.0.0", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.18.0", "cors": "^2.8.5"}}, indent=2)
+                    info2 = tarfile.TarInfo(name="backend/package.json")
+                    info2.size = len(pkg_json)
+                    info2.mtime = int(time.time())
+                    tar.addfile(tarinfo=info2, fileobj=io.BytesIO(pkg_json.encode("utf-8")))
+                    archive_files.append("backend/package.json")
+
             return buf.getvalue(), archive_files
         
         raw_bytes, archive_files = await asyncio.get_event_loop().run_in_executor(None, _create_archive)

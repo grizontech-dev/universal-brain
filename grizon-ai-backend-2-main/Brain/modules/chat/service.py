@@ -304,8 +304,20 @@ class BrainChatService:
             bootstrap_ops = payload.get("workspace_ops") or []
             progress_msg = f"[TEMPLATE] Restored {len(bootstrap_ops)} files from workspace"
         else:
-            bootstrap_ops = apply_templates_to_workspace(job_id, framework, user_id=user_id)
-            progress_msg = f"[TEMPLATE] Loaded express, supabase, and {framework} frontend template"
+            from Brain.agents.planner.planner_agent import _is_frontend_only_request
+            is_frontend_only = _is_frontend_only_request(state.get("content", ""), state.get("messages", []))
+            
+            # Fallback to state if somehow it was set but the prompt doesn't match
+            if not is_frontend_only:
+                is_frontend_only = state.get("active_decisions", {}).get("frontend_only", False)
+            if not is_frontend_only and state.get("memory_context"):
+                is_frontend_only = state["memory_context"].get("decisions", {}).get("frontend_only", False)
+
+            bootstrap_ops = apply_templates_to_workspace(job_id, framework, user_id=user_id, include_backend=not is_frontend_only)
+            if is_frontend_only:
+                progress_msg = f"[TEMPLATE] Loaded {framework} frontend template"
+            else:
+                progress_msg = f"[TEMPLATE] Loaded express, supabase, and {framework} frontend template"
 
         runtime = RUNTIME_SANDBOX_MCP if sandbox_available else "local"
         sandbox_job = {
@@ -319,34 +331,46 @@ class BrainChatService:
         if sandbox_available:
             sandbox_mcp.record_activity(str(job_id))
 
-        template_activities = [
-            {
-                "id": "tpl-express",
-                "type": "template",
-                "label": "Read express-template -> backend/",
-                "status": "done",
-                "timestamp": int(__import__("time").time() * 1000),
-            },
-            {
-                "id": "tpl-supabase",
-                "type": "template",
-                "label": "Read supabase-template -> backend/supabase/",
-                "status": "done",
-                "timestamp": int(__import__("time").time() * 1000),
-            },
+        from Brain.agents.planner.planner_agent import _is_frontend_only_request
+        is_frontend_only_ui = _is_frontend_only_request(state.get("content", ""), state.get("messages", []))
+        if not is_frontend_only_ui:
+            is_frontend_only_ui = state.get("active_decisions", {}).get("frontend_only", False) or state.get("memory_context", {}).get("decisions", {}).get("frontend_only", False)
+
+        template_activities = []
+        if not is_frontend_only_ui:
+            template_activities.extend([
+                {
+                    "id": "tpl-express",
+                    "type": "template",
+                    "label": "Read express-template -> backend/",
+                    "status": "done",
+                    "timestamp": int(__import__("time").time() * 1000),
+                },
+                {
+                    "id": "tpl-supabase",
+                    "type": "template",
+                    "label": "Read supabase-template -> backend/supabase/",
+                    "status": "done",
+                    "timestamp": int(__import__("time").time() * 1000),
+                }
+            ])
+        template_activities.append(
             {
                 "id": "tpl-frontend",
                 "type": "template",
                 "label": f"Loaded {framework} frontend template",
                 "status": "done",
                 "timestamp": int(__import__("time").time() * 1000),
-            },
-        ]
+            }
+        )
 
         sandbox_status = "building" if sandbox_available else "building_local"
         report_msg = f"Sandbox workspace ready ({framework})."
         if sandbox_available:
-            report_msg += " Express + Supabase + frontend template loaded."
+            if is_frontend_only_ui:
+                report_msg += " Frontend template loaded."
+            else:
+                report_msg += " Express + Supabase + frontend template loaded."
         else:
             report_msg += " Running in local mode (remote sandbox unavailable)."
 
@@ -707,11 +731,14 @@ class BrainChatService:
             if plan and state.get("plan_approved", False):
                 # Inject company Supabase credentials into backend/.env BEFORE
                 # the builder runs, so its deploy archive includes them.
-                try:
-                    from Brain.services.template_service import inject_company_supabase_to_workspace
-                    inject_company_supabase_to_workspace(conv_id, user_id=state.get("user_id"))
-                except Exception as e:
-                    print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
+                # Skip this for frontend-only projects.
+                from Brain.agents.planner.planner_agent import _is_frontend_only_request
+                if not _is_frontend_only_request(state.get("content", ""), state.get("messages", [])):
+                    try:
+                        from Brain.services.template_service import inject_company_supabase_to_workspace
+                        inject_company_supabase_to_workspace(conv_id, user_id=state.get("user_id"))
+                    except Exception as e:
+                        print(f"[CHAT-SERVICE] Failed to inject Supabase credentials: {e}")
 
                 # Run builder in background task to survive client disconnect
                 _builder_task = asyncio.create_task(

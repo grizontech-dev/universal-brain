@@ -136,15 +136,20 @@ class WorkspaceManager:
             ops.append(self.build_op_write_file(path, content))
         return ops
 
-    def build_webcontainer_startup_ops(self, framework: str = "react") -> List[Dict[str, Any]]:
+    def build_webcontainer_startup_ops(self, framework: str = "react", include_backend: bool = True) -> List[Dict[str, Any]]:
         """Sequential: backend install → backend start → frontend install → frontend dev."""
-        ops: List[Dict[str, Any]] = [
-            self.build_op_mkdir("backend"),
-            self.build_op_run("npm install", cwd="backend"),
-            self.build_op_run("npm start", cwd="backend", background=True),
+        ops: List[Dict[str, Any]] = []
+        if include_backend:
+            ops.extend([
+                self.build_op_mkdir("backend"),
+                self.build_op_run("npm install", cwd="backend"),
+                self.build_op_run("npm start", cwd="backend", background=True),
+            ])
+        
+        ops.extend([
             self.build_op_mkdir("frontend"),
             self.build_op_run("npm install", cwd="frontend"),
-        ]
+        ])
         if framework == "next":
             ops.append(
                 self.build_op_run("npm run dev -- -H 0.0.0.0 -p 3000", cwd="frontend", background=True)

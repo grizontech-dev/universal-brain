@@ -15,11 +15,14 @@ FRONTEND_ONLY_MIN_TODOS = 3
 FRONTEND_ONLY_MAX_TODOS = 4
 
 
-def _is_frontend_only_request(prompt: str) -> bool:
+def _is_frontend_only_request(prompt: str, history: list = None) -> bool:
     """Landing pages and frontend-only prompts should not auto-create backend/database tasks."""
-    if not isinstance(prompt, str):
-        return False
-    text = prompt.lower()
+    text = str(prompt or "").lower()
+    if history:
+        for msg in history:
+            if msg.get("role", "").upper() == "USER":
+                text += " " + str(msg.get("content", "")).lower()
+
     # Explicit frontend-only intent — these ALWAYS win.
     strong_frontend_markers = [
         "landing page", "homepage", "hero section", "marketing page", "portfolio page",
@@ -160,6 +163,7 @@ def clamp_todo_list(
     tasks: List[Dict[str, Any]],
     min_todos: int = MIN_TODOS,
     max_todos: int = MAX_TODOS,
+    frontend_only: bool = False,
 ) -> List[Dict[str, Any]]:
     if not isinstance(tasks, list):
         return tasks
@@ -176,16 +180,14 @@ def clamp_todo_list(
         rest = rest[: max_todos - 1]
 
     merged = rest + ([runner] if runner else [])
-    if not runner and merged:
-        merged[-1] = {
-            **merged[-1],
+    if not runner:
+        merged.append({
+            "id": f"t-run-{len(merged)}",
             "category": "runner",
-            "title": merged[-1].get("title", "Start dev servers"),
-            "description": merged[-1].get(
-                "description",
-                "Install dependencies and start frontend dev server for preview.",
-            ),
-        }
+            "title": "Start dev servers",
+            "description": "Install dependencies and start frontend dev server for preview.",
+            "files": [],
+        })
 
     has_runner = runner or any(t.get("category") == "runner" for t in merged)
     non_runner = [t for t in merged if t.get("category") != "runner"]
@@ -209,25 +211,50 @@ def clamp_todo_list(
     if len(merged) > max_todos:
         merged = merged[:max_todos]
 
-    merged = _ensure_integration_task(merged, max_todos=max_todos)
+    merged = _ensure_integration_task(merged, max_todos=max_todos, frontend_only=frontend_only)
     return merged
 
 
-def _ensure_integration_task(tasks: List[Dict[str, Any]], max_todos: int = MAX_TODOS) -> List[Dict[str, Any]]:
+def _ensure_integration_task(tasks: List[Dict[str, Any]], max_todos: int = MAX_TODOS, frontend_only: bool = False) -> List[Dict[str, Any]]:
     """Penultimate task: wire App.jsx, router, server.js mounts, API forms."""
     runner_idx = next(
         (i for i, t in enumerate(tasks) if t.get("category") == "runner"),
         len(tasks),
     )
-    wire_keys = ("wire", "integrat", "app.jsx", "router", "connect", "mount")
-    has_wire = any(
-        any(k in f"{t.get('title', '')} {t.get('description', '')}".lower() for k in wire_keys)
-        for t in tasks
-        if t.get("category") != "runner"
-    )
+    # Check if any non-runner task has App.jsx in its files array, or if its title implies wiring.
+    has_wire = False
+    for t in tasks:
+        if t.get("category") == "runner":
+            continue
+        files = t.get("files", [])
+        if any("App.jsx" in f or "main.jsx" in f or "App.tsx" in f or "main.tsx" in f for f in files):
+            has_wire = True
+            break
+        title_lower = t.get("title", "").lower()
+        if "wire" in title_lower or "integrat" in title_lower or "app.jsx" in title_lower:
+            has_wire = True
+            break
+
     if has_wire:
         return tasks
+    
     wire = {**INTEGRATION_TASK_TEMPLATE, "id": f"t-wire-{len(tasks)}"}
+    if frontend_only:
+        wire["title"] = "Wire App, Router & Components"
+        wire["description"] = (
+            "MANDATORY VALIDATION CHECKLIST (all items must pass or this task FAILS):\n"
+            "1. List EVERY file currently in `frontend/src/components/` and `frontend/src/pages/`.\n"
+            "2. Rewrite `frontend/src/App.jsx` so that it imports AND renders ALL of those components/pages — no orphans are allowed.\n"
+            "3. Use React Router v6 syntax throughout App.jsx: wrap in `<BrowserRouter>`, use `<Routes>`, and use `element={<Component />}`.\n"
+            "4. Delete any duplicate or placeholder components.\n"
+            "5. Delete `frontend/src/App.tsx` if it exists.\n"
+            "6. Include the FULL updated `App.jsx` in the response.\n\n"
+            "STEPS:\n"
+            "1. Enumerate all files recursively in `frontend/src/components/` and `frontend/src/pages/`.\n"
+            "2. Rewrite `App.jsx` with v6 routing, importing every file found and rendering each under a `<Route>`.\n"
+            "3. Remove duplicate/placeholder components.\n"
+            "4. Delete `frontend/src/App.tsx` if present and add `react-router-dom` to `frontend/package.json` if missing.\n"
+        )
     if runner_idx >= len(tasks):
         tasks.append(wire)
     else:
@@ -494,7 +521,8 @@ class TodoAgent(BaseAgent):
         print(f"{LOG} ═══ EXECUTE ═══ plan_name='{plan.get('project_name', 'N/A')}' | framework={framework} | plan_type={type(state.get('project_plan')).__name__}", flush=True)
 
         prompt_text = str(state.get("content") or "")
-        frontend_only = _is_frontend_only_request(prompt_text)
+        history = state.get("messages", [])
+        frontend_only = _is_frontend_only_request(prompt_text, history)
         if frontend_only:
             print(f"{LOG} Frontend-only request detected — suppressing backend/database task generation", flush=True)
 
@@ -722,7 +750,7 @@ class TodoAgent(BaseAgent):
                 if not task.get("api") and backend_routes:
                     task["api"] = list(backend_routes)
 
-        tasks = clamp_todo_list(tasks, min_todos=min_todos, max_todos=max_todos)
+        tasks = clamp_todo_list(tasks, min_todos=min_todos, max_todos=max_todos, frontend_only=frontend_only)
         tasks = _enforce_file_limit(tasks, max_todos=max_todos)
         tasks = _validate_dependencies(tasks)
 

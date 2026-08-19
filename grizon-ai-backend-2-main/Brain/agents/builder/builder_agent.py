@@ -718,14 +718,24 @@ class BuilderAgent(BaseAgent):
         category = current_task.get("category", "backend") or "backend"
         framework = state.get("framework", "react")
 
-        # SKIP runner tasks — BUT only if the title is NOT an integration/wiring task.
-        # Integration tasks (App.jsx wiring, route wiring, etc.) MUST run as frontend
-        # even if their category is tagged "runner" — skipping them leaves App.jsx unwired.
-        _integration_keywords = ("wire", "integrat", "app.jsx", "wiring", "connect", "mount", "assemble")
+        # SKIP runner tasks — BUT only if it is TRULY a runner task.
+        # If it has files to edit, or mentions wiring/App.jsx, it is NOT a runner task
+        # and MUST be executed.
+        _integration_keywords = ("wire", "integrat", "app.jsx", "wiring", "connect", "mount", "assemble", "implement")
         _is_integration_task = any(kw in task_title.lower() for kw in _integration_keywords)
+        
+        # Check files array
+        files = current_task.get("files", [])
+        if any("App.jsx" in f or "main.jsx" in f for f in files):
+            _is_integration_task = True
 
-        if (category == "runner" or "runner" in task_title.lower()) and not _is_integration_task:
-            print(f"{LOG} ⏭ Skipping runner task: {task_title} (handled by RunnerAgent)", flush=True)
+        is_runner_category = (category == "runner" or "runner" in task_title.lower())
+        
+        # A task is a pure runner task ONLY if it has no files AND its title implies starting/installing
+        is_pure_runner = is_runner_category and not files and not _is_integration_task and any(kw in task_title.lower() for kw in ("start", "install", "dev", "server", "dependency"))
+
+        if is_pure_runner:
+            print(f"{LOG} ⏭ Skipping pure runner task: {task_title} (handled by RunnerAgent)", flush=True)
             current_task["status"] = "completed"
             next_idx = index + 1
             state["current_task_index"] = next_idx
@@ -752,11 +762,10 @@ class BuilderAgent(BaseAgent):
             return
         print(f"{LOG} ▶ Starting task {index+1}/{len(tasks)}: {task_title} | category={category} | framework={framework}", flush=True)
 
-        # Reclassify integration/wiring tasks that were tagged "runner" → treat as "frontend"
-        # so FrontendAgent handles App.jsx wiring instead of the task being dropped.
-        if category == "runner" and _is_integration_task:
+        # Reclassify tasks that were accidentally tagged "runner" but have files to build
+        if category == "runner":
             category = "frontend"
-            print(f"{LOG} [CONTRACT] ↻ Reclassified '{task_title}' runner→frontend (integration/wiring task must not be skipped)", flush=True)
+            print(f"{LOG} [CONTRACT] ↻ Reclassified '{task_title}' runner→frontend (task has code to build)", flush=True)
 
         if workspace_id and not workspace_id.startswith("error:"):
             start_act = self._make_activity("task_start", f"Exploring — {task_title}", task_title=task_title, status="running")
