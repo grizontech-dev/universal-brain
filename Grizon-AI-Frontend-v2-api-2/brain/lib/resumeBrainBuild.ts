@@ -11,6 +11,7 @@ export type ResumeBrainPayload = {
     todos: BuildTodoItem[];
     current_task_index: number;
     build_complete: boolean;
+    build_active?: boolean;
     workspace_ops: WorkspaceOp[];
     startup_ops: WorkspaceOp[];
     sync_url: string;
