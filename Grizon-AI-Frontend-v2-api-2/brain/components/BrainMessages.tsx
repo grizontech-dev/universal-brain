@@ -934,7 +934,16 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
-            if (autoStartStream && shouldStreamResumeBuild(todos, payload)) {
+            // If the backend is STILL building this conversation (background task
+            // survived the reload), don't start a second build — the 5s poll picks
+            // up progress. Only auto-resume the build stream when nothing is running
+            // server-side, so the project continues from the exact task it stopped at.
+            const canAutoResume =
+                autoStartStream &&
+                !payload.build_active &&
+                shouldStreamResumeBuild(todos, payload);
+
+            if (canAutoResume) {
                 void startResumeStream(conversationId, framework, normalized);
             }
         },
@@ -987,13 +996,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     useEffect(() => {
         const handleUnload = () => {
-            if (sendingRef.current) {
-                const convId = activeConvIdRef.current;
-                if (convId && convId !== 'new') {
-                    const url = `/api/brain/chat/stop?conversation_id=${encodeURIComponent(convId)}`;
-                    navigator.sendBeacon(url);
-                }
-            }
+            // NOTE: Do NOT stop the build on reload/close. The builder runs as a
+            // background task that survives client disconnect, so the project keeps
+            // running and resumes from where it was on the next load. Stopping here
+            // kills the build on refresh, which is the opposite of the desired UX.
         };
 
         window.addEventListener('beforeunload', handleUnload);
@@ -1423,7 +1429,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                     currentConversationId,
                                     jobData.framework || selectedFramework,
                                     todosForResume,
-                                    false
+                                    true
                                 );
                             }
                         }

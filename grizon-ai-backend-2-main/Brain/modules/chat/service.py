@@ -82,6 +82,23 @@ class BrainChatService:
     def __init__(self):
         self.workflow = self._create_workflow()
         self.STOP_REGISTRY = set()
+        self.ACTIVE_BUILDS: Dict[str, Any] = {}
+
+    def is_build_active(self, conversation_id: str) -> bool:
+        """True if a background builder is currently running for this conversation."""
+        if conversation_id in self.STOP_REGISTRY:
+            return False
+        task = self.ACTIVE_BUILDS.get(conversation_id)
+        return bool(task and not task.done())
+
+    def _register_build(self, conversation_id: str, task: Any):
+        self.ACTIVE_BUILDS[conversation_id] = task
+
+        def _on_done(_t: Any):
+            if self.ACTIVE_BUILDS.get(conversation_id) is _t:
+                self.ACTIVE_BUILDS.pop(conversation_id, None)
+
+        task.add_done_callback(_on_done)
 
     def _create_workflow(self):
         graph = StateGraph(BrainState)
@@ -744,6 +761,7 @@ class BrainChatService:
                 _builder_task = asyncio.create_task(
                     self._run_builder_background(state, plan, conv_id, mg)
                 )
+                self._register_build(conv_id, _builder_task)
                 print(f"[CHAT-SERVICE] Builder started as background task for {len(plan)} tasks", flush=True)
                 if mg:
                     try:

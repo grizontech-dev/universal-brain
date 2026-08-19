@@ -99,6 +99,7 @@ def get_resume_payload(
     framework: str = "react",
     todos: Optional[List[Dict[str, Any]]] = None,
     user_id: Optional[str] = None,
+    build_active: bool = False,
 ) -> Dict[str, Any]:
     from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
     fw = normalize_framework(framework)
@@ -116,6 +117,7 @@ def get_resume_payload(
         "todos": plan,
         "current_task_index": index,
         "build_complete": build_complete,
+        "build_active": build_active,
         "workspace_ops": workspace_ops,
         "runtime": "sandbox_mcp",
         "tunnel_url": tunnel_url,
