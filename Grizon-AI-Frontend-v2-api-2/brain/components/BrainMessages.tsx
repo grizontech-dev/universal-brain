@@ -284,6 +284,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const [buildTick, setBuildTick] = useState(0);
     const buildSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const resumeAfterReloadRef = useRef(false);
+    const stoppedByUserRef = useRef(false);
 
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
@@ -641,6 +642,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
             if (event.status === 'stopped' || event.stopped) {
+                stoppedByUserRef.current = true;
                 setIsLoading(false);
                 setAgentStep('idle');
                 setIsBuildSyncing(false);
@@ -1075,6 +1077,27 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             window.removeEventListener('brainPreviewReady', onPreview);
         };
     }, [isBuildMode, completeRunnerBuild]);
+
+    // Listen for WebSocket "stopped" event from builder background task
+    useEffect(() => {
+        const onBuildStopped = (e: Event) => {
+            stoppedByUserRef.current = true;
+            setIsLoading(false);
+            setAgentStep('idle');
+            setIsBuildSyncing(false);
+            useExecutionStore.getState().setStreamingMessage(null);
+            sendingRef.current = false;
+            appendBuildActivities([{
+                id: `act-stopped-ws-${Date.now()}`,
+                type: 'narration',
+                label: 'Project generation stopped.',
+                timestamp: Date.now(),
+                status: 'done',
+            }]);
+        };
+        window.addEventListener('brainBuildStopped', onBuildStopped);
+        return () => window.removeEventListener('brainBuildStopped', onBuildStopped);
+    }, [appendBuildActivities]);
 
     useEffect(() => {
         const onProgress = (e: Event) => {
@@ -1779,6 +1802,26 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 let chunkUpdate = "";
 
                 try {
+                    // --- Stopped (from backend SSE during Phase 1 or Phase 2) ---
+                    if (event.status === 'stopped') {
+                        stoppedByUserRef.current = true;
+                        setIsLoading(false);
+                        setAgentStep('idle');
+                        setIsBuildSyncing(false);
+                        useExecutionStore.getState().setStreamingMessage(null);
+                        sendingRef.current = false;
+                        appendBuildActivities([
+                            {
+                                id: `act-stopped-${Date.now()}`,
+                                type: 'narration',
+                                label: 'Project generation stopped.',
+                                timestamp: Date.now(),
+                                status: 'done',
+                            },
+                        ]);
+                        return;
+                    }
+
                     // --- Ingress ---
                     if (event.analyze_ingress) {
                         currentStep = 'analyzing';
@@ -2293,9 +2336,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             setAgentStep('idle');
             setIsLoading(false);
-            if (isBuildMode && !buildFinishedAt) {
+            if (isBuildMode && !buildFinishedAt && !stoppedByUserRef.current) {
                 completeRunnerBuild();
             }
+            stoppedByUserRef.current = false;
             refreshBalance();
 
             if (autoClarifyEnabled && pendingAutoClarifyRef.current) {
@@ -2332,6 +2376,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     };
 
     const handleStopChat = useCallback(async () => {
+        stoppedByUserRef.current = true;
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;

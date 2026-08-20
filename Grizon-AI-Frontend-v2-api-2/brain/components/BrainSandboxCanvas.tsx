@@ -197,6 +197,16 @@ export default function BrainSandboxCanvas({ streamUrl, jobId, onClose, todoList
                             lastJobIdRef.current = null; 
                             break;
 
+                        case "stopped":
+                            // Builder was stopped by user — notify BrainMessages
+                            window.dispatchEvent(new CustomEvent('brainBuildStopped', {
+                                detail: {
+                                    plan: frame.data.plan,
+                                    current_task_index: frame.data.current_task_index,
+                                }
+                            }));
+                            break;
+
                     }
                 } catch (e) {
                     console.error("Failed to parse sandbox frame:", e);
