@@ -787,7 +787,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const startResumeStream = useCallback(
         async (conversationId: string, framework: string, todos: BuildTodoItem[]) => {
-            if (isLoading) return;
+            if (isLoading || stoppedByUserRef.current) return;
 
             setIsLoading(true);
             setAgentStep('executing');
@@ -854,6 +854,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const handleResumeBuild = useCallback(async () => {
         const convId = activeConvIdRef.current || currentConversationId;
         if (!convId || isLoading) return;
+        stoppedByUserRef.current = false;
         await startResumeStream(convId, selectedFramework, buildTodos);
     }, [currentConversationId, selectedFramework, buildTodos, startResumeStream, isLoading]);
 
@@ -954,6 +955,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             const canAutoResume =
                 autoStartStream &&
                 !payload.build_active &&
+                !stoppedByUserRef.current &&
                 shouldStreamResumeBuild(todos, payload);
 
             if (canAutoResume) {
