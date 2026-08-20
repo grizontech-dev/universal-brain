@@ -110,6 +110,22 @@ def get_resume_payload(
     
     sandbox_mcp = get_sandbox_mcp_service()
     tunnel_url = sandbox_mcp.get_tunnel_url(workspace_id)
+
+    # Detect if build was stopped by user (agentStep="stopped" in latest message)
+    was_stopped_by_user = False
+    try:
+        from Brain.modules.conversations.service import conversation_service
+        messages = conversation_service.get_messages(workspace_id)
+        for msg in reversed(messages):
+            meta = msg.get("metadata") or {}
+            if isinstance(meta, str):
+                continue
+            step = meta.get("agentStep")
+            if step:
+                was_stopped_by_user = (step == "stopped")
+                break
+    except Exception:
+        pass
     
     return {
         "workspace_id": workspace_id,
@@ -121,4 +137,5 @@ def get_resume_payload(
         "workspace_ops": workspace_ops,
         "runtime": "sandbox_mcp",
         "tunnel_url": tunnel_url,
+        "was_stopped_by_user": was_stopped_by_user,
     }
