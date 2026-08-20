@@ -35,13 +35,16 @@ async def resume_workspace(
     messages = conversation_service.get_messages(workspace_id)
     todos = latest_todo_list_from_messages(messages)
     from Brain.modules.chat.service import get_brain_chat_service
-    build_active = get_brain_chat_service().is_build_active(workspace_id)
+    svc = get_brain_chat_service()
+    build_active = svc.is_build_active(workspace_id)
+    was_stopped = svc.was_stopped_by_user(workspace_id)
     return get_resume_payload(
         workspace_id,
         framework=framework or "react",
         todos=todos,
         user_id=user_id,
         build_active=build_active,
+        was_stopped_by_user_override=was_stopped,
     )
 
 

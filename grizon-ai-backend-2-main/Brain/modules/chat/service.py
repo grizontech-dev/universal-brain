@@ -91,6 +91,10 @@ class BrainChatService:
         task = self.ACTIVE_BUILDS.get(conversation_id)
         return bool(task and not task.done())
 
+    def was_stopped_by_user(self, conversation_id: str) -> bool:
+        """True if the user explicitly stopped this build (in STOP_REGISTRY)."""
+        return conversation_id in self.STOP_REGISTRY
+
     def _register_build(self, conversation_id: str, task: Any):
         self.ACTIVE_BUILDS[conversation_id] = task
 

@@ -100,6 +100,7 @@ def get_resume_payload(
     todos: Optional[List[Dict[str, Any]]] = None,
     user_id: Optional[str] = None,
     build_active: bool = False,
+    was_stopped_by_user_override: Optional[bool] = None,
 ) -> Dict[str, Any]:
     from Brain.services.sandbox_mcp_service import get_sandbox_mcp_service
     fw = normalize_framework(framework)
@@ -111,21 +112,25 @@ def get_resume_payload(
     sandbox_mcp = get_sandbox_mcp_service()
     tunnel_url = sandbox_mcp.get_tunnel_url(workspace_id)
 
-    # Detect if build was stopped by user (agentStep="stopped" in latest message)
-    was_stopped_by_user = False
-    try:
-        from Brain.modules.conversations.service import conversation_service
-        messages = conversation_service.get_messages(workspace_id)
-        for msg in reversed(messages):
-            meta = msg.get("metadata") or {}
-            if isinstance(meta, str):
-                continue
-            step = meta.get("agentStep")
-            if step:
-                was_stopped_by_user = (step == "stopped")
-                break
-    except Exception:
-        pass
+    # Detect if build was stopped by user
+    # Priority: explicit override > DB message agentStep check
+    if was_stopped_by_user_override is not None:
+        was_stopped_by_user = was_stopped_by_user_override
+    else:
+        was_stopped_by_user = False
+        try:
+            from Brain.modules.conversations.service import conversation_service
+            messages = conversation_service.get_messages(workspace_id)
+            for msg in reversed(messages):
+                meta = msg.get("metadata") or {}
+                if isinstance(meta, str):
+                    continue
+                step = meta.get("agentStep")
+                if step:
+                    was_stopped_by_user = (step == "stopped")
+                    break
+        except Exception:
+            pass
     
     return {
         "workspace_id": workspace_id,
