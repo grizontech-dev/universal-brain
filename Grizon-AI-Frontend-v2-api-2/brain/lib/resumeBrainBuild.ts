@@ -16,6 +16,7 @@ export type ResumeBrainPayload = {
     startup_ops: WorkspaceOp[];
     sync_url: string;
     tunnel_url?: string;
+    was_stopped_by_user?: boolean;
 };
 
 export async function fetchResumePayload(
@@ -68,5 +69,6 @@ export function normalizeTodosForResume(
 
 export function shouldStreamResumeBuild(todos: BuildTodoItem[], payload: ResumeBrainPayload): boolean {
     if (payload.build_complete) return false;
+    if (payload.was_stopped_by_user) return false;
     return !isBuildTodosComplete(todos);
 }

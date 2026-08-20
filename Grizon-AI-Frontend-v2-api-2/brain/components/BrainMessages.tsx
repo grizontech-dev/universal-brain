@@ -936,6 +936,17 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 return;
             }
 
+            // If build was stopped by user, show message but don't auto-resume
+            if (payload.was_stopped_by_user) {
+                setMessages(prev => [...prev, {
+                    id: `stopped-notice-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build was stopped. Press Continue to resume from where it stopped.',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
+                return;
+            }
+
             // If the backend is STILL building this conversation (background task
             // survived the reload), don't start a second build — the 5s poll picks
             // up progress. Only auto-resume the build stream when nothing is running
