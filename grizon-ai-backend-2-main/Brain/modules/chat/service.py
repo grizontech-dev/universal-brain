@@ -969,6 +969,8 @@ class BrainChatService:
         current_index = 0
 
         if resume_build and conv_id and conv_id != "new":
+            # Clear STOP_REGISTRY so builder loop can run again
+            self.STOP_REGISTRY.discard(conv_id)
             messages = conversation_service.get_messages(conv_id)
             plan = latest_todo_list_from_messages(messages)
             current_index, _ = compute_resume_index(plan)
