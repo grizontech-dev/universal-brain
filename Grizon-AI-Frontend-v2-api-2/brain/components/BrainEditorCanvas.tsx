@@ -322,8 +322,9 @@ export default function BrainEditorCanvas({
             let content = node.content || '';
             if (!content && wid) {
                 try {
+                    const uid = user?.id ? `&user_id=${encodeURIComponent(user.id)}` : '';
                     const res = await brainApiFetch(
-                        `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(node.path)}`
+                        `sandbox/read-file?workspace_id=${encodeURIComponent(wid)}&path=${encodeURIComponent(node.path)}${uid}`
                     );
                     if (res?.ok) {
                         const r = await res.json();
