@@ -1044,6 +1044,35 @@ class BrainChatService:
             task_log_ids = {}
 
             while True:
+                # --- Cooperative stop check (mid-task) ---
+                if str(conv_id) in self.STOP_REGISTRY:
+                    print(f"[CHAT-SERVICE] BG-TASK: STOP detected at task {state.get('current_task_index', 0)}/{len(plan)}", flush=True)
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "stopped",
+                            "plan": plan,
+                            "current_task_index": state.get("current_task_index", 0),
+                        })
+                    except Exception:
+                        pass
+                    # Persist the stopped state so resume works later (even after days)
+                    try:
+                        conversation_service.save_message(
+                            conv_id, "ASSISTANT",
+                            "Build stopped by user. Press Continue to resume from where it stopped.",
+                            todo_list=list(plan),
+                            sandbox_job=state.get("sandbox_job"),
+                            metadata={
+                                "agentStep": "stopped",
+                                "planApproved": True,
+                                "current_task_index": state.get("current_task_index", 0),
+                            },
+                        )
+                        print(f"[CHAT-SERVICE] BG-TASK: Persisted stopped state at index {state.get('current_task_index', 0)}", flush=True)
+                    except Exception as save_err:
+                        print(f"[CHAT-SERVICE] BG-TASK: Failed to persist stopped state: {save_err}", flush=True)
+                    return
+
                 iteration_count += 1
                 if iteration_count > MAX_TOTAL_ITERATIONS:
                     print(f"[CHAT-SERVICE] BG-TASK: SAFETY: Hit max iterations ({MAX_TOTAL_ITERATIONS}). Force completing.", flush=True)
@@ -1120,6 +1149,33 @@ class BrainChatService:
                         pass
 
                 last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
+
+                # --- Stop check after task completes (before persisting next progress) ---
+                if str(conv_id) in self.STOP_REGISTRY:
+                    print(f"[CHAT-SERVICE] BG-TASK: STOP detected after task {index} completed", flush=True)
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "stopped",
+                            "plan": plan,
+                            "current_task_index": state.get("current_task_index", 0),
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        conversation_service.save_message(
+                            conv_id, "ASSISTANT",
+                            "Build stopped by user. Press Continue to resume from where it stopped.",
+                            todo_list=list(plan),
+                            sandbox_job=state.get("sandbox_job"),
+                            metadata={
+                                "agentStep": "stopped",
+                                "planApproved": True,
+                                "current_task_index": state.get("current_task_index", 0),
+                            },
+                        )
+                    except Exception:
+                        pass
+                    return
 
                 # Persist per-task progress so polling-based UIs advance too
                 # (WebSocket missing/broken → 5s poll of /brain/conversations/{id}
