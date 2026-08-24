@@ -26,6 +26,21 @@ CONTRACT_FILENAME = "build_contract.json"
 # Low-level helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _to_pascal_case(name: str) -> str:
+    """Convert any name to proper PascalCase, handling camelCase boundaries.
+
+    'Login Page' → 'LoginPage'
+    'Loginpage'  → 'LoginPage'  (splits camelCase boundary)
+    'login-page' → 'LoginPage'
+    'orderDetail'→ 'OrderDetail'
+    """
+    # Insert underscore at lowercase→uppercase boundary: 'loginPage' → 'login_Page'
+    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", name)
+    # Split on any non-alphanumeric character
+    words = re.split(r"[\s\-_/]+", name)
+    return "".join(w.capitalize() for w in words if w)
+
+
 def _contract_path(workspace_dir: str) -> str:
     return os.path.join(workspace_dir, CONTRACT_FILENAME)
 
@@ -186,7 +201,7 @@ def create_contract(workspace_dir: str, state: Dict[str, Any]) -> Dict[str, Any]
                 slug = _re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
                 route = f"/{slug}"
             # Ensure name is PascalCase for the component filename
-            pascal = "".join(w.capitalize() for w in re.split(r"[\s\-_]+", name))
+            pascal = _to_pascal_case(name)
             pages.append({
                 "name": pascal,
                 "route": route,
@@ -466,7 +481,7 @@ def _extract_pages_from_plan(tasks: List[Dict[str, Any]]) -> List[Dict[str, str]
         if not words:
             continue
 
-        component_name = "".join(w.capitalize() for w in words[:4])  # max 4 words
+        component_name = _to_pascal_case("_".join(words[:4]))  # max 4 words
         route = "/" + "-".join(w.lower() for w in words[:4])
 
         if route in seen_routes:

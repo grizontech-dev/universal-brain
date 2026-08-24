@@ -600,6 +600,26 @@ class ValidationGate:
                             all_imported_targets.add(matched_rel)
                             break
 
+                    # Case-insensitive fallback for Linux/Docker case mismatches
+                    if not found_target_path:
+                        target_dir = os.path.dirname(target_base)
+                        target_basename = os.path.basename(target_base)
+                        if os.path.isdir(target_dir):
+                            for f in os.listdir(target_dir):
+                                if f.lower() == target_basename.lower() or f.lower() == target_basename.lower() + ".jsx":
+                                    candidate = os.path.join(target_dir, f)
+                                    if os.path.isfile(candidate):
+                                        found_target_path = candidate
+                                        matched_rel = os.path.relpath(candidate, self.frontend_src).replace("\\", "/")
+                                        all_imported_targets.add(matched_rel)
+                                        # Auto-rename file to match expected casing
+                                        expected = target_base + ("" if f.endswith((".jsx", ".js", ".tsx", ".ts")) else ".jsx")
+                                        if candidate != expected and not os.path.exists(expected):
+                                            os.rename(candidate, expected)
+                                            found_target_path = expected
+                                            matched_rel = os.path.relpath(expected, self.frontend_src).replace("\\", "/")
+                                        break
+
                     if not found_target_path:
                         errors.append(ValidationError(
                             stage="imports",
@@ -1038,12 +1058,30 @@ class ValidationGate:
             target_base = os.path.normpath(os.path.join(importer_dir, import_path))
 
             # Try .jsx then .js — pick the first candidate that does NOT already exist
+            # Also check for case-insensitive matches (e.g. LoginPage.jsx vs Loginpage.jsx)
             target_path = None
-            for ext in (".jsx", ".js"):
-                candidate = target_base + ext
-                if not os.path.isfile(candidate):
-                    target_path = candidate
-                    break
+            target_dir = os.path.dirname(target_base)
+            target_basename = os.path.basename(target_base)
+            # First check if a case-insensitive match already exists
+            if os.path.isdir(target_dir):
+                for f in os.listdir(target_dir):
+                    if f.lower() == target_basename.lower() + ".jsx" or f.lower() == target_basename.lower() + ".js":
+                        # File exists with different casing — no need to stub, just note it
+                        target_path = None
+                        break
+            if target_path is None:
+                for ext in (".jsx", ".js"):
+                    candidate = target_base + ext
+                    if not os.path.isfile(candidate):
+                        # Double-check no case-insensitive variant exists
+                        cdir = os.path.dirname(candidate)
+                        cbase = os.path.basename(candidate).lower()
+                        has_ci = False
+                        if os.path.isdir(cdir):
+                            has_ci = any(f.lower() == cbase for f in os.listdir(cdir))
+                        if not has_ci:
+                            target_path = candidate
+                            break
             if not target_path:
                 # Both extensions already exist — nothing to stub
                 continue
