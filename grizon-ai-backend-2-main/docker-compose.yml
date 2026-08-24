@@ -61,15 +61,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  grizon-ai_unstructured:
-    image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
-    container_name: grizon-ai-unstructured
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      UNSTRUCTURED_MEMORY_FREE_MINIMUM_MB: "512"
-
   brain:
     profiles: ["backend", "brain"]
     build:
@@ -111,15 +102,12 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
-      grizon-ai_unstructured:
-        condition: service_started
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://grizon_user:grizon_password_123@grizon-postgres:5432/grizon_db
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
-      UNSTRUCTURED_API_URL: http://grizon-ai_unstructured:8000
     volumes:
       - ./secrets:/app/secrets:ro
     ports:

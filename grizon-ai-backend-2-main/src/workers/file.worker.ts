@@ -27,26 +27,6 @@ function splitIntoChunks(text: string, chunkSizeTokens: number, overlapTokens: n
   return out;
 }
 
-async function parseWithUnstructured(binary: Buffer, fileLabel: string): Promise<string> {
-  if (!env.UNSTRUCTURED_API_URL) {
-    throw new Error("unstructured_url_not_configured");
-  }
-  const body = new FormData();
-  body.append("files", new Blob([new Uint8Array(binary)]), fileLabel);
-  body.append("strategy", "auto");
-  const res = await fetch(`${env.UNSTRUCTURED_API_URL}/general/v0/general`, {
-    method: "POST",
-    body,
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    logger.error({ status: res.status, detail, fileLabel }, "unstructured_api_error");
-    throw new Error(`unstructured_api_error:${res.status}`);
-  }
-  const parsed = (await res.json()) as Array<{ text?: string }>;
-  return parsed.map((e) => e.text ?? "").filter(Boolean).join("\n\n");
-}
-
 export function startFileWorker() {
   return new Worker<FileJobPayload>(
     QUEUE_NAMES.file,
@@ -70,13 +50,7 @@ export function startFileWorker() {
         const fileLabel = path.basename(file.storage_path);
         const binary = await storageService.readUploadedBytes(file.storage_path);
         let extractedText = "";
-        if (
-          file.file_type === "application/pdf" ||
-          file.file_type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-          file.file_type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ) {
-          extractedText = await parseWithUnstructured(binary, fileLabel);
-        } else if (file.file_type === "text/csv" || file.file_type === "text/plain") {
+        if (file.file_type === "text/csv" || file.file_type === "text/plain") {
           extractedText = binary.toString("utf-8");
         } else if (file.file_type.startsWith("image/")) {
           extractedText = `[Image Attachment: ${fileLabel}]`;

@@ -92,7 +92,6 @@ const envSchema = z.object({
   S3_ENDPOINT: z.string().url().optional(),
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
-  UNSTRUCTURED_API_URL: z.string().url().optional(),
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   IP_HASH_SALT: z.string().min(1).default("dev-ip-hash-salt"),
   ALLOWED_ORIGINS: z
