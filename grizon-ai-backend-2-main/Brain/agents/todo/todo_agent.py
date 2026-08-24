@@ -18,38 +18,74 @@ FRONTEND_ONLY_MAX_TODOS = 4
 def _is_frontend_only_request(prompt: str, history: list = None) -> bool:
     """Landing pages and frontend-only prompts should not auto-create backend/database tasks."""
     text = str(prompt or "").lower()
+    user_msgs = []
     if history:
         for msg in history:
             if msg.get("role", "").upper() == "USER":
-                text += " " + str(msg.get("content", "")).lower()
+                user_msgs.append(str(msg.get("content", "")).lower())
+    
+    if user_msgs:
+        initial_prompt = user_msgs[0]
+        text = " ".join(user_msgs) + " " + text
+    else:
+        initial_prompt = text
 
-    # Explicit frontend-only intent — these ALWAYS win.
-    strong_frontend_markers = [
-        "landing page", "homepage", "hero section", "marketing page", "portfolio page",
+    explicit_frontend = [
         "frontend only", "front-end only", "ui only", "design only", "no backend",
-        "no database", "static website", "single page website", "splash page", "promo page",
-        "frontend", "front-end", "ui design", "website design",
+        "no database", "static website", "single page website"
     ]
-    # Explicit backend/database intent — any of these means full-stack.
-    backend_markers = [
-        "backend", "api", "database", "supabase", "postgres", "auth", "login system",
-        "crud", "rest api", "server", "models", "schema", "db", "signup", "login",
-        "user accounts", "payments", "stripe", "data storage", "user authentication",
-        "manage users", "fetch data", "store data", "save data", "admin panel",
+    if any(marker in text for marker in explicit_frontend):
+        return True
+
+    strong_frontend = [
+        "landing page", "homepage", "hero section", "marketing page", "portfolio page",
+        "splash page", "promo page", "ui design", "website design"
+    ]
+    is_initial_landing = any(marker in initial_prompt for marker in strong_frontend)
+
+    # Only explicit backend/integration requirements should disable frontend-only mode.
+    # UI features such as login, signup, logout, dashboard, profile, settings,
+    # and admin panel are frontend features unless the user explicitly asks for
+    # real auth, persistence, APIs, a backend, or an external integration.
+    heavy_backend = [
+        "backend", "database", "supabase", "postgres", "crud", "rest api", "server",
+        "schema", "db", "stripe", "data storage", "api server",
+        "real authentication", "authentication backend", "auth backend",
+        "oauth integration", "jwt authentication", "connect to supabase",
+        "supabase auth", "persist data", "store data in database"
+    ]
+    
+    if is_initial_landing:
+        # If the user started by asking for a landing page, treat 'login' or 'auth' 
+        # as just UI components unless they explicitly ask for a heavy backend.
+        if any(marker in text for marker in heavy_backend):
+            return False
+        return True
+
+    backend_markers = heavy_backend + [
+        "api integration", "api endpoint", "api endpoints", "login system",
+        "user accounts backend", "payments", "user authentication backend",
+        "manage users backend", "fetch data from api", "save data to database",
+        "server-side authentication", "real login", "real signup"
     ]
     if any(marker in text for marker in backend_markers):
         return False
-    # Weak frontend-only hints — only after confirming no backend intent above.
-    weak_frontend_markers = [
+
+    strong_frontend_request = [
+        "frontend", "front-end", "frontend app", "frontend website",
+        "create frontend", "build frontend", "develop frontend",
+        "react frontend", "frontend for website", "frontend-only",
+        "ui frontend", "website frontend"
+    ]
+
+    weak_frontend = [
         "landing", "webpage", "one page website", "website ui", "responsive website",
         "static page", "blog website", "business website", "website", "page with",
-        "portfolio", "landing page", "about section", "features section",
-        "testimonial", "pricing section",
+        "portfolio", "about section", "features section", "testimonial", "pricing section"
     ]
-    if any(marker in text for marker in strong_frontend_markers):
+    if any(marker in text for marker in strong_frontend) or any(marker in text for marker in strong_frontend_request) or any(marker in text for marker in weak_frontend):
         return True
-    if any(marker in text for marker in weak_frontend_markers):
-        return True
+        
     return False
 
 
@@ -185,7 +221,7 @@ def clamp_todo_list(
             "id": f"t-run-{len(merged)}",
             "category": "runner",
             "title": "Start dev servers",
-            "description": "Install dependencies and start frontend dev server for preview.",
+            "description": "Install frontend dependencies and start only the frontend dev server for preview." if frontend_only else "Install dependencies and start frontend dev server for preview.",
             "files": [],
         })
 
@@ -216,7 +252,7 @@ def clamp_todo_list(
 
 
 def _ensure_integration_task(tasks: List[Dict[str, Any]], max_todos: int = MAX_TODOS, frontend_only: bool = False) -> List[Dict[str, Any]]:
-    """Penultimate task: wire App.jsx, router, server.js mounts, API forms."""
+    """Penultimate task: wire App.jsx/router for frontend-only, or App/router/API forms for full-stack."""
     runner_idx = next(
         (i for i, t in enumerate(tasks) if t.get("category") == "runner"),
         len(tasks),
@@ -238,23 +274,42 @@ def _ensure_integration_task(tasks: List[Dict[str, Any]], max_todos: int = MAX_T
     if has_wire:
         return tasks
     
-    wire = {**INTEGRATION_TASK_TEMPLATE, "id": f"t-wire-{len(tasks)}"}
     if frontend_only:
-        wire["title"] = "Wire App, Router & Components"
-        wire["description"] = (
-            "MANDATORY VALIDATION CHECKLIST (all items must pass or this task FAILS):\n"
-            "1. List EVERY file currently in `frontend/src/components/` and `frontend/src/pages/`.\n"
-            "2. Rewrite `frontend/src/App.jsx` so that it imports AND renders ALL of those components/pages — no orphans are allowed.\n"
-            "3. Use React Router v6 syntax throughout App.jsx: wrap in `<BrowserRouter>`, use `<Routes>`, and use `element={<Component />}`.\n"
-            "4. Delete any duplicate or placeholder components.\n"
-            "5. Delete `frontend/src/App.tsx` if it exists.\n"
-            "6. Include the FULL updated `App.jsx` in the response.\n\n"
-            "STEPS:\n"
-            "1. Enumerate all files recursively in `frontend/src/components/` and `frontend/src/pages/`.\n"
-            "2. Rewrite `App.jsx` with v6 routing, importing every file found and rendering each under a `<Route>`.\n"
-            "3. Remove duplicate/placeholder components.\n"
-            "4. Delete `frontend/src/App.tsx` if present and add `react-router-dom` to `frontend/package.json` if missing.\n"
-        )
+        # Never inherit INTEGRATION_TASK_TEMPLATE here because it can contain
+        # backend/server/API file instructions.
+        wire = {
+            "id": f"t-wire-{len(tasks)}",
+            "category": "frontend",
+            "skill_required": "frontend",
+            "title": "Wire App, Router & Components",
+            "description": (
+                "MANDATORY FRONTEND-ONLY VALIDATION CHECKLIST (all items must pass or this task FAILS):\n"
+                "1. List EVERY file currently in `frontend/src/components/` and `frontend/src/pages/`.\n"
+                "2. Rewrite `frontend/src/App.jsx` so it imports and renders ALL requested pages/components — no requested page may be orphaned.\n"
+                "3. Use React Router v6 syntax: `<BrowserRouter>`, `<Routes>`, and `element={<Component />}`.\n"
+                "4. Delete duplicate or placeholder components only when they are not required by the approved plan.\n"
+                "5. Delete `frontend/src/App.tsx` if it conflicts with the existing JSX entrypoint.\n"
+                "6. Keep login/signup/logout/admin interactions UI-only using mock/local state.\n"
+                "7. Do NOT create backend, database, API, server, Supabase, OAuth/JWT, migration, Docker, or infrastructure files.\n\n"
+                "STEPS:\n"
+                "1. Enumerate all files in `frontend/src/components/` and `frontend/src/pages/`.\n"
+                "2. Wire every approved page to its requested route in `App.jsx`.\n"
+                "3. Import shared components where required.\n"
+                "4. Add `react-router-dom` to `frontend/package.json` only if missing.\n"
+                "5. Verify all requested routes render in the frontend preview."
+            ),
+            "files": ["frontend/src/App.jsx", "frontend/package.json"],
+            "ui": ["React Router wiring", "all approved pages", "navigation"],
+            "api": [],
+            "depends_on": [],
+            "acceptance": [
+                "All requested frontend routes render in preview",
+                "All requested components are reachable",
+                "No backend, database, API, server, or infrastructure files are created or modified"
+            ]
+        }
+    else:
+        wire = {**INTEGRATION_TASK_TEMPLATE, "id": f"t-wire-{len(tasks)}"}
     if runner_idx >= len(tasks):
         tasks.append(wire)
     else:
@@ -576,19 +631,19 @@ class TodoAgent(BaseAgent):
         Execution grouping, file grouping, task count, and build order are YOUR responsibility — derive them from the architecture.
 
         REQUIRED TASK ORDER:
-        1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.
-        2. **backend** — Express routes + controllers for the plan's API endpoints. Mount in `server.js`.
-        3. **frontend** — Components and pages from the plan's "Key Pages & Components" section.
-        4. **frontend** — Wire App.jsx with React Router, import ALL components, connect to backend API.
-        5. **runner** — last task only; title like "Runner: Install Dependencies & Start Servers".
+        {
+        "FRONTEND-ONLY: create only frontend tasks plus the runner. Login, signup/register, logout, dashboard, profile, settings, and admin panel are UI features in this scope. Use mock/local state or localStorage. Do NOT implement real authentication. Do NOT create backend, database, API, server, Supabase, OAuth/JWT, migration, Docker backend, or infrastructure tasks. The runner starts only the frontend preview."
+        if frontend_only else
+        "1. **database** — Create Supabase tables matching the plan's Data Models (Tasks, Categories, etc.) in `backend/supabase/schema.sql`. Use `supabase_exec_sql` to create tables.\n2. **backend** — Express routes + controllers for the plan's API endpoints. Mount in `server.js`.\n3. **frontend** — Components and pages from the plan's Key Pages & Components section.\n4. **frontend** — Wire App.jsx with React Router, import ALL components, connect to backend API.\n5. **runner** — last task only; title like Runner: Install Dependencies & Start Servers."
+        }
 
         RULES:
         - Do NOT plan supabase CLI or npm install/dev in build tasks.
         - Frontend tasks must mention wiring components into App.jsx in acceptance_criteria.
         - Backend tasks must mention mounting routes in server.js in acceptance_criteria.
-        - EVERY frontend task must specify REAL UI content with Tailwind CSS styling (NOT placeholders)
-        - Frontend tasks must connect to the backend's real `/api/*` routes via `frontend/src/lib/api.js`.
-        - CRITICAL: Integration task MUST validate React Router v6 syntax (Routes not Switch, element=Component not component=Component)
+        - EVERY frontend task must specify REAL UI content with Tailwind CSS styling (NOT placeholders).
+        - {"Frontend-only tasks must use mock/local state or localStorage. They must NOT connect to `frontend/src/lib/api.js` or any backend route." if frontend_only else "Frontend tasks must connect to the backend's real `/api/*` routes via `frontend/src/lib/api.js`."}
+        - CRITICAL: Integration task MUST validate React Router v6 syntax (Routes not Switch, element=Component not component=Component).
         - CRITICAL: Do NOT create README files, documentation, or placeholder content.
         - CRITICAL: Do NOT create generic landing pages unless the plan specifically asks for them.
 
@@ -638,7 +693,13 @@ class TodoAgent(BaseAgent):
             "Within this list use the ids you assign."
         )
         if frontend_only:
-            fe_prompt += "\n\nIMPORTANT: This is a landing-page/frontend-only request. Keep the scope strictly on UI: sections, components, and App.jsx wiring only. No backend, database, auth, or server tasks."
+            fe_prompt += (
+                "\n\nIMPORTANT: FRONTEND-ONLY SCOPE. Build ALL UI pages and components explicitly requested by the user, "
+                "including login, signup/register, logout, dashboard, profile, settings, and admin panel when requested. "
+                "These are UI/mock interactions only. Use local/mock state or localStorage. "
+                "Do NOT implement real authentication. Do NOT create backend, database, API, server, Supabase, OAuth/JWT, "
+                "migration, Docker backend, or infrastructure tasks. Preserve every requested page; never replace it with a generic landing page."
+            )
 
         async def _scope_call(sys: str, timeout: float, max_tok: int):
             """Call LLM with automatic fallback to deepseek-v4-flash on rate limit."""
@@ -709,7 +770,9 @@ class TodoAgent(BaseAgent):
                 arch = plan.setdefault("architecture", {})
                 arch["tables"] = []
                 arch["api_routes"] = []
-                arch["pages"] = arch.get("pages") or [{"name": "Landing Page", "route": "/", "components": ["HeroSection", "Features", "Testimonials", "CTASection"]}]
+                # Never overwrite the approved pages with a generic landing page.
+                if not isinstance(arch.get("pages"), list):
+                    arch["pages"] = []
             print(f"{LOG} frontend-only request: forcing build scope empty and clearing API/database architecture", flush=True)
         if not isinstance(build_tasks, list):
             print(f"{LOG} ⚠ build scope failed ({build_tasks.get('error') if isinstance(build_tasks, dict) else str(build_tasks)[:150]}) — deterministic fallback", flush=True)
@@ -744,15 +807,81 @@ class TodoAgent(BaseAgent):
                 desc = desc.rstrip()
                 if desc and not desc.endswith((".", "!", "?")):
                     desc += "."
-                desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
+                if frontend_only:
+                    desc += " Use mock/local state or localStorage for interactions. Do NOT call backend APIs or external services."
+                    task["api"] = []
+                else:
+                    desc += f" Connect forms/lists to the backend using `frontend/src/lib/api.js`; {route_hint}"
+                    if not task.get("api") and backend_routes:
+                        task["api"] = list(backend_routes)
                 desc += " Do NOT create duplicate/overlapping components (avoid both Home.jsx and HomePage.jsx); reuse existing component names."
                 task["description"] = desc
-                if not task.get("api") and backend_routes:
-                    task["api"] = list(backend_routes)
 
         tasks = clamp_todo_list(tasks, min_todos=min_todos, max_todos=max_todos, frontend_only=frontend_only)
         tasks = _enforce_file_limit(tasks, max_todos=max_todos)
         tasks = _validate_dependencies(tasks)
+
+        if frontend_only:
+            # Final deterministic guard: Builder must never receive backend or
+            # infrastructure files for a frontend-only request, even if an LLM
+            # accidentally returned them or an integration template reintroduced them.
+            forbidden_prefixes = (
+                "backend/", "server/", "api/", "database/", "db/",
+                "supabase/", "migrations/", "infra/", "infrastructure/"
+            )
+            forbidden_segments = (
+                "/backend/", "/server/", "/database/", "/supabase/",
+                "/migrations/", "/infra/", "/infrastructure/"
+            )
+            forbidden_names = (
+                "server.js", "server.ts", "schema.sql",
+                "docker-compose.yml", "docker-compose.yaml"
+            )
+
+            safe_tasks = []
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                if task.get("category") in ("database", "backend"):
+                    continue
+
+                files = task.get("files", [])
+                if not isinstance(files, list):
+                    files = []
+
+                safe_files = []
+                for file_path in files:
+                    normalized = str(file_path).replace("\\", "/").lower()
+                    if normalized.startswith(forbidden_prefixes):
+                        continue
+                    if any(segment in normalized for segment in forbidden_segments):
+                        continue
+                    if normalized.endswith(forbidden_names):
+                        continue
+                    safe_files.append(file_path)
+
+                task["files"] = safe_files
+                task["api"] = []
+                if task.get("category") == "runner":
+                    task["description"] = (
+                        str(task.get("description") or "")
+                        + " Frontend-only: start only the frontend preview; do not start or create backend/database services."
+                    )
+
+                # Keep tasks that still have real frontend files, plus runner.
+                if safe_files or task.get("category") == "runner":
+                    safe_tasks.append(task)
+
+            tasks = safe_tasks
+
+            # Re-clamp after removing forbidden tasks/files. This also guarantees
+            # the runner remains present without creating backend work.
+            tasks = clamp_todo_list(
+                tasks,
+                min_todos=FRONTEND_ONLY_MIN_TODOS,
+                max_todos=FRONTEND_ONLY_MAX_TODOS,
+                frontend_only=True,
+            )
 
         import re as _re
         for task in tasks:

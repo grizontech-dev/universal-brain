@@ -298,14 +298,6 @@ async def client_execute_in_sandbox(commands_to_run: List[str], entry_file: str,
 
     has_frontend = os.path.isdir(os.path.join(ws_root, "frontend"))
     has_backend = os.path.isdir(os.path.join(ws_root, "backend"))
-    if has_frontend and not has_backend:
-        backend_dir = os.path.join(ws_root, "backend")
-        os.makedirs(backend_dir, exist_ok=True)
-        with open(os.path.join(backend_dir, "server.js"), "w") as bf:
-            bf.write('const express = require("express");\nconst app = express();\napp.get("/api/health", (req, res) => res.json({ status: "ok" }));\napp.listen(3001, "0.0.0.0", () => console.log("Backend running on 3001"));\n')
-        with open(os.path.join(backend_dir, "package.json"), "w") as bf:
-            json.dump({"name": "backend", "version": "1.0.0", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.18.0", "cors": "^2.8.5"}}, bf, indent=2)
-        print(f"{LOG} Created minimal backend/ folder for dual-service mode", flush=True)
 
     # Package workspace to base64
     memory_file = io.BytesIO()
