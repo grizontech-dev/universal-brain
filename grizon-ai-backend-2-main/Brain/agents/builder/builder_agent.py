@@ -22,6 +22,36 @@ from Brain.services.websocket_manager import ws_manager
 LOG = "[BUILDER]"
 
 
+def _is_stopped(session_id: str) -> bool:
+    """Check if the build was stopped by user via STOP_REGISTRY."""
+    try:
+        from Brain.modules.chat.service import get_brain_chat_service
+        return str(session_id) in get_brain_chat_service().STOP_REGISTRY
+    except Exception:
+        return False
+
+
+async def _wait_for_stop(session_id: str, timeout: float = 5.0) -> bool:
+    """Event-driven stop check — wakes immediately when stop signal arrives, zero polling."""
+    try:
+        from Brain.modules.chat.service import get_brain_chat_service
+        svc = get_brain_chat_service()
+        if str(session_id) in svc.STOP_REGISTRY:
+            return True
+        evt = svc.STOP_EVENTS.get(str(session_id))
+        if evt is None:
+            # No event registered yet — fall back to quick registry check
+            return _is_stopped(session_id)
+        # Wait for the event to be set (immediate wake) or timeout (poll fallback)
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return _is_stopped(session_id)
+    except Exception:
+        return _is_stopped(session_id)
+
+
 class ProjectIndex:
     """Caches project filesystem data to avoid repeated os.walk() calls.
     
@@ -302,6 +332,11 @@ class BuilderAgent(BaseAgent):
         MAX_SQL_FAILURES = 3  # Stop if SQL fails 3 times in a row — LLM is stuck
         llm_failed = False  # True if the LLM itself errored out (rate limit etc.)
         while True:
+            # --- Cooperative stop check (mid-task) ---
+            if _is_stopped(session_id):
+                print(f"{LOG} ✖ STOP detected by user — aborting task '{task_title}'", flush=True)
+                break
+
             elapsed = time.time() - start_time
             if elapsed > timeout_sec:
                 print(f"{LOG} ✖ TIMEOUT after {int(elapsed)}s | files_saved={len(files_saved)}", flush=True)
@@ -382,6 +417,11 @@ class BuilderAgent(BaseAgent):
 
             messages.append(response)
 
+            # Stop check after LLM call — don't execute tool calls if user stopped
+            if _is_stopped(session_id):
+                print(f"{LOG} ✖ STOP detected after LLM response — discarding tool calls", flush=True)
+                break
+
             if not response.tool_calls:
                 content_len = len(response.content or "")
                 if content_len == 0 and not _fallback_active:
@@ -396,6 +436,12 @@ class BuilderAgent(BaseAgent):
             stuck = False
             all_skipped = True  # track if every tool call was skipped (no progress)
             for i, tc in enumerate(response.tool_calls):
+                # Stop check mid-tool-execution — don't save remaining files if user stopped
+                if _is_stopped(session_id):
+                    print(f"{LOG} ✖ STOP detected during tool execution — aborting", flush=True)
+                    stuck = True
+                    break
+
                 if time.time() - start_time > timeout_sec:
                     for skipped_tc in response.tool_calls[i:]:
                         messages.append(ToolMessage(
@@ -808,79 +854,116 @@ class BuilderAgent(BaseAgent):
 
                 print(f"{LOG} → Delegating to {agent.name} | task={task_title}", flush=True)
                 
-                # Adaptive timeout based on task complexity
-                task_desc = current_task.get("description", "") + current_task.get("title", "")
-                if category == "database" or "database" in task_desc.lower() or "schema" in task_desc.lower() or "seed" in task_desc.lower():
-                    subagent_timeout = 360  # 6 min for database tasks (DeepSeek can be slow)
-                elif len(task_desc) > 200 or "dashboard" in task_desc.lower() or "complex" in task_desc.lower():
-                    subagent_timeout = 300  # 5 min for complex tasks
-                elif len(task_desc) > 100:
-                    subagent_timeout = 240  # 4 min for medium tasks
-                else:
-                    subagent_timeout = 180  # 3 min for simple tasks
-                
-                result = await asyncio.wait_for(
-                    agent.execute(current_task, state),
-                    timeout=subagent_timeout
-                )
-
-                # Save files from sub-agent result
-                files_saved = []
-                if isinstance(result, dict) and "files" in result:
-                    from Brain.agents.builder.mcp_tools import client_save_code
-                    for file_entry in result["files"]:
-                        if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
-                            file_path = file_entry.get("path", "")
-                            if not file_path or not file_path.strip():
-                                continue
-                            file_content = file_entry["content"]
-                            # Skip empty content — sub-agent already saved via tool calls
-                            if not file_content:
-                                # Verify file exists on disk before skipping
-                                ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
-                                full_check = os.path.join(ws_root, file_path) if ws_root and file_path else None
-                                if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
-                                    files_saved.append(file_path)
-                                    print(f"{LOG} ✓ [{len(files_saved)}] Verified on disk: {file_path}", flush=True)
-                                    continue
-                                else:
-                                    print(f"{LOG} ⚠ File not found on disk: {file_path}", flush=True)
-                                    continue
-                            try:
-                                save_result = await client_save_code.ainvoke(
-                                    {"code_content": file_content, "file_path": file_path},
-                                    config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}
-                                )
-                                files_saved.append(file_path)
-                                print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)
-                            except Exception as save_err:
-                                print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
-
-                # Recover files from task file saves log if sub-agent saved files via tool calls
-                try:
-                    from Brain.agents.builder.mcp_tools import get_task_file_saves
-                    mcp_saves = get_task_file_saves()
-                    for s in mcp_saves:
-                        s_path = s.get("path", "")
-                        if s_path and s_path not in files_saved:
-                            ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
-                            full_check = os.path.join(ws_root, s_path) if ws_root else None
-                            if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
-                                files_saved.append(s_path)
-                                print(f"{LOG} ✓ [{len(files_saved)}] Recovered from task saves log: {s_path}", flush=True)
-                except Exception as rec_err:
-                    print(f"{LOG} ⚠ Task saves recovery notice: {rec_err}", flush=True)
-
-                summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
-                print(f"{LOG} ⚠ Sub-agent result: files={len(result.get('files', [])) if isinstance(result, dict) else 'N/A'} | files_saved={len(files_saved)} | summary={summary[:100]}", flush=True)
-                if not files_saved:
-                    # Sub-agent produced no files (e.g. empty LLM response) —
-                    # never mark the task done. Fall back to the builder loop.
-                    print(f"{LOG} ✖ TASK INCOMPLETE: '{task_title}' saved 0 files via {agent.name} — falling back to builder loop", flush=True)
+                # --- Cooperative stop check before sub-agent ---
+                if _is_stopped(session_id):
+                    print(f"{LOG} ✖ STOP detected before sub-agent '{agent.name}'", flush=True)
                     output_content = None
                 else:
-                    output_content = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}\n{summary}"
-                    print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)} via {agent.name}", flush=True)
+                    # Adaptive timeout based on task complexity
+                    task_desc = current_task.get("description", "") + current_task.get("title", "")
+                    if category == "database" or "database" in task_desc.lower() or "schema" in task_desc.lower() or "seed" in task_desc.lower():
+                        subagent_timeout = 360  # 6 min for database tasks (DeepSeek can be slow)
+                    elif len(task_desc) > 200 or "dashboard" in task_desc.lower() or "complex" in task_desc.lower():
+                        subagent_timeout = 300  # 5 min for complex tasks
+                    elif len(task_desc) > 100:
+                        subagent_timeout = 240  # 4 min for medium tasks
+                    else:
+                        subagent_timeout = 180  # 3 min for simple tasks
+
+                    # Run sub-agent with event-driven stop monitoring (zero polling)
+                    sub_task = asyncio.create_task(agent.execute(current_task, state))
+                    stop_task = asyncio.create_task(_wait_for_stop(session_id, timeout=subagent_timeout))
+
+                    try:
+                        done, pending = await asyncio.wait(
+                            [sub_task, stop_task],
+                            timeout=subagent_timeout,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in pending:
+                            t.cancel()
+                            try:
+                                await t
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                        if _is_stopped(session_id):
+                            print(f"{LOG} ✖ STOP detected during sub-agent '{agent.name}' execution", flush=True)
+                            output_content = None
+                            yield {"status": "stopped"}
+                            return
+                        result = None
+                        for t in done:
+                            if not t.cancelled():
+                                result = t.result()
+                                break
+                    except asyncio.TimeoutError:
+                        print(f"{LOG} ✖ Sub-agent '{agent.name}' timed out after {subagent_timeout}s", flush=True)
+                        result = None
+
+                    # --- Cooperative stop check after sub-agent completes ---
+                    if _is_stopped(session_id):
+                        print(f"{LOG} ✖ STOP detected after sub-agent '{agent.name}' completed", flush=True)
+                        output_content = None
+                        yield {"status": "stopped"}
+                        return
+
+                    # Save files from sub-agent result
+                    files_saved = []
+                    if isinstance(result, dict) and "files" in result:
+                        from Brain.agents.builder.mcp_tools import client_save_code
+                        for file_entry in result["files"]:
+                            if isinstance(file_entry, dict) and "path" in file_entry and "content" in file_entry:
+                                file_path = file_entry.get("path", "")
+                                if not file_path or not file_path.strip():
+                                    continue
+                                file_content = file_entry["content"]
+                                # Skip empty content — sub-agent already saved via tool calls
+                                if not file_content:
+                                    # Verify file exists on disk before skipping
+                                    ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
+                                    full_check = os.path.join(ws_root, file_path) if ws_root and file_path else None
+                                    if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
+                                        files_saved.append(file_path)
+                                        print(f"{LOG} ✓ [{len(files_saved)}] Verified on disk: {file_path}", flush=True)
+                                        continue
+                                    else:
+                                        print(f"{LOG} ⚠ File not found on disk: {file_path}", flush=True)
+                                        continue
+                                try:
+                                    save_result = await client_save_code.ainvoke(
+                                        {"code_content": file_content, "file_path": file_path},
+                                        config={"configurable": {"thread_id": session_id, "task_title": task_title, "user_id": user_id}}
+                                    )
+                                    files_saved.append(file_path)
+                                    print(f"{LOG} ✓ [{len(files_saved)}] Saved: {file_path} ({len(file_content)} chars)", flush=True)
+                                except Exception as save_err:
+                                    print(f"{LOG} ✖ Failed to save {file_path}: {save_err}", flush=True)
+
+                    # Recover files from task file saves log if sub-agent saved files via tool calls
+                    try:
+                        from Brain.agents.builder.mcp_tools import get_task_file_saves
+                        mcp_saves = get_task_file_saves()
+                        for s in mcp_saves:
+                            s_path = s.get("path", "")
+                            if s_path and s_path not in files_saved:
+                                ws_root = workspace_manager.resolve_workspace_path(session_id, user_id=user_id)
+                                full_check = os.path.join(ws_root, s_path) if ws_root else None
+                                if full_check and os.path.isfile(full_check) and os.path.getsize(full_check) > 0:
+                                    files_saved.append(s_path)
+                                    print(f"{LOG} ✓ [{len(files_saved)}] Recovered from task saves log: {s_path}", flush=True)
+                    except Exception as rec_err:
+                        print(f"{LOG} ⚠ Task saves recovery notice: {rec_err}", flush=True)
+
+                    summary = result.get("summary", f"Task completed via {agent.name}") if isinstance(result, dict) else "Task completed"
+                    print(f"{LOG} ⚠ Sub-agent result: files={len(result.get('files', [])) if isinstance(result, dict) else 'N/A'} | files_saved={len(files_saved)} | summary={summary[:100]}", flush=True)
+                    if not files_saved:
+                        # Sub-agent produced no files (e.g. empty LLM response) —
+                        # never mark the task done. Fall back to the builder loop.
+                        print(f"{LOG} ✖ TASK INCOMPLETE: '{task_title}' saved 0 files via {agent.name} — falling back to builder loop", flush=True)
+                        output_content = None
+                    else:
+                        output_content = f"Task '{task_title}' completed. Files saved: {', '.join(files_saved)}\n{summary}"
+                        print(f"{LOG} ✓ TASK DONE: '{task_title}' | files_saved={len(files_saved)} via {agent.name}", flush=True)
 
             except asyncio.TimeoutError:
                 print(f"{LOG} ✖ Sub-agent timeout for '{task_title}', falling back to builder loop", flush=True)

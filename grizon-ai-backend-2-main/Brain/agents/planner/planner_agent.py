@@ -3,6 +3,7 @@ import json
 import os
 from Brain.shared.agent import BaseAgent
 from Brain.shared.db_storage_mode import resolve_db_storage_mode
+from Brain.agents.builder.builder_agent import _is_stopped
 from langchain_core.messages import SystemMessage, HumanMessage
 from Brain.modules.connectors.supabase.service import SupabaseOAuthService
 
@@ -144,6 +145,16 @@ class PlannerAgent(BaseAgent):
         """
         prompt = state.get("content", "")
         print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | has_feedback={bool(state.get('plan_feedback'))}", flush=True)
+
+        # Resume build without approval — re-show existing plan, skip LLM
+        if prompt == "__RESUME_BUILD__":
+            existing_plan = state.get("project_plan", {})
+            if existing_plan:
+                print(f"{LOG} Resume build: re-showing existing plan '{existing_plan.get('project_name', 'N/A')}'", flush=True)
+                state["project_report"] = existing_plan.get("markdown_plan", "")
+                return state
+            # No existing plan — fall through to generate one
+
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
         frontend_only = _is_frontend_only_request(prompt, history)
@@ -331,7 +342,21 @@ ANTI-HALLUCINATION:
             if feedback:
                 messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
 
+        # Stop check before expensive LLM call
+        session_id = state.get("current_job_id") or state.get("conversation_id", "")
+        if _is_stopped(session_id):
+            print(f"{LOG} STOPPED before LLM call", flush=True)
+            state["status"] = "stopped"
+            return state
+
         response_content = await self.chat(messages, timeout=90, max_tokens=2000)
+
+        # Stop check AFTER LLM call — if user stopped during LLM, discard result
+        if _is_stopped(session_id):
+            print(f"{LOG} STOPPED after LLM call — discarding result", flush=True)
+            state["status"] = "stopped"
+            return state
+
         print(f"{LOG} 📄 Planner raw response length: {len(response_content)}", flush=True)
         print(f"{LOG} ─ HEAD: {response_content[:2000]}", flush=True)
         print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)
@@ -370,7 +395,17 @@ ANTI-HALLUCINATION:
                 if feedback:
                     light_messages.append(HumanMessage(content=f"User Feedback on Plan: {feedback}"))
             print(f"{LOG} Retrying planner with light prompt...", flush=True)
+            # Stop check before retry LLM call
+            if _is_stopped(session_id):
+                print(f"{LOG} STOPPED before retry LLM call", flush=True)
+                state["status"] = "stopped"
+                return state
             response_content = await self.chat(light_messages, timeout=45, max_tokens=1000)
+            # Stop check AFTER retry LLM call
+            if _is_stopped(session_id):
+                print(f"{LOG} STOPPED after retry LLM call — discarding result", flush=True)
+                state["status"] = "stopped"
+                return state
             print(f"{LOG} 📄 Planner LIGHT retry raw response length: {len(response_content)}", flush=True)
             print(f"{LOG} ─ HEAD: {response_content[:2000]}", flush=True)
             print(f"{LOG} ─ TAIL: {response_content[-1000:]}", flush=True)

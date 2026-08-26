@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Brain.agents.builder.mcp_tools import client_save_code
+from Brain.agents.builder.builder_agent import _is_stopped
 from Brain.services.websocket_manager import ws_manager
 from Brain.services.workspace_manager import workspace_manager
 
@@ -1130,6 +1131,13 @@ class ValidationGate:
         previous_fingerprints: Set[str] = set()
 
         for attempt in range(1, self.max_repair_attempts + 1):
+            # Cooperative stop check — exit validation loop immediately
+            if _is_stopped(self.session_id):
+                print(f"{LOG} STOPPED at validation attempt {attempt}", flush=True)
+                state["status"] = "stopped"
+                await self._emit_status("stopped", attempt=attempt)
+                return {"passed": False, "attempts": attempt, "stopped": True, "errors": [], "warnings": []}
+
             self._current_attempt = attempt  # used by _check_build_contract for warning→error escalation
             state["status"] = "validating"
             await self._emit_status("validating", attempt=attempt)
@@ -1148,6 +1156,13 @@ class ValidationGate:
                     asyncio.to_thread(self._check_eslint_quality),
                     asyncio.to_thread(self._check_build_contract),
                 )
+                # Stop check after parallel static checks
+                if _is_stopped(self.session_id):
+                    print(f"{LOG} STOPPED after static checks at attempt {attempt}", flush=True)
+                    state["status"] = "stopped"
+                    await self._emit_status("stopped", attempt=attempt)
+                    return {"passed": False, "attempts": attempt, "stopped": True, "errors": [], "warnings": []}
+
                 imp_errors, imp_warns = imp_result
                 build_errors, build_warns = build_result
                 quality_errors, quality_warns = quality_result
@@ -1167,6 +1182,13 @@ class ValidationGate:
                     asyncio.to_thread(self._run_backend_smoke_test, backend_dir),
                     asyncio.to_thread(self._run_frontend_smoke_test),
                 )
+                # Stop check after runtime smoke tests
+                if _is_stopped(self.session_id):
+                    print(f"{LOG} STOPPED after runtime checks at attempt {attempt}", flush=True)
+                    state["status"] = "stopped"
+                    await self._emit_status("stopped", attempt=attempt)
+                    return {"passed": False, "attempts": attempt, "stopped": True, "errors": [], "warnings": []}
+
                 runtime_errors = runtime_backend[0] + runtime_frontend[0]
                 runtime_warns = runtime_backend[1] + runtime_frontend[1]
 
@@ -1216,6 +1238,13 @@ class ValidationGate:
                 }
 
             # Trigger REPAIR AGENT with TARGETED context & stagnant error warnings
+            # Stop check before expensive LLM repair
+            if _is_stopped(self.session_id):
+                print(f"{LOG} STOPPED before repair at attempt {attempt}", flush=True)
+                state["status"] = "stopped"
+                await self._emit_status("stopped", attempt=attempt)
+                return {"passed": False, "attempts": attempt, "stopped": True, "errors": [], "warnings": []}
+
             state["status"] = "repairing"
             await self._emit_status("repairing", attempt=attempt, errors=all_errors)
 
@@ -1502,6 +1531,11 @@ class ValidationGate:
             print(f"{LOG} [ERROR] Repair LLM not provided -- skipping repair pass", flush=True)
             return False
 
+        # Stop check before expensive LLM repair call
+        if _is_stopped(self.session_id):
+            print(f"{LOG} STOPPED before LLM repair call", flush=True)
+            return False
+
         try:
             bound_llm = self.llm.bind_tools([client_save_code])
             messages = [
@@ -1510,12 +1544,23 @@ class ValidationGate:
             ]
 
             response = await asyncio.wait_for(bound_llm.ainvoke(messages), timeout=180)
+
+            # Stop check after LLM call — don't save files if user stopped
+            if _is_stopped(self.session_id):
+                print(f"{LOG} STOPPED after LLM repair call — discarding results", flush=True)
+                return False
+
             if not response or not hasattr(response, "tool_calls") or not response.tool_calls:
                 print(f"{LOG} [WARN] Repair LLM returned no tool calls", flush=True)
                 return False
 
             fixed_count = 0
             for tc in response.tool_calls:
+                # Stop check mid-save — don't save remaining files if user stopped
+                if _is_stopped(self.session_id):
+                    print(f"{LOG} STOPPED during repair file saves — aborting", flush=True)
+                    return fixed_count > 0
+
                 if tc.get("name") == "client_save_code":
                     tool_args = tc.get("args", {})
                     file_path = tool_args.get("file_path", "")

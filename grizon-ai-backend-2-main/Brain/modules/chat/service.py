@@ -82,6 +82,7 @@ class BrainChatService:
     def __init__(self):
         self.workflow = self._create_workflow()
         self.STOP_REGISTRY = set()
+        self.STOP_EVENTS: Dict[str, asyncio.Event] = {}  # Per-conversation stop signal
         self.ACTIVE_BUILDS: Dict[str, Any] = {}
 
     def is_build_active(self, conversation_id: str) -> bool:
@@ -150,7 +151,7 @@ class BrainChatService:
         return "builder"
 
     def route_after_ingress(self, state: BrainState) -> str:
-        if state.get("resume_build") and state.get("plan"):
+        if state.get("resume_build") and state.get("plan") and state.get("plan_approved"):
             return "resume"
         status = state.get("status")
         if status == "needs_clarification":
@@ -174,8 +175,19 @@ class BrainChatService:
 
     async def node_manager(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [analyze_ingress] started", flush=True)
+
+        # Stop check before manager agent
+        conv_id = state.get("conversation_id", "")
+        if conv_id in self.STOP_REGISTRY:
+            print(f"[CHAT-SERVICE] STOPPED before analyze_ingress", flush=True)
+            state["status"] = "stopped"
+            return state
+
         if state.get("resume_build"):
-            return {"status": "plan_approved", "plan_approved": True, "resume_build": True}
+            # Only auto-approve if plan was ACTUALLY approved before stopping
+            if state.get("plan_approved"):
+                return {"status": "plan_approved", "plan_approved": True, "resume_build": True}
+            # Plan not approved — fall through to normal manager flow (will route to plan review)
 
         content = state.get("content", "").lower()
         if "approve" in content or "✅ plan approved" in content:
@@ -208,9 +220,17 @@ class BrainChatService:
                 "thoughts": thoughts
             }
 
-        # If this is a follow-up (i.e. plan was previously approved), auto-approve new tasks
+        # If this is a follow-up AND build was already running (has completed tasks), auto-approve
+        # But if user is requesting plan changes (no completed tasks yet), DON'T auto-approve
         if was_ever_approved:
-            state["plan_approved"] = True
+            _has_completed_tasks = any(
+                (m.get("metadata") or {}).get("agentStep") in ("create_tasks", "execute_sandbox")
+                for m in state.get("messages", [])
+                if isinstance(m, dict)
+            )
+            if _has_completed_tasks:
+                state["plan_approved"] = True
+            # else: plan was approved before but user is requesting changes — don't auto-approve
 
         agent = ManagerAgent()
         result = await agent.execute(state)
@@ -219,6 +239,14 @@ class BrainChatService:
 
     async def node_clarifier(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [recursive_clarify] started", flush=True)
+
+        # Stop check before clarifier agent
+        conv_id = state.get("conversation_id", "")
+        if conv_id in self.STOP_REGISTRY:
+            print(f"[CHAT-SERVICE] STOPPED before recursive_clarify", flush=True)
+            state["status"] = "stopped"
+            return state
+
         leader_analysis = state.get("leader_analysis", {})
         if isinstance(leader_analysis, dict) and leader_analysis.get("questions"):
             print("DEBUG: NODE [recursive_clarify] single-pass fast path", flush=True)
@@ -242,8 +270,23 @@ class BrainChatService:
 
     async def node_planner(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [strategic_plan] started", flush=True)
+
+        # Stop check before planner agent
+        conv_id = state.get("conversation_id", "")
+        if conv_id in self.STOP_REGISTRY:
+            print(f"[CHAT-SERVICE] STOPPED before strategic_plan", flush=True)
+            state["status"] = "stopped"
+            return state
+
         agent = PlannerAgent()
         state = await agent.execute(state)
+
+        # Stop check after planner agent — if stopped during LLM, discard result
+        if state.get("status") == "stopped" or conv_id in self.STOP_REGISTRY:
+            print(f"[CHAT-SERVICE] STOPPED after strategic_plan — discarding plan", flush=True)
+            state["status"] = "stopped"
+            return state
+
         state["report"] = state.get("project_report")
 
         # Safety: ensure project_plan is always a dict
@@ -266,6 +309,13 @@ class BrainChatService:
 
     async def node_todo(self, state: BrainState) -> Dict[str, Any]:
         print("DEBUG: NODE [create_tasks] started", flush=True)
+
+        # Stop check before expensive LLM task generation
+        conv_id = state.get("conversation_id", "")
+        if conv_id in self.STOP_REGISTRY:
+            print(f"[CHAT-SERVICE] STOPPED before create_tasks", flush=True)
+            state["status"] = "stopped"
+            return state
 
         # Safety: ensure project_plan is a dict, not a string
         pp = state.get("project_plan")
@@ -424,7 +474,7 @@ class BrainChatService:
         }
         return mapping.get(node_name, (state.get("status", "unknown"), node_name))
 
-    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str, credits_deducted: int = 0):
+    def _save_phase_message(self, conv_id: str, state: Dict[str, Any], node_name: str, credits_deducted: int = 0, elapsed_seconds: int = 0):
         """Save a phase message to the conversation DB."""
         report = state.get("report") or state.get("progress_msg") or ""
         leader_analysis = state.get("leader_analysis") or {}
@@ -438,6 +488,7 @@ class BrainChatService:
             "planApproved": state.get("plan_approved", False),
             "thoughts": thoughts,
             "current_task_index": state.get("current_task_index", 0),
+            "durationSeconds": elapsed_seconds,
         }
         conversation_service.save_message(
             conv_id, "ASSISTANT", report,
@@ -612,6 +663,24 @@ class BrainChatService:
                     except StopAsyncIteration:
                         break
                     if initial_state["conversation_id"] in self.STOP_REGISTRY:
+                        # Persist stopped state so resume works after reload
+                        try:
+                            _conv_id = initial_state["conversation_id"]
+                            conversation_service.save_message(
+                                _conv_id, "ASSISTANT",
+                                "Build interrupted by user. Press Continue to resume from where it stopped.",
+                                todo_list=_saved_plan or [],
+                                sandbox_job=initial_state.get("sandbox_job"),
+                                metadata={
+                                    "agentStep": "stopped",
+                                    "planApproved": _saved_plan_approved,
+                                    "current_task_index": initial_state.get("current_task_index", 0),
+                                    "durationSeconds": round(_t.time() - _t_begin),
+                                },
+                            )
+                            print(f"[CHAT-SERVICE] Phase-1 STOP: Persisted stopped state for conv {_conv_id}", flush=True)
+                        except Exception as _stop_err:
+                            print(f"[CHAT-SERVICE] Phase-1 STOP: Failed to persist: {_stop_err}", flush=True)
                         yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
                         break
 
@@ -652,7 +721,7 @@ class BrainChatService:
                             _saved_plan_approved = initial_state.get("plan_approved", False)
                         report = node_data.get("report") or node_data.get("progress_msg")
                         if node_name == "init_sandbox":
-                            self._save_phase_message(conv_id, initial_state, node_name, deducted_credits)
+                            self._save_phase_message(conv_id, initial_state, node_name, deducted_credits, round(_t.time() - _t_begin))
 
                         if report or node_name in ("recursive_clarify", "strategic_plan"):
                             if node_name == "strategic_plan":
@@ -671,6 +740,7 @@ class BrainChatService:
                             todo_list = initial_state.get("plan")
                             sandbox_job = initial_state.get("sandbox_job")
                             leader_analysis = initial_state.get("leader_analysis") or {}
+                            elapsed_seconds = round(_t.time() - _t_begin)
                             metadata = {
                                 "planContent": initial_state.get("project_plan"),
                                 "agentStep": node_name,
@@ -678,6 +748,7 @@ class BrainChatService:
                                 "planApproved": initial_state.get("plan_approved", False),
                                 "thoughts": thoughts,
                                 "current_task_index": initial_state.get("current_task_index", 0),
+                                "durationSeconds": elapsed_seconds,
                             }
                             conversation_service.save_message(
                                 conv_id, "ASSISTANT", report or "",
@@ -813,18 +884,8 @@ class BrainChatService:
                             deducted_credits = target_credits
 
                     print(f"[Brain] Execution stopped by user. Bypassing Phase 3 (Runner). Index: {state.get('current_task_index', 0)}")
-                    conversation_service.save_message(
-                        conv_id, "ASSISTANT", state.get("report") or "Build execution stopped.",
-                        todo_list=list(plan),
-                        sandbox_job=state.get("sandbox_job"),
-                        metadata={
-                            "planContent": state.get("project_plan"),
-                            "agentStep": "execute_sandbox",
-                            "planApproved": True,
-                            "current_task_index": state.get("current_task_index", 0),
-                        },
-                        credits_deducted=deducted_credits
-                    )
+                    # Note: message already saved by BG-TASK stop handler
+                    yield "data: " + json.dumps({"status": "stopped"}) + "\n\n"
                     return
 
                 # Phase 3: Runner — the builder already ran RunnerAgent after
@@ -969,30 +1030,86 @@ class BrainChatService:
         current_index = 0
 
         if resume_build and conv_id and conv_id != "new":
-            # Clear STOP_REGISTRY so builder loop can run again
+            # Clear STOP_REGISTRY and STOP_EVENT so builder loop can run again
             self.STOP_REGISTRY.discard(conv_id)
+            self.STOP_EVENTS.pop(str(conv_id), None)
             messages = conversation_service.get_messages(conv_id)
             plan = latest_todo_list_from_messages(messages)
             current_index, _ = compute_resume_index(plan)
+
+            # Restore original user content (first human message) for sub-agent context
+            original_content = ""
+            for msg in messages:
+                if msg.get("role") == "human" and msg.get("content"):
+                    original_content = msg.get("content", "")
+                    break
+            # Restore project_plan from conversation metadata if available
+            original_plan = {}
+            for msg in reversed(messages):
+                meta = msg.get("metadata") or {}
+                plan_content = meta.get("planContent")
+                if plan_content:
+                    original_plan = plan_content if isinstance(plan_content, dict) else {}
+                    break
+        else:
+            original_content = request.get("content") or ""
+            original_plan = request.get("approved_plan") or {}
+            # For follow-up messages on existing conversations, load existing plan from DB
+            if conv_id and conv_id != "new":
+                try:
+                    _existing_msgs = conversation_service.get_messages(conv_id)
+                    # Load existing todoList (plan with task statuses)
+                    _existing_plan = latest_todo_list_from_messages(_existing_msgs)
+                    if _existing_plan:
+                        plan = _existing_plan
+                        current_index, _ = compute_resume_index(plan)
+                    # Load existing project_plan (architecture/spec)
+                    for _msg in reversed(_existing_msgs):
+                        _meta = _msg.get("metadata") or {}
+                        if isinstance(_meta, str):
+                            continue
+                        _pp = _meta.get("planContent")
+                        if _pp:
+                            original_plan = _pp if isinstance(_pp, dict) else {}
+                            break
+                except Exception:
+                    pass
 
         project_id = self._get_or_create_project_id(conv_id, request.get("project_id"))
         session_id = conv_id if conv_id != "new" else str(uuid.uuid4())
         mg = MemoryGateway(project_id=project_id, session_id=session_id)
 
+        # Check if plan was actually approved before stopping
+        _was_plan_approved = False
+        if resume_build and conv_id and conv_id != "new":
+            try:
+                _check_msgs = conversation_service.get_messages(conv_id)
+                for _cm in reversed(_check_msgs):
+                    _cm_meta = _cm.get("metadata") or {}
+                    if isinstance(_cm_meta, str):
+                        continue
+                    # Only "create_tasks" or "execute_sandbox" means plan was approved
+                    # "stopped" does NOT mean approved — it means interrupted
+                    if _cm_meta.get("planApproved") and _cm_meta.get("agentStep") in ("create_tasks", "execute_sandbox"):
+                        _was_plan_approved = True
+                        break
+            except Exception:
+                pass
+
         return {
             "user_id": request["user_id"],
             "conversation_id": conv_id,
-            "content": request.get("content") or "",
+            "content": original_content,
             "repo_url": request.get("repo_url"),
             "intent_confidence": 0.0,
             "plan": plan,
-            "project_plan": request.get("approved_plan") or {},
+            "project_plan": original_plan,
             "project_report": "",
             "questions_data": {},
             "status": "starting",
             "messages": [],
             "leader_analysis": {},
-            "plan_approved": bool(request.get("plan_approved")) or resume_build,
+            "plan_approved": bool(request.get("plan_approved")) or (resume_build and len(plan) > 0 and _was_plan_approved),
             "plan_feedback": None,
             "current_task_index": current_index,
             "executed_tasks": [],
@@ -1039,6 +1156,11 @@ class BrainChatService:
     async def _run_builder_background(self, state, plan, conv_id, mg):
         """Phase 2: Run builder loop in background task (survives client disconnect)."""
         import asyncio
+        import time as _bg_time
+        _bg_start_time = _bg_time.time()
+        # Register a per-conversation asyncio.Event for immediate stop signaling
+        stop_event = asyncio.Event()
+        self.STOP_EVENTS[str(conv_id)] = stop_event
         print(f"[CHAT-SERVICE] BG-TASK: Builder background task started | {len(plan)} tasks", flush=True)
         try:
             agent = BuilderAgent()
@@ -1053,6 +1175,24 @@ class BrainChatService:
                 # --- Cooperative stop check (mid-task) ---
                 if str(conv_id) in self.STOP_REGISTRY:
                     print(f"[CHAT-SERVICE] BG-TASK: STOP detected at task {state.get('current_task_index', 0)}/{len(plan)}", flush=True)
+                    # Persist the stopped state FIRST so frontend sees it on reload
+                    try:
+                        conversation_service.save_message(
+                            conv_id, "ASSISTANT",
+                            "Build interrupted by user. Press Continue to resume from where it stopped.",
+                            todo_list=list(plan),
+                            sandbox_job=state.get("sandbox_job"),
+                            metadata={
+                                "agentStep": "stopped",
+                                "planApproved": True,
+                                "current_task_index": state.get("current_task_index", 0),
+                                "durationSeconds": round(_bg_time.time() - _bg_start_time),
+                            },
+                        )
+                        print(f"[CHAT-SERVICE] BG-TASK: Persisted stopped state at index {state.get('current_task_index', 0)}", flush=True)
+                    except Exception as save_err:
+                        print(f"[CHAT-SERVICE] BG-TASK: Failed to persist stopped state: {save_err}", flush=True)
+                    # THEN broadcast WebSocket so frontend updates in real-time
                     try:
                         await ws_manager.broadcast_to_sandbox(str(conv_id), {
                             "type": "stopped",
@@ -1061,22 +1201,6 @@ class BrainChatService:
                         })
                     except Exception:
                         pass
-                    # Persist the stopped state so resume works later (even after days)
-                    try:
-                        conversation_service.save_message(
-                            conv_id, "ASSISTANT",
-                            "Build stopped by user. Press Continue to resume from where it stopped.",
-                            todo_list=list(plan),
-                            sandbox_job=state.get("sandbox_job"),
-                            metadata={
-                                "agentStep": "stopped",
-                                "planApproved": True,
-                                "current_task_index": state.get("current_task_index", 0),
-                            },
-                        )
-                        print(f"[CHAT-SERVICE] BG-TASK: Persisted stopped state at index {state.get('current_task_index', 0)}", flush=True)
-                    except Exception as save_err:
-                        print(f"[CHAT-SERVICE] BG-TASK: Failed to persist stopped state: {save_err}", flush=True)
                     return
 
                 iteration_count += 1
@@ -1131,6 +1255,35 @@ class BrainChatService:
 
                 try:
                     async for ev in agent.execute(state):
+                        # --- Cooperative stop check after each yield from builder ---
+                        if str(conv_id) in self.STOP_REGISTRY:
+                            print(f"[CHAT-SERVICE] BG-TASK: STOP detected during task {index+1} execution", flush=True)
+                            # Persist FIRST
+                            try:
+                                conversation_service.save_message(
+                                    conv_id, "ASSISTANT",
+                                    "Build interrupted by user. Press Continue to resume from where it stopped.",
+                                    todo_list=list(plan),
+                                    sandbox_job=state.get("sandbox_job"),
+                                    metadata={
+                                        "agentStep": "stopped",
+                                        "planApproved": True,
+                                        "current_task_index": state.get("current_task_index", 0),
+                                        "durationSeconds": round(_bg_time.time() - _bg_start_time),
+                                    },
+                                )
+                            except Exception:
+                                pass
+                            # THEN broadcast
+                            try:
+                                await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                                    "type": "stopped",
+                                    "plan": plan,
+                                    "current_task_index": state.get("current_task_index", 0),
+                                })
+                            except Exception:
+                                pass
+                            return
                         if isinstance(ev, dict):
                             state.update(ev)
                         else:
@@ -1156,29 +1309,32 @@ class BrainChatService:
 
                 last_completed_index = max(last_completed_index, state.get("current_task_index", 0) - 1)
 
-                # --- Stop check after task completes (before persisting next progress) ---
+                # --- Stop check after task completes ---
                 if str(conv_id) in self.STOP_REGISTRY:
                     print(f"[CHAT-SERVICE] BG-TASK: STOP detected after task {index} completed", flush=True)
-                    try:
-                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
-                            "type": "stopped",
-                            "plan": plan,
-                            "current_task_index": state.get("current_task_index", 0),
-                        })
-                    except Exception:
-                        pass
+                    # Persist FIRST
                     try:
                         conversation_service.save_message(
                             conv_id, "ASSISTANT",
-                            "Build stopped by user. Press Continue to resume from where it stopped.",
+                            "Build interrupted by user. Press Continue to resume from where it stopped.",
                             todo_list=list(plan),
                             sandbox_job=state.get("sandbox_job"),
                             metadata={
                                 "agentStep": "stopped",
                                 "planApproved": True,
                                 "current_task_index": state.get("current_task_index", 0),
+                                "durationSeconds": round(_bg_time.time() - _bg_start_time),
                             },
                         )
+                    except Exception:
+                        pass
+                    # THEN broadcast
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "stopped",
+                            "plan": plan,
+                            "current_task_index": state.get("current_task_index", 0),
+                        })
                     except Exception:
                         pass
                     return
@@ -1244,6 +1400,34 @@ class BrainChatService:
 
             # Execute Validation Gate if not already completed
             if state.get("status") not in ("validation_passed", "validation_failed"):
+                # Stop check before validation gate
+                if str(conv_id) in self.STOP_REGISTRY:
+                    print(f"[CHAT-SERVICE] BG-TASK: STOP detected before Validation Gate", flush=True)
+                    try:
+                        conversation_service.save_message(
+                            conv_id, "ASSISTANT",
+                            "Build interrupted by user. Press Continue to resume from where it stopped.",
+                            todo_list=list(plan),
+                            sandbox_job=state.get("sandbox_job"),
+                            metadata={
+                                "agentStep": "stopped",
+                                "planApproved": True,
+                                "current_task_index": state.get("current_task_index", 0),
+                                "durationSeconds": round(_bg_time.time() - _bg_start_time),
+                            },
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                            "type": "stopped",
+                            "plan": plan,
+                            "current_task_index": state.get("current_task_index", 0),
+                        })
+                    except Exception:
+                        pass
+                    return
+
                 print(f"[CHAT-SERVICE] BG-TASK: All tasks finished — executing Validation Gate", flush=True)
                 from Brain.agents.builder.validation_gate import ValidationGate
                 val_gate = ValidationGate(agent.llm, conv_id, user_id=state.get("user_id"))
@@ -1272,6 +1456,34 @@ class BrainChatService:
                     t["status"] = "completed"
 
             # Runner phase
+            # Stop check before runner
+            if str(conv_id) in self.STOP_REGISTRY:
+                print(f"[CHAT-SERVICE] BG-TASK: STOP detected before Runner", flush=True)
+                try:
+                    conversation_service.save_message(
+                        conv_id, "ASSISTANT",
+                        "Build interrupted by user. Press Continue to resume from where it stopped.",
+                        todo_list=list(plan),
+                        sandbox_job=state.get("sandbox_job"),
+                        metadata={
+                            "agentStep": "stopped",
+                            "planApproved": True,
+                            "current_task_index": state.get("current_task_index", 0),
+                            "durationSeconds": round(_bg_time.time() - _bg_start_time),
+                        },
+                    )
+                except Exception:
+                    pass
+                try:
+                    await ws_manager.broadcast_to_sandbox(str(conv_id), {
+                        "type": "stopped",
+                        "plan": plan,
+                        "current_task_index": state.get("current_task_index", 0),
+                    })
+                except Exception:
+                    pass
+                return
+
             print(f"[CHAT-SERVICE] BG-TASK: All tasks & validation passed — running runner", flush=True)
             runner = RunnerAgent()
             runner_state = state
@@ -1299,11 +1511,79 @@ class BrainChatService:
             print(f"[CHAT-SERVICE] BG-TASK: FATAL ERROR: {type(e).__name__}: {e}", flush=True)
             import traceback
             traceback.print_exc()
+        finally:
+            # Cleanup: remove the stop event for this conversation
+            self.STOP_EVENTS.pop(str(conv_id), None)
 
     def stop_execution(self, conversation_id: str):
-        """Stops an active conversation execution."""
+        """Stops an active conversation execution. Kills sandbox only if no tunnel URL (still deploying)."""
         self.STOP_REGISTRY.add(conversation_id)
+        # Signal the event so any awaiting coroutine wakes up immediately
+        evt = self.STOP_EVENTS.get(conversation_id)
+        if evt:
+            evt.set()
+
+        # Kill the sandbox ONLY if it has no tunnel URL (still building/deploying)
+        try:
+            self._kill_sandbox_on_stop(conversation_id)
+        except Exception as e:
+            print(f"[CHAT-SERVICE] WARN: Failed to kill sandbox on stop for {conversation_id}: {e}", flush=True)
+
         return {"status": "stopping", "conversation_id": conversation_id}
+
+    def _kill_sandbox_on_stop(self, conversation_id: str):
+        """Kill the sandbox only if it's still deploying (no tunnel URL yet)."""
+        import asyncio
+
+        # Retrieve sandbox_job from conversation messages
+        messages = conversation_service.get_messages(str(conversation_id))
+        sandbox_job = None
+        for m in reversed(messages):
+            sj = m.get("sandboxJob")
+            if sj and isinstance(sj, dict) and sj.get("job_id"):
+                sandbox_job = sj
+                break
+
+        if not sandbox_job:
+            print(f"[CHAT-SERVICE] No sandbox_job found for {conversation_id}, nothing to kill", flush=True)
+            return
+
+        session_id = sandbox_job.get("job_id")
+        if not session_id:
+            return
+
+        # If tunnel URL exists → sandbox is live and running → DON'T kill it
+        tunnel_url = sandbox_job.get("tunnel_url") or sandbox_job.get("stream_url")
+        if tunnel_url:
+            print(f"[CHAT-SERVICE] Sandbox has live tunnel URL ({session_id}), NOT killing — letting it finish", flush=True)
+            return
+
+        # Also check the in-memory tunnel store as a fallback
+        sandbox_mcp = get_sandbox_mcp_service()
+        existing_tunnel = sandbox_mcp.get_tunnel_url(str(session_id))
+        if existing_tunnel:
+            print(f"[CHAT-SERVICE] Sandbox has live tunnel in memory ({session_id}), NOT killing", flush=True)
+            return
+
+        # No tunnel URL → still deploying → kill it
+        print(f"[CHAT-SERVICE] Sandbox has NO tunnel URL ({session_id}), killing deployment", flush=True)
+
+        async def _do_delete():
+            try:
+                await sandbox_mcp.initialize()
+                result = await sandbox_mcp.delete_sandbox(str(session_id))
+                print(f"[CHAT-SERVICE] Sandbox killed on stop: {session_id} | {result}", flush=True)
+            except Exception as e:
+                print(f"[CHAT-SERVICE] WARN: Sandbox delete failed for {session_id}: {e}", flush=True)
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(_do_delete())
+            else:
+                loop.run_until_complete(_do_delete())
+        except RuntimeError:
+            asyncio.ensure_future(_do_delete())
 
     def get_sandbox_files(self, conversation_id: str, user_id: str = None):
         """Returns the file tree for a given conversation workspace (disk mirror)."""

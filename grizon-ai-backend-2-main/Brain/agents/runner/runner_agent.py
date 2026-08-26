@@ -6,6 +6,7 @@ from Brain.services.sandbox_mcp_service import (
     RUNTIME_SANDBOX_MCP,
 )
 from Brain.services.websocket_manager import ws_manager
+from Brain.agents.builder.builder_agent import _is_stopped
 
 import json
 import os
@@ -26,6 +27,14 @@ class RunnerAgent(BaseAgent):
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         session_id = state.get("current_job_id")
         print(f"{LOG} ═══ EXECUTE ═══ session={session_id} | tasks={len(state.get('plan', []))}", flush=True)
+
+        # Check if build was stopped before runner starts
+        if _is_stopped(session_id):
+            print(f"{LOG} STOPPED before runner started", flush=True)
+            state["status"] = "stopped"
+            yield state
+            return
+
         if not session_id:
             state["run_report"] = "Error: No workspace found."
             yield state
@@ -141,6 +150,13 @@ class RunnerAgent(BaseAgent):
             """Runs outside the HTTP request cancel scope."""
             print(f"[RUNNER] _background_deploy started | session={_sid}")
 
+            # Check stop before deploying
+            if _is_stopped(_sid):
+                print(f"[RUNNER] STOPPED before deploy started", flush=True)
+                _state["status"] = "stopped"
+                _state["run_report"] = "Deploy cancelled by user."
+                return
+
             _user_id = _state.get("user_id")
             print(f"[RUNNER] _background_deploy | user_id={_user_id} | type={type(_user_id).__name__}")
             print(f"[RUNNER] _background_deploy | state keys={list(_state.keys())[:15]}")
@@ -152,6 +168,13 @@ class RunnerAgent(BaseAgent):
             except Exception as e:
                 print(f"[RUNNER] _background_deploy FAILED: {e}")
                 deploy_result = {"status": "error", "error": str(e)}
+
+            # Check stop after deploy completes
+            if _is_stopped(_sid):
+                print(f"[RUNNER] STOPPED after deploy completed", flush=True)
+                _state["status"] = "stopped"
+                _state["run_report"] = "Deploy cancelled by user."
+                return
 
             print(f"[RUNNER] _background_deploy done | status={deploy_result.get('status')} | tunnel={(deploy_result.get('tunnel_url') or 'none')[:80]}")
 

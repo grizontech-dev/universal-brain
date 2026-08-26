@@ -39,6 +39,7 @@ export interface BrainAgentMessageProps {
   buildActivities?: BuildActivity[];
   buildTodos?: BuildTodoItem[];
   isBuildSyncing?: boolean;
+  durationSeconds?: number;
 
 }
 
@@ -65,6 +66,8 @@ export default function BrainAgentMessage({
   buildActivities,
   buildTodos,
   isBuildSyncing,
+  durationSeconds,
+  planSuperseded,
 
 }: BrainAgentMessageProps) {
   const [isCopied, setIsCopied] = useState(false);
@@ -120,6 +123,7 @@ export default function BrainAgentMessage({
                     thoughts={thoughts}
                     timeline={timeline}
                     exploreGroups={exploreGroups}
+                    durationSeconds={durationSeconds}
                  />
              </div>
           )}
@@ -137,8 +141,8 @@ export default function BrainAgentMessage({
             <MarkdownRenderer content={content} />
           )}
 
-          {/* Plan Canvas (v0 style) — always show the plan so prior plans stay in the chat history */}
-          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && (
+          {/* Plan Canvas — only show for the latest plan, hide superseded ones */}
+          {!planSuperseded && (!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && (
             <div className="mt-4 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <BrainPlanCanvas 
                 plan={planContent} 

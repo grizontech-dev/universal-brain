@@ -83,6 +83,22 @@ class ManagerAgent(BaseAgent):
         current_rounds = state.get("question_rounds", 0)
         is_post_answers = self._is_answering_questions(history)
 
+        # Resume build without plan approval — route to planner to re-show plan
+        if prompt == "__RESUME_BUILD__":
+            print(f"{LOG} Resume build detected (plan not yet approved) — routing to planner", flush=True)
+            analysis = {
+                "analysis": "Resuming from interruption. The plan needs to be reviewed again before building.",
+                "is_context_missing": False,
+                "missing_details": [],
+                "next_agent": "planner",
+                "confidence": 0.95
+            }
+            state["leader_analysis"] = analysis
+            state["intent_confidence"] = 0.95
+            state["next_agent"] = "planner"
+            state["status"] = "ready_to_plan"
+            return state
+
         # Check for PDF or Image attachments in state or prompt
         has_attachments = (
             bool(state.get("attached_files")) or
@@ -236,6 +252,34 @@ class ManagerAgent(BaseAgent):
         is_follow_up = len(history) >= 2
         
         if is_follow_up and not is_post_answers:
+            # Check if user is requesting changes to the PLAN (not a new feature)
+            plan_change_keywords = [
+                "request changes", "change plan", "revise plan", "update plan",
+                "modify plan", "edit plan", "change the plan", "revise the strategy",
+                "update the strategy", "change the strategy", "plan feedback",
+                "i would like to request changes", "plan changes", "redo plan",
+                "replan", "re plan", "new plan", "different plan",
+            ]
+            prompt_lower = prompt.lower()
+            is_plan_change = any(kw in prompt_lower for kw in plan_change_keywords)
+
+            if is_plan_change:
+                # Route to Planner to revise the plan
+                print(f"DEBUG: ManagerAgent detected plan change request. Routing to Planner.")
+                state["next_agent"] = "planner"
+                state["status"] = "ready_to_plan"
+                state["plan_feedback"] = prompt
+                analysis = {
+                    "analysis": f"The user requested changes to the plan: '{prompt}'. Routing to the Planner Agent to revise the technical strategy.",
+                    "is_context_missing": False,
+                    "missing_details": [],
+                    "next_agent": "planner",
+                    "confidence": 0.9
+                }
+                state["leader_analysis"] = analysis
+                state["intent_confidence"] = 0.9
+                return state
+
             print(f"DEBUG: ManagerAgent detected follow-up mode (len history = {len(history)}). Bypassing Planner.")
             
             # For follow-ups, Manager acts as the direct planner and task divider
@@ -326,8 +370,22 @@ class ManagerAgent(BaseAgent):
             state["leader_analysis"] = analysis
             state["intent_confidence"] = 0.9
             state["tasks"] = tasks
-            state["plan"] = tasks
-            state["current_task_index"] = 0
+
+            # Merge new tasks into existing plan instead of replacing
+            existing_plan = state.get("plan", [])
+            current_idx = state.get("current_task_index", 0)
+            if existing_plan and current_idx < len(existing_plan):
+                # Insert change tasks at current position, keep remaining original tasks
+                before = existing_plan[:current_idx]
+                after = existing_plan[current_idx + 1:]  # skip the current (partially done) task
+                merged = before + tasks + after
+                state["plan"] = merged
+                state["current_task_index"] = current_idx
+                print(f"DEBUG: ManagerAgent merged {len(tasks)} change tasks into existing plan ({len(merged)} total, index={current_idx})", flush=True)
+            else:
+                state["plan"] = tasks
+                state["current_task_index"] = 0
+
             state["next_agent"] = "builder"
             state["status"] = "tasks_ready"
             return state
@@ -342,13 +400,20 @@ class ManagerAgent(BaseAgent):
         - Tech Stack is FIXED (React + Express + Supabase + Tailwind CSS). NEVER ask or list missing details about tech stack or framework choices.
 
         PRODUCTION-READY REASONING:
-        1. ANALYZE: Look at the current prompt and history carefully.
-        2. CONTEXT CHECK: Do we know specifically WHAT they want to build? Is the domain/purpose clear?
+        1. ANALYZE: Look at the current prompt and history carefully. Count the words — if under 10 words, it is ALMOST ALWAYS vague.
+        2. CONTEXT CHECK: Do we know SPECIFICALLY what to build? "ecommerce store" is NOT enough — which products? what features? who is the customer? what's the brand vibe?
         3. TECH STACK & PLATFORM: Default to Web App (React/Node/Express/Supabase) — do NOT ask platform or stack questions.
-        4. DECISION:
-           - If critical info is missing (e.g. "Build a website" — what kind? For whom?): is_context_missing = true, next_agent = "questions".
-           - If we have enough to start planning (e.g. "create a telegram clone", "build a youtube clone"): is_context_missing = false, next_agent = "planner".
-        5. WHEN IN DOUBT, ASK ONLY BUSINESS FEATURES: If request needs clarification, ask 2-3 targeted questions about UI/UX and feature scope. NEVER ask about mobile/desktop or stack.
+        4. DECISION — BE AGGRESSIVE ABOUT ASKING:
+           - ONE-LINE or SHORT prompts (under ~15 words): Almost always set is_context_missing = true. The user said WHAT but not HOW or FOR WHOM.
+           - Vague nouns without specifics: "ecommerce store", "portfolio", "dashboard", "blog", "social media app" → ALWAYS missing context. Ask what products, what sections, what data, what actions.
+           - "Clone X": Even clones need specifics — which features of X? What's different about this version? What branding?
+           - ONLY set is_context_missing = false when the prompt has: (a) clear project type, (b) at least 2-3 specific features or pages mentioned, (c) a sense of purpose or audience.
+        5. MISSING DETAILS TO ALWAYS CHECK (ask about any that are absent):
+           - Purpose / who is this for? (e.g., "for my restaurant", "for SaaS product")
+           - Core features / pages (e.g., "product listing, cart, checkout", "landing page, dashboard, settings")
+           - Visual style or brand direction (the Questions Agent handles color palette, but you should note if branding is unclear)
+           - Content scope (how many pages? how much content?)
+           - Any unique or distinguishing requirements (what makes this different from a generic template?)
 
         Respond ONLY in JSON (no extra text, no markdown fences):
         {

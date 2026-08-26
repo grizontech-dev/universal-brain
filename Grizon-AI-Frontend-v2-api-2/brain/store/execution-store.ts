@@ -43,6 +43,10 @@ interface ExecutionState {
     fileOperations: FileOperation[];
     streamingMessage: string | null;
 
+    // Universal stop state — every component checks this
+    isStopped: boolean;
+    stopId: number;
+
     // Actions
     setPhase: (phase: AgentPhase) => void;
     addTimelineEvent: (text: string, type?: TimelineEvent['type']) => void;
@@ -52,6 +56,8 @@ interface ExecutionState {
     addFileOperation: (op: Omit<FileOperation, 'id' | 'status'>) => void;
     updateFileOperation: (id: string, status: FileOperation['status']) => void;
     setStreamingMessage: (msg: string | null) => void;
+    setStopped: () => void;
+    clearStopped: () => void;
     resetExecution: () => void;
 }
 
@@ -69,6 +75,8 @@ export const useExecutionStore = create<ExecutionState>((set) => ({
     dynamicTodos: [],
     fileOperations: [],
     streamingMessage: null,
+    isStopped: false,
+    stopId: 0,
 
     setPhase: (phase) => set({ currentPhase: phase }),
     
@@ -101,12 +109,23 @@ export const useExecutionStore = create<ExecutionState>((set) => ({
 
     setStreamingMessage: (msg) => set({ streamingMessage: msg }),
 
+    setStopped: () => set((state) => ({
+        isStopped: true,
+        stopId: state.stopId + 1,
+        currentPhase: 'IDLE',
+        streamingMessage: null,
+    })),
+
+    clearStopped: () => set({ isStopped: false }),
+
     resetExecution: () => set({
         currentPhase: 'IDLE',
         timeline: [],
         dynamicTodos: [],
         fileOperations: [],
         streamingMessage: null,
+        isStopped: false,
+        stopId: 0,
         activeAgents: {
             leader: { id: 'leader', role: 'LEADER', name: 'Leader Agent', status: 'IDLE', progress: 0 },
             planner: { id: 'planner', role: 'PLANNER', name: 'Architect Agent', status: 'IDLE', progress: 0 },

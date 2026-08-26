@@ -78,6 +78,7 @@ interface Message {
     thoughts?: string;
     timeline?: any[];
     exploreGroups?: any[];
+    durationSeconds?: number;
     metadata?: any;
 }
 
@@ -141,6 +142,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const { balance, refreshBalance } = useCredits();
     const { setThreadListOpen } = useThreadList();
     const [messages, setMessages] = useState<Message[]>([]);
+    const messagesRef = useRef(messages);
+    messagesRef.current = messages;
 
     const userCredits = balance?.available || balance?.total || 0;
     const activeConversation = conversations.find(c => c.id === currentConversationId);
@@ -285,6 +288,15 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     const buildSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const resumeAfterReloadRef = useRef(false);
     const stoppedByUserRef = useRef(false);
+    const interruptedMsgRef = useRef<{ id: string; role: 'agent'; content: string; timestamp: string } | null>(null);
+    const stoppedAtRef = useRef<number | null>(null);
+    const frozenWorkedSeconds = useRef<number | null>(null);
+    const isStopped = useExecutionStore((s) => s.isStopped);
+
+    // Capture exact worked seconds when stop happens — computed during render for instant freeze
+    if (isStopped && frozenWorkedSeconds.current === null && buildStartedAt) {
+        frozenWorkedSeconds.current = Math.floor((Date.now() - buildStartedAt) / 1000);
+    }
 
 
     const [sessionState, setSessionState] = useState<SessionState | null>(null);
@@ -632,7 +644,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         setAgentStep('idle');
         setActiveSandboxJob(null);
         setIsEditorOpen(false);
-        useExecutionStore.getState().setStreamingMessage(null);
+        useExecutionStore.getState().resetExecution();
+        interruptedMsgRef.current = null;
         selectConversation(null);
         if (pathname !== '/brain') {
             router.push('/brain');
@@ -643,20 +656,39 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         (event: Record<string, unknown>) => {
             if (event.status === 'stopped' || event.stopped) {
                 stoppedByUserRef.current = true;
+                stoppedAtRef.current = Date.now();
+                useExecutionStore.getState().setStopped();
                 setIsLoading(false);
                 setAgentStep('idle');
                 setIsBuildSyncing(false);
+                // Keep isBuildMode=true so Continue button remains visible
                 useExecutionStore.getState().setStreamingMessage(null);
                 sendingRef.current = false;
                 appendBuildActivities([
                     {
                         id: `act-stopped-${Date.now()}`,
                         type: 'narration',
-                        label: 'Project generation stopped.',
+                        label: 'Project generation interrupted.',
                         timestamp: Date.now(),
                         status: 'done',
                     },
                 ]);
+                // Show interrupted message in chat
+                setMessages(prev => {
+                    if (prev.some(m => m.id.startsWith('interrupted-'))) return prev;
+                    if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+                    const lastMsg = prev[prev.length - 1];
+                    if (lastMsg?.role === 'user') return prev;
+                    const cleaned = prev.filter(m =>
+                        !(m.role === 'agent' && m.id.startsWith('brain_') && !m.content && !m.planContent && !m.clarificationData)
+                    );
+                    return [...cleaned, {
+                        id: `interrupted-sse-${Date.now()}`,
+                        role: 'agent',
+                        content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                        timestamp: new Date().toLocaleTimeString(),
+                    }];
+                });
                 return;
             }
 
@@ -665,6 +697,18 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 if (tasks.length) {
                     applyPlanToTodos(tasks, { activeIndex: 0, buildPhase: 'building' });
                     setIsBuildMode(true);
+                }
+            }
+
+            // Resume returned plan review — store plan content so UI shows plan card
+            if (event.strategic_plan) {
+                const planData = (event.strategic_plan as Record<string, unknown>).project_plan
+                    || (event.strategic_plan as Record<string, unknown>).plan;
+                const planStr = planData
+                    ? (typeof planData === 'string' ? planData : JSON.stringify(planData))
+                    : ((event.strategic_plan as Record<string, unknown>).report as string || "");
+                if (planStr) {
+                    currentPlanContentRef.current = planStr;
                 }
             }
 
@@ -789,6 +833,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         async (conversationId: string, framework: string, todos: BuildTodoItem[]) => {
             if (isLoading || stoppedByUserRef.current) return;
 
+            // Clear stopped state — but DON'T set isBuildMode yet
+            // Backend will decide: plan review OR build mode
+            useExecutionStore.getState().clearStopped();
+            frozenWorkedSeconds.current = null;
             setIsLoading(true);
             setAgentStep('executing');
             sendingRef.current = true;
@@ -815,7 +863,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         conversation_id: conversationId,
                         content: '__RESUME_BUILD__',
                         model_id: selectedModel?.id || 'deepseek-chat',
-                        plan_approved: true,
+                        plan_approved: false,
                         resume_build: true,
                         framework,
                         temperature: 0.3,
@@ -836,6 +884,23 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     timestamp: new Date().toLocaleTimeString()
                 }]);
             } finally {
+                // If resume returned a plan (not build tasks), save it as a message for plan review
+                if (!isBuildMode && currentPlanContentRef.current) {
+                    const planId = `brain_plan_${Date.now()}`;
+                    setMessages(prev => {
+                        // Don't add duplicate plan messages
+                        if (prev.some(m => m.id.startsWith('brain_plan_') && m.planContent)) return prev;
+                        return [...prev, {
+                            id: planId,
+                            role: 'agent' as const,
+                            content: '',
+                            planContent: currentPlanContentRef.current,
+                            timestamp: new Date().toLocaleTimeString(),
+                            metadata: { agentStep: 'strategic_plan' },
+                        }];
+                    });
+                    setAgentStep('planning');
+                }
                 setIsLoading(false);
                 sendingRef.current = false;
             }
@@ -855,6 +920,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         const convId = activeConvIdRef.current || currentConversationId;
         if (!convId || isLoading) return;
         stoppedByUserRef.current = false;
+        stoppedAtRef.current = null;
+        interruptedMsgRef.current = null;
+        // Remove "Build was interrupted" message immediately
+        setMessages(prev => prev.filter(m => !m.content?.includes('nterrupted') || m.role !== 'agent'));
         await startResumeStream(convId, selectedFramework, buildTodos);
     }, [currentConversationId, selectedFramework, buildTodos, startResumeStream, isLoading]);
 
@@ -939,12 +1008,15 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             // If build was stopped by user, show message but don't auto-resume
             if (payload.was_stopped_by_user) {
-                setMessages(prev => [...prev, {
-                    id: `stopped-notice-${Date.now()}`,
-                    role: 'agent',
-                    content: 'Build was stopped. Press Continue to resume from where it stopped.',
-                    timestamp: new Date().toLocaleTimeString()
-                }]);
+                setMessages(prev => {
+                    if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+                    return [...prev, {
+                        id: `stopped-notice-${Date.now()}`,
+                        role: 'agent',
+                        content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                        timestamp: new Date().toLocaleTimeString()
+                    }];
+                });
                 return;
             }
 
@@ -974,6 +1046,13 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         // If we are currently sending or streaming a prompt, do NOT wipe messages or reset loading state!
         if (sendingRef.current || isLoading) return;
 
+        // Don't clear messages on initial load — fetchHistory will set them from DB
+        // Only clear when user explicitly switches conversations (messages already exist)
+        if (messagesRef.current.length === 0) {
+            // Initial load — fetchHistory will populate messages
+            return;
+        }
+
         resumeAfterReloadRef.current = false;
 
         // Reset conversation and build specific states immediately to avoid stale closures and visual leaks
@@ -999,6 +1078,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     abortControllerRef.current.abort();
                     abortControllerRef.current = null;
                 }
+                useExecutionStore.getState().setStopped();
                 void brainApi.stopChat(prevConvId).catch(err => {
                     console.error('[Brain] Failed to stop chat for prev conv:', err);
                 });
@@ -1021,6 +1101,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         return () => {
             window.removeEventListener('beforeunload', handleUnload);
             if (sendingRef.current) {
+                useExecutionStore.getState().setStopped();
                 const convId = activeConvIdRef.current;
                 if (convId && convId !== 'new') {
                     void brainApi.stopChat(convId).catch(err => {
@@ -1095,18 +1176,37 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
     useEffect(() => {
         const onBuildStopped = (e: Event) => {
             stoppedByUserRef.current = true;
+            stoppedAtRef.current = Date.now();
+            useExecutionStore.getState().setStopped();
             setIsLoading(false);
             setAgentStep('idle');
             setIsBuildSyncing(false);
+            // Keep isBuildMode=true so Continue button remains visible
             useExecutionStore.getState().setStreamingMessage(null);
             sendingRef.current = false;
             appendBuildActivities([{
                 id: `act-stopped-ws-${Date.now()}`,
                 type: 'narration',
-                label: 'Project generation stopped.',
+                label: 'Project generation interrupted.',
                 timestamp: Date.now(),
                 status: 'done',
             }]);
+            // Show interrupted message in chat
+            setMessages(prev => {
+                if (prev.some(m => m.id.startsWith('interrupted-'))) return prev;
+                if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg?.role === 'user') return prev;
+                const cleaned = prev.filter(m =>
+                    !(m.role === 'agent' && m.id.startsWith('brain_') && !m.content && !m.planContent && !m.clarificationData)
+                );
+                return [...cleaned, {
+                    id: `interrupted-ws-${Date.now()}`,
+                    role: 'agent',
+                    content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                    timestamp: new Date().toLocaleTimeString(),
+                }];
+            });
         };
         window.addEventListener('brainBuildStopped', onBuildStopped);
         return () => window.removeEventListener('brainBuildStopped', onBuildStopped);
@@ -1243,6 +1343,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         const fetchHistory = async () => {
             if (!currentConversationId || !pathname.startsWith('/brain/')) return;
 
+            // If build was stopped and messages already exist locally, don't overwrite
+            if (stoppedByUserRef.current && messagesRef.current.length > 0) return;
+
             if (isAuthLoading) {
                 return;
             }
@@ -1351,6 +1454,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                             clarificationData: (m.role?.toUpperCase() === 'ASSISTANT' && metadata.questions_data) ? normalizeClarificationQuestions(metadata.questions_data) : undefined,
                             thoughts: metadata.thoughts || undefined,
                             exploreGroups: metadata.exploreGroups || undefined,
+                            durationSeconds: typeof metadata.durationSeconds === 'number' ? metadata.durationSeconds : undefined,
                         } as Message;
                     });
 
@@ -1383,8 +1487,19 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     // Only set messages if we actually got some, or if we aren't in a "new conversation" transition
                     // Also set if there's a pending message (new conversation with stream about to run)
                     const hasPendingMessage = sessionStorage.getItem('brainPendingMessage');
-                    if (mappedMessages.length > 0 || !getNavigatingFlag() || hasPendingMessage) {
-                        setMessages(filteredMessages);
+                    // Filter out auto-generated "request changes" / "reject plan" messages — they are internal feedback,
+                    // not real user messages, and should not reappear on reload.
+                    const autoFeedbackPatterns = [
+                        /^I would like to request changes to this plan:.*Please review and update the strategy\.$/i,
+                        /^I reject this plan\.\s*Let'?s rethink the strategy\.$/i,
+                    ];
+                    const cleanedMessages = filteredMessages.filter((msg: any) => {
+                        if (msg.role !== 'user') return true;
+                        const text = (msg.content || '').trim();
+                        return !autoFeedbackPatterns.some(pat => pat.test(text));
+                    });
+                    if (cleanedMessages.length > 0 || !getNavigatingFlag() || hasPendingMessage) {
+                        setMessages(cleanedMessages);
                         userScrolledUpRef.current = false;
                         requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom(true)));
 
@@ -1426,6 +1541,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 } else if (isBuildTodosComplete(restored.todos)) {
                                     setBuildStartedAt(Date.now() - 60_000);
                                     setBuildFinishedAt(Date.now());
+                                } else if (typeof latestSandboxMsg.durationSeconds === 'number' && latestSandboxMsg.durationSeconds > 0) {
+                                    // Restore buildStartedAt from stored duration on reload
+                                    setBuildStartedAt(Date.now() - (latestSandboxMsg.durationSeconds * 1000));
                                 }
                                 setIsBuildMode(true);
                                 setBuildJob({
@@ -1439,6 +1557,10 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                     mergeTodosFromPlan(latestSandboxMsg.todoList as BuildTodoItem[])
                                 );
                                 setIsBuildMode(true);
+                                // Restore buildStartedAt from stored duration on reload
+                                if (typeof latestSandboxMsg.durationSeconds === 'number' && latestSandboxMsg.durationSeconds > 0) {
+                                    setBuildStartedAt(Date.now() - (latestSandboxMsg.durationSeconds * 1000));
+                                }
                                 setBuildJob({
                                     jobId: String(jobData.jobId),
                                     syncUrl: jobData.syncUrl,
@@ -1457,16 +1579,112 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                 (m: Message) => m.planApproved || (m.todoList && m.todoList.length > 0)
                             );
                             if (hasApprovedPlan) {
-                                const todosForResume =
-                                    restored?.todos?.length
-                                        ? restored.todos
-                                        : (latestSandboxMsg.todoList as BuildTodoItem[]) || [];
-                                void resumeBrainAfterReload(
-                                    currentConversationId,
-                                    jobData.framework || selectedFramework,
-                                    todosForResume,
-                                    true
-                                );
+                                // Check if build was stopped BEFORE resuming
+                                let wasStoppedOnReload = false;
+                                try {
+                                    const stopCheckRes = await fetchResumePayload(
+                                        currentConversationId,
+                                        jobData.framework || selectedFramework,
+                                        user?.id
+                                    );
+                                    wasStoppedOnReload = !!stopCheckRes?.was_stopped_by_user;
+                                } catch {
+                                    // Ignore — workspace may not exist
+                                }
+
+                                if (wasStoppedOnReload) {
+                                    // Build was interrupted — show message, don't resume
+                                    useExecutionStore.getState().setStopped();
+                                    setMessages(prev => {
+                                        // Remove orphaned user message (never got AI response)
+                                        // Must run BEFORE dedup check since DB may already have "Build interrupted"
+                                        const hasOrphanedUser = prev[prev.length - 1]?.role === 'user'
+                                            && !prev.slice(0, -1).some(m => m.role === 'agent' && m.timestamp > prev[prev.length - 1].timestamp);
+                                        const cleaned = hasOrphanedUser ? prev.slice(0, -1) : prev;
+                                        if (cleaned.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return cleaned;
+                                        return [...cleaned, {
+                                            id: `stopped-notice-${Date.now()}`,
+                                            role: 'agent',
+                                            content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                                            timestamp: new Date().toLocaleTimeString(),
+                                        }];
+                                    });
+                                } else {
+                                    const todosForResume =
+                                        restored?.todos?.length
+                                            ? restored.todos
+                                            : (latestSandboxMsg.todoList as BuildTodoItem[]) || [];
+                                    void resumeBrainAfterReload(
+                                        currentConversationId,
+                                        jobData.framework || selectedFramework,
+                                        todosForResume,
+                                        true
+                                    );
+                                }
+                            } else {
+                                // Even without approved plan, check if build was stopped
+                                // so we can show the "Build was interrupted" message
+                                try {
+                                    const resumeRes = await fetchResumePayload(
+                                        currentConversationId,
+                                        jobData.framework || selectedFramework,
+                                        user?.id
+                                    );
+                                    if (resumeRes?.was_stopped_by_user) {
+                                        setMessages(prev => {
+                                            // Remove orphaned user message (never got AI response)
+                                            const hasOrphanedUser = prev[prev.length - 1]?.role === 'user'
+                                                && !prev.slice(0, -1).some(m => m.role === 'agent' && m.timestamp > prev[prev.length - 1].timestamp);
+                                            const cleaned = hasOrphanedUser ? prev.slice(0, -1) : prev;
+                                            if (cleaned.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return cleaned;
+                                            return [...cleaned, {
+                                                id: `stopped-notice-${Date.now()}`,
+                                                role: 'agent',
+                                                content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                                                timestamp: new Date().toLocaleTimeString(),
+                                            }];
+                                        });
+                                    }
+                                } catch {
+                                    // Ignore — not critical
+                                }
+                            }
+                        }
+                        // If no sandbox job exists, still check if build was stopped
+                        if (!latestSandboxMsg) {
+                            // Check if last message has agentStep=stopped (backend saved it)
+                            const lastMsg = mappedMessages[mappedMessages.length - 1];
+                            const lastMeta = lastMsg?.metadata || {};
+                            const hasStoppedInDB = lastMeta.agentStep === 'stopped';
+
+                            // Also check via sandbox resume endpoint (covers race condition)
+                            let wasStopped = hasStoppedInDB;
+                            if (!wasStopped) {
+                                try {
+                                    const resumeRes = await fetchResumePayload(
+                                        currentConversationId,
+                                        selectedFramework,
+                                        user?.id
+                                    );
+                                    wasStopped = !!resumeRes?.was_stopped_by_user;
+                                } catch {
+                                    // Ignore — workspace may not exist
+                                }
+                            }
+
+                            if (wasStopped) {
+                                useExecutionStore.getState().setStopped();
+                                setMessages(prev => {
+                                    if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+                                    const lastMsg = prev[prev.length - 1];
+                                    if (lastMsg?.role === 'user') return prev;
+                                    return [...prev, {
+                                        id: `stopped-notice-${Date.now()}`,
+                                        role: 'agent',
+                                        content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                                        timestamp: new Date().toLocaleTimeString(),
+                                    }];
+                                });
                             }
                         }
                     }
@@ -1616,6 +1834,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         const userText = (textValue || '').trim();
         if (!userText || isLoading || sendingRef.current) return;
         sendingRef.current = true;
+        useExecutionStore.getState().clearStopped();
 
         // Force isUpdate based strictly on targetMessageId presence
         const isUpdate = typeof targetMessageId === 'string' && targetMessageId.length > 0;
@@ -1818,20 +2037,39 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     // --- Stopped (from backend SSE during Phase 1 or Phase 2) ---
                     if (event.status === 'stopped') {
                         stoppedByUserRef.current = true;
+                        stoppedAtRef.current = Date.now();
+                        useExecutionStore.getState().setStopped();
                         setIsLoading(false);
                         setAgentStep('idle');
                         setIsBuildSyncing(false);
+                        // Keep isBuildMode=true so Continue button remains visible
                         useExecutionStore.getState().setStreamingMessage(null);
                         sendingRef.current = false;
                         appendBuildActivities([
                             {
                                 id: `act-stopped-${Date.now()}`,
                                 type: 'narration',
-                                label: 'Project generation stopped.',
+                                label: 'Project generation interrupted.',
                                 timestamp: Date.now(),
                                 status: 'done',
                             },
                         ]);
+                        // Show interrupted message in chat
+                        setMessages(prev => {
+                            if (prev.some(m => m.id.startsWith('interrupted-'))) return prev;
+                            if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+                            const lastMsg = prev[prev.length - 1];
+                            if (lastMsg?.role === 'user') return prev;
+                            const cleaned = prev.filter(m =>
+                                !(m.role === 'agent' && m.id.startsWith('brain_') && !m.content && !m.planContent && !m.clarificationData)
+                            );
+                            return [...cleaned, {
+                                id: `interrupted-sse2-${Date.now()}`,
+                                role: 'agent',
+                                content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+                                timestamp: new Date().toLocaleTimeString(),
+                            }];
+                        });
                         return;
                     }
 
@@ -2335,17 +2573,19 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             // CRITICAL FIX: After stream completes, check if we actually received any content
             // If not, the backend silently failed — show a meaningful error to the user
-            setMessages(prev => {
-                const aiMsg = prev.find(m => m.id === aiMsgId);
-                if (aiMsg && !aiMsg.content && !aiMsg.planContent && !aiMsg.clarificationData && !aiMsg.todoList?.length) {
-                    // Stream completed but no content was received — backend error
-                    return prev.map(m => m.id === aiMsgId
-                        ? { ...m, content: '⚠️ Brain could not process this request. The AI service may be temporarily unavailable. Please try again.' }
-                        : m
-                    );
-                }
-                return prev;
-            });
+            // Skip if user stopped (abort) — the "Build was interrupted" message is already shown
+            if (!stoppedByUserRef.current) {
+                setMessages(prev => {
+                    const aiMsg = prev.find(m => m.id === aiMsgId);
+                    if (aiMsg && !aiMsg.content && !aiMsg.planContent && !aiMsg.clarificationData && !aiMsg.todoList?.length) {
+                        return prev.map(m => m.id === aiMsgId
+                            ? { ...m, content: '⚠️ Brain could not process this request. The AI service may be temporarily unavailable. Please try again.' }
+                            : m
+                        );
+                    }
+                    return prev;
+                });
+            }
 
             setAgentStep('idle');
             setIsLoading(false);
@@ -2353,6 +2593,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 completeRunnerBuild();
             }
             stoppedByUserRef.current = false;
+            stoppedAtRef.current = null;
             refreshBalance();
 
             if (autoClarifyEnabled && pendingAutoClarifyRef.current) {
@@ -2390,6 +2631,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const handleStopChat = useCallback(async () => {
         stoppedByUserRef.current = true;
+        stoppedAtRef.current = Date.now();
+        useExecutionStore.getState().setStopped();
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
@@ -2398,6 +2641,25 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
         setAgentStep('idle');
         useExecutionStore.getState().setStreamingMessage(null);
         sendingRef.current = false;
+        // Keep isBuildMode=true so Continue button remains visible
+
+        // Store interrupted message in ref so fetchHistory can re-apply it
+        const interruptedMsg = {
+            id: `interrupted-${Date.now()}`,
+            role: 'agent' as const,
+            content: 'Build was interrupted. Press Continue to resume from where it stopped.',
+            timestamp: new Date().toLocaleTimeString(),
+        };
+        interruptedMsgRef.current = interruptedMsg;
+        setMessages(prev => {
+            // Don't add duplicate interrupted messages
+            if (prev.some(m => m.content?.includes('nterrupted') && m.role === 'agent')) return prev;
+            // Remove empty AI placeholder messages (brain_xxx with no content)
+            const cleaned = prev.filter(m =>
+                !(m.role === 'agent' && m.id.startsWith('brain_') && !m.content && !m.planContent && !m.clarificationData)
+            );
+            return [...cleaned, interruptedMsg];
+        });
 
         const convId = activeConvIdRef.current || currentConversationId;
         if (convId && convId !== 'new') {
@@ -2575,7 +2837,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                             ))}
                                         </div>
                                     )}
-                                    <div className="group relative rounded-2xl sm:rounded-full border border-border-default bg-surface-2/90 backdrop-blur-xl px-3.5 sm:px-5 py-2.5 sm:py-3 shadow-glass transition-all duration-300 focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 hover:border-border-strong flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+                                    <div className="group relative rounded-2xl sm:rounded-2xl border border-border-default bg-surface-2/90 backdrop-blur-xl px-3.5 sm:px-5 py-2.5 sm:py-3 shadow-glass transition-all duration-300 focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 hover:border-border-strong flex flex-wrap items-center gap-2 sm:gap-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-[140px]">
                                             <button 
                                                 type="button" 
@@ -2594,17 +2856,23 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                 className="hidden"
                                             />
 
-                                            <input
+                                            <textarea
                                                 value={input}
-                                                onChange={(e) => setInput(e.target.value)}
+                                                onChange={(e) => {
+                                                    setInput(e.target.value);
+                                                    e.target.style.height = 'auto';
+                                                    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+                                                }}
                                                 onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
                                                         e.preventDefault();
                                                         handleSendMessage();
                                                     }
                                                 }}
+                                                rows={1}
                                                 placeholder="Ask Grizon"
-                                                className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-sm sm:text-base text-text-primary placeholder:text-text-muted p-0 font-sans"
+                                                className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-sm sm:text-base text-text-primary placeholder:text-text-muted p-0 font-sans resize-none overflow-y-auto"
+                                                style={{ maxHeight: '120px' }}
                                             />
                                         </div>
 
@@ -2624,7 +2892,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                     : 'bg-surface-3 text-text-muted border border-border-subtle'
                                                     }`}
                                             >
-                                                <Mic size={15} className="sm:w-4 sm:h-4" />
+                                                <ArrowRight size={15} className="sm:w-4 sm:h-4" />
                                             </button>
                                         </div>
                                     </div>
@@ -2776,7 +3044,11 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                     <React.Fragment key={msg.id}>
                                                         <BrainAgentMessage
                                                             content={msg.content}
-                                                            planVersions={msg.planVersions?.length ? msg.planVersions : dynamicPlanVersions}
+                                                            planVersions={
+                                                                msg.planVersions?.length
+                                                                    ? Array.from(new Set(msg.planVersions.filter(p => p !== msg.planContent)))
+                                                                    : dynamicPlanVersions
+                                                            }
                                                             dateTime={msg.timestamp}
                                                             planContent={msg.planContent}
                                                             sandboxJob={msg.sandboxJob}
@@ -2790,6 +3062,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                             buildActivities={shouldShowBuildUI ? buildActivities : undefined}
                                                             buildTodos={(shouldShowBuildUI && buildTodos.length) ? buildTodos : undefined}
                                                             isBuildSyncing={shouldShowBuildUI ? isBuildSyncing : undefined}
+                                                            durationSeconds={msg.durationSeconds}
                                                             onClarifySelect={handleClarificationAnswer}
                                                             onClarifySkip={handleClarificationSkip}
                                                             onRegenerate={() => handleRegenerate(msg.id)}
@@ -2916,7 +3189,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                             </button>
                                         ) : (
                                             <div className="flex items-center gap-2 shrink-0">
-                                                {isBuildMode && buildTodos.length > 0 && !isBuildTodosComplete(buildTodos) && !input.trim() && (
+                                                {((isBuildMode && buildTodos.length > 0 && !isBuildTodosComplete(buildTodos)) || isStopped) && !input.trim() && (
                                                     <button
                                                         type="button"
                                                         onClick={() => void handleResumeBuild()}
@@ -2954,7 +3227,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                         todos={buildTodos}
                         isSyncing={isBuildSyncing}
                         workedSeconds={buildStartedAt
-                            ? Math.floor(((buildFinishedAt || Date.now()) - buildStartedAt) / 1000)
+                            ? (frozenWorkedSeconds.current !== null
+                                ? frozenWorkedSeconds.current
+                                : Math.floor(((buildFinishedAt || Date.now()) - buildStartedAt) / 1000))
                             : undefined}
                     />
                 )}

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from 'react';
-import { ListTodo, ChevronDown, ChevronUp, Zap, Loader2 } from 'lucide-react';
+import { ListTodo, ChevronDown, ChevronUp, Zap, Loader2, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useExecutionStore } from '../store/execution-store';
 
 interface Task {
     task: string;
@@ -20,6 +21,7 @@ interface BrainPlanCanvasProps {
 }
 
 export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild, onReject }: BrainPlanCanvasProps) {
+    const isStopped = useExecutionStore((s) => s.isStopped);
     const [showDetails, setShowDetails] = useState(false);
     const [isRejecting, setIsRejecting] = useState(false);
     const [feedback, setFeedback] = useState("");
@@ -176,7 +178,12 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                 )}
 
                 {/* Markdown Plan (v0 style) */}
-                {(activePlanContent === "" || (!markdownPlan && summaryPoints.length === 0)) ? (
+                {isStopped ? (
+                    <div className="px-6 py-10 flex flex-col items-center justify-center gap-3">
+                        <Square size={24} className="text-red-400" />
+                        <p className="text-[13px] text-red-400 font-medium">Execution interrupted</p>
+                    </div>
+                ) : (activePlanContent === "" || (!markdownPlan && summaryPoints.length === 0)) ? (
                     <div className="px-6 py-10 flex flex-col items-center justify-center gap-3">
                         <Loader2 size={24} className="animate-spin text-accent" />
                         <p className="text-[13px] text-text-muted font-medium">Generating new architecture...</p>
@@ -286,6 +293,11 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                                     Submit Feedback
                                 </button>
                             </>
+                        ) : isStopped ? (
+                            <div className="px-5 py-1.5 rounded-xl bg-red-500/10 text-red-400 text-[12px] font-bold border border-red-500/20 flex items-center gap-2">
+                                <Square size={10} />
+                                Stopped
+                            </div>
                         ) : isCompleted ? (
                             <div className="px-5 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-500 text-[12px] font-bold border border-emerald-500/20">
                                 Complete

@@ -6,6 +6,7 @@ import time
 from Brain.shared.agent import BaseAgent
 from Brain.shared.build_standards import TASK_ORDER_STANDARDS, INTEGRATION_TASK_TEMPLATE
 from Brain.services.template_service import normalize_framework
+from Brain.agents.builder.builder_agent import _is_stopped
 from langchain_core.messages import SystemMessage, HumanMessage
 
 LOG = "[TODO]"
@@ -668,6 +669,14 @@ class TodoAgent(BaseAgent):
                 return '{"error": "LLM call failed"}'
 
         print(f"{LOG} Calling LLM — 2 scoped calls in parallel (build + frontend), total chars={sum(len(m.content) for m in base_msgs)}", flush=True)
+
+        # Stop check before expensive LLM calls
+        session_id = state.get("current_job_id") or state.get("conversation_id", "")
+        if _is_stopped(session_id):
+            print(f"{LOG} STOPPED before LLM calls", flush=True)
+            state["status"] = "stopped"
+            return state
+
         _t0 = time.time()
         build_raw, fe_raw = await asyncio.gather(
             _scope_call(build_prompt, 90, 900),

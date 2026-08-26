@@ -7,6 +7,7 @@ from Brain.shared.skills.resolver import SkillResolver
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.services.provider_router import ProviderRouter
 from langchain_core.messages import SystemMessage, HumanMessage
+from Brain.agents.builder.builder_agent import _is_stopped
 
 
 class DatabaseAgent(BaseAgent):
@@ -174,6 +175,11 @@ Format:
         max_attempts = 3
         response_content = None
         for attempt in range(max_attempts):
+            # Cooperative stop check
+            if _is_stopped(state.get("current_job_id", "")):
+                print(f"[DATABASE] STOPPED at attempt {attempt}", flush=True)
+                state["status"] = "stopped"
+                break
             try:
                 response = await asyncio.wait_for(
                     self.llm.ainvoke(messages, max_tokens=6000),  # enough for large schemas

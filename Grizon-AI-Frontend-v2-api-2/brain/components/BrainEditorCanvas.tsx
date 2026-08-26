@@ -8,7 +8,7 @@ import {
     Eye, Layout, Database, ChevronLeft, RotateCcw,
     PlusSquare, FolderPlus, MoreHorizontal, History,
     ChevronUp, Globe, Cpu, Zap, ArrowLeft, ArrowRight,
-    RotateCw, ExternalLink, Copy, Shield, Loader2, CheckCircle2, Circle
+    RotateCw, ExternalLink, Copy, Shield, Loader2, CheckCircle2, Circle, Square
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import BrainPublishModal from './BrainPublishModal';
@@ -28,6 +28,7 @@ import { sortFileTreeNodes, getFileTreeIcon } from '../lib/fileTreeUtils';
 import { DEFAULT_BRAIN_FRAMEWORK, normalizeBrainFramework, type BrainFrameworkId } from '../constants/frameworks';
 import BrainDiffViewer from './BrainDiffViewer';
 import { getFileDiff } from '../lib/brainFileDiffStore';
+import { useExecutionStore } from '../store/execution-store';
 
 const BRAIN_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || 'http://localhost:8001';
 
@@ -168,6 +169,7 @@ export default function BrainEditorCanvas({
     isSyncing = false,
 }: BrainEditorCanvasProps) {
     const { setWorkspace } = useBrainWebContainer();
+    const isStopped = useExecutionStore((s) => s.isStopped);
     const [internalIsOpen, setInternalIsOpen] = useState(false);
     const isOpen = embedded ? true : (propsIsOpen !== undefined ? propsIsOpen : internalIsOpen);
 
@@ -444,9 +446,9 @@ export default function BrainEditorCanvas({
     const isSandboxTunnel = !!effectivePreviewUrl && /trycloudflare\.com/.test(effectivePreviewUrl);
     const hasLiveFrontendPreview = !!effectivePreviewUrl && isSandboxTunnel;
 
-    const showBuildingOverlay = embedded
+    const showBuildingOverlay = isStopped ? false : (embedded
         ? (forceBuilding || !buildComplete) && !hasLiveFrontendPreview
-        : (forceBuilding || isBuilding || !buildComplete) && !hasLiveFrontendPreview;
+        : (forceBuilding || isBuilding || !buildComplete) && !hasLiveFrontendPreview);
 
     const showPreviewIframe = !!previewUrl && hasLiveFrontendPreview && !showBuildingOverlay;
 
@@ -958,8 +960,19 @@ export default function BrainEditorCanvas({
         <div className="absolute inset-0 z-[100] flex flex-col bg-app text-text-primary overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-3 px-6 py-4 border-b border-border-subtle shrink-0 bg-sidebar">
-                <Loader2 size={20} className="text-accent animate-spin" />
-                <h2 className="text-[16px] font-bold text-text-primary font-display">Brain Build Mode</h2>
+                {isStopped ? (
+                    <>
+                        <div className="w-5 h-5 rounded-full bg-red-500/20 flex items-center justify-center">
+                            <div className="w-2 h-2 rounded-full bg-red-500" />
+                        </div>
+                        <h2 className="text-[16px] font-bold text-red-400 font-display">Stopped</h2>
+                    </>
+                ) : (
+                    <>
+                        <Loader2 size={20} className="text-accent animate-spin" />
+                        <h2 className="text-[16px] font-bold text-text-primary font-display">Brain Build Mode</h2>
+                    </>
+                )}
                 {activeTodos.length > 0 && (
                     <div className="ml-auto flex items-center gap-3 text-[13px] font-sans text-text-muted">
                         <span className="text-text-primary font-bold">{completedTodoCount} / {activeTodos.length}</span>
@@ -976,7 +989,19 @@ export default function BrainEditorCanvas({
 
             {/* Activity Feed */}
             <div className="flex-1 overflow-y-auto p-6 bg-app">
-                {activities.length > 0 || activeTodos.length > 0 ? (
+                {isStopped ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                            <Square size={20} className="text-red-400" />
+                        </div>
+                        <p className="text-[15px] text-red-400 font-medium">
+                            Execution interrupted
+                        </p>
+                        <p className="text-[13px] text-text-muted">
+                            The build process was interrupted.
+                        </p>
+                    </div>
+                ) : activities.length > 0 || activeTodos.length > 0 ? (
                     <BrainBuildActivityFeed
                         activities={activities}
                         todos={activeTodos}
@@ -1146,31 +1171,6 @@ export default function BrainEditorCanvas({
                             <div className="flex-1 flex flex-col relative overflow-hidden">
                                 {activeFile ? (
                                     <>
-                                        {activeFileDiff?.diff && (
-                                            <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 bg-[#0a0a0a] shrink-0">
-                                                <button
-                                                    onClick={() => setShowFileDiff(true)}
-                                                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                                                        showFileDiff
-                                                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                                                            : 'text-white/40 hover:text-white/80 border border-transparent'
-                                                    }`}
-                                                >
-                                                    Changes
-                                                    {activeFileDiff.linesRemoved ? ` (-${activeFileDiff.linesRemoved})` : ''}
-                                                </button>
-                                                <button
-                                                    onClick={() => setShowFileDiff(false)}
-                                                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                                                        !showFileDiff
-                                                            ? 'bg-white/10 text-white border border-white/20'
-                                                            : 'text-white/40 hover:text-white/80 border border-transparent'
-                                                    }`}
-                                                >
-                                                    Code
-                                                </button>
-                                            </div>
-                                        )}
                                         {showFileDiff && activeFileDiff?.diff ? (
                                             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3">
                                                 <BrainDiffViewer diff={activeFileDiff.diff} fileName={activeFile.name} />

@@ -11,6 +11,7 @@ from Brain.services.provider_router import ProviderRouter
 from Brain.shared.db_storage_mode import resolve_db_storage_mode
 from Brain.shared.structured_spec import format_structured_spec
 from Brain.shared.llm_retry import ainvoke_with_retry
+from Brain.agents.builder.builder_agent import _is_stopped
 
 
 class BackendAgent(BaseAgent):
@@ -384,6 +385,11 @@ Respond ONLY in JSON.
         fallback_tried = False
 
         for iteration in range(max_iterations):
+            # Cooperative stop check
+            if _is_stopped(state.get("current_job_id", "")):
+                print(f"[BACKEND] STOPPED at iteration {iteration}", flush=True)
+                state["status"] = "stopped"
+                break
             try:
                 response = await ainvoke_with_retry(
                     active_llm, msgs, 90,

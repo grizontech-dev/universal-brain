@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Activity, CheckCircle2, Circle, LayoutList, Search, FileText, Code2, Terminal, FolderOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, Activity, CheckCircle2, Circle, LayoutList, Search, FileText, Code2, Terminal, FolderOpen, Square } from 'lucide-react';
 import { useExecutionStore } from '../store/execution-store';
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 
@@ -25,7 +25,8 @@ interface BrainAgentStatusProps {
     step: AgentStep;
     thoughts?: string;
     timeline?: any[];
-    exploreGroups?: ExploreGroup[]; // New prop for v0 style explore tree
+    exploreGroups?: ExploreGroup[];
+    durationSeconds?: number; // Stored duration from backend, used on reload
 }
 
 // Helper to render specific icons based on type
@@ -79,20 +80,26 @@ const ExploreGroupView = ({ group }: { group: ExploreGroup }) => {
     );
 };
 
-export default function BrainAgentStatus({ step, thoughts: propThoughts, timeline: propTimeline, exploreGroups }: BrainAgentStatusProps) {
+export default function BrainAgentStatus({ step, thoughts: propThoughts, timeline: propTimeline, exploreGroups, durationSeconds: storedDuration }: BrainAgentStatusProps) {
     const store = useExecutionStore();
+    const isStopped = store.isStopped;
     const streamingMessage = propThoughts !== undefined ? propThoughts : store.streamingMessage;
     const timeline = propTimeline !== undefined ? propTimeline : store.timeline;
     
-    const [seconds, setSeconds] = useState(0);
+    const [seconds, setSeconds] = useState(() => (storedDuration && storedDuration > 0) ? storedDuration : 0);
     const [isExpanded, setIsExpanded] = useState(false);
 
     useEffect(() => {
-        if (step !== 'idle' && step !== 'completed') {
+        if (step !== 'idle' && step !== 'completed' && !isStopped) {
             const timer = setInterval(() => setSeconds(s => s + 1), 1000);
             return () => clearInterval(timer);
         }
-    }, [step]);
+    }, [step, isStopped]);
+
+    // Use stored duration when available (reload or after stop), otherwise use live timer
+    const displaySeconds = (storedDuration && storedDuration > 0)
+        ? storedDuration
+        : seconds;
 
     if (step === 'idle' && timeline.length === 0 && !streamingMessage && (!exploreGroups || exploreGroups.length === 0)) return null;
 
@@ -107,7 +114,7 @@ export default function BrainAgentStatus({ step, thoughts: propThoughts, timelin
                         className="flex items-center gap-1.5 text-text-muted hover:text-text-primary transition-colors w-fit font-medium"
                     >
                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        <span className="text-[13px] font-medium tracking-tight">Thought for {seconds}s</span>
+                        <span className="text-[13px] font-medium tracking-tight">Thought for {displaySeconds}s</span>
                     </button>
 
                     {isExpanded && (
@@ -155,7 +162,15 @@ export default function BrainAgentStatus({ step, thoughts: propThoughts, timelin
             {step === 'completed' && (
                 <div className="flex items-center gap-2 text-text-muted text-[12px] pt-3">
                     <Activity size={14} className="text-accent" />
-                    <span>Worked for {seconds}s</span>
+                    <span>Worked for {displaySeconds}s</span>
+                </div>
+            )}
+
+            {/* Stopped indicator */}
+            {isStopped && (
+                <div className="flex items-center gap-2 text-red-400 text-[12px] pt-3">
+                    <Square size={14} />
+                    <span className="font-medium">Interrupted by user</span>
                 </div>
             )}
         </div>

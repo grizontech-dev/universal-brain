@@ -37,17 +37,55 @@ def compute_resume_index(todos: List[Dict[str, Any]]) -> Tuple[int, bool]:
 
 
 def latest_todo_list_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    for msg in reversed(messages):
+    """Find the most complete plan from messages.
+    
+    Strategy: Find the LARGEST todoList (the full plan), then update task
+    statuses from the most recent todoList (which may have progress updates).
+    This handles the case where user requests changes → plan gets partial update
+    → we still want the full plan with updated statuses.
+    """
+    if not messages:
+        return []
+    
+    # Step 1: Find the largest todoList (likely the full plan)
+    largest_plan = []
+    largest_idx = -1
+    for i, msg in enumerate(messages):
         todos = msg.get("todoList") or msg.get("todo_list")
-        if isinstance(todos, list) and todos:
-            return todos
+        if isinstance(todos, list) and len(todos) > len(largest_plan):
+            largest_plan = todos
+            largest_idx = i
         meta = msg.get("metadata") or {}
         if isinstance(meta, str):
             continue
         plan = meta.get("plan") or meta.get("todoList")
-        if isinstance(plan, list) and plan:
-            return plan
-    return []
+        if isinstance(plan, list) and len(plan) > len(largest_plan):
+            largest_plan = plan
+            largest_idx = i
+    
+    if not largest_plan:
+        return []
+    
+    # Step 2: Find the most recent todoList for status updates
+    latest_statuses = {}
+    for msg in reversed(messages):
+        todos = msg.get("todoList") or msg.get("todo_list")
+        if isinstance(todos, list) and todos:
+            for t in todos:
+                tid = t.get("id") or t.get("task", "")
+                status = (t.get("status") or "pending").lower()
+                if status in DONE_STATUSES or status in ACTIVE_STATUSES or status == "failed":
+                    latest_statuses[tid] = status
+            break
+    
+    # Step 3: Merge - keep full plan, update statuses from latest
+    if latest_statuses:
+        for task in largest_plan:
+            tid = task.get("id") or task.get("task", "")
+            if tid in latest_statuses:
+                task["status"] = latest_statuses[tid]
+    
+    return largest_plan
 
 
 def workspace_disk_to_ops(workspace_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:

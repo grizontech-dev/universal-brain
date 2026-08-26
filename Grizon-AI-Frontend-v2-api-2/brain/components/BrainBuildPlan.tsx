@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { BuildTodoItem } from '../lib/buildActivity';
 import { normalizeTodoStatus, isBuildTodosComplete } from '../lib/buildActivity';
+import { useExecutionStore } from '../store/execution-store';
 
 interface BrainBuildPlanProps {
     todos: BuildTodoItem[];
@@ -66,6 +67,7 @@ function TodoChips({ todo }: { todo: BuildTodoItem }) {
 }
 
 export default function BrainBuildPlan({ todos, isSyncing = false, workedSeconds }: BrainBuildPlanProps) {
+    const isStopped = useExecutionStore((s) => s.isStopped);
     const doneCount = todos.filter((t) => {
         const s = normalizeTodoStatus(t.status);
         return s === 'completed' || s === 'failed';
@@ -100,10 +102,16 @@ export default function BrainBuildPlan({ todos, isSyncing = false, workedSeconds
                             Build Plan
                         </h3>
                     </div>
-                    {!complete && (executingCount > 0 || isSyncing) && (
+                    {!complete && !isStopped && (executingCount > 0 || isSyncing) && (
                         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-accent">
                             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                             Live
+                        </span>
+                    )}
+                    {isStopped && !complete && (
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-red-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                            Interrupted
                         </span>
                     )}
                     {complete && (
@@ -136,8 +144,8 @@ export default function BrainBuildPlan({ todos, isSyncing = false, workedSeconds
                 )}
                 {workedSeconds !== undefined && workedSeconds > 0 && !complete && (
                     <p className="mt-2 flex items-center gap-1.5 text-[10px] text-text-muted font-medium">
-                        <Clock size={10} className="text-accent" />
-                        Working for {Math.max(1, workedSeconds)}s
+                        <Clock size={10} className={isStopped ? 'text-red-400' : 'text-accent'} />
+                        {isStopped ? `Interrupted after ${Math.max(1, workedSeconds)}s` : `Working for ${Math.max(1, workedSeconds)}s`}
                     </p>
                 )}
             </div>
@@ -163,7 +171,9 @@ export default function BrainBuildPlan({ todos, isSyncing = false, workedSeconds
                 ) : (
                     <div ref={listRef} className="relative space-y-1.5">
                         {todos.map((todo, i) => {
-                            const s = normalizeTodoStatus(todo.status);
+                            let s = normalizeTodoStatus(todo.status);
+                            // Override executing status when stopped
+                            if (isStopped && s === 'executing') s = 'pending' as any;
                             const isRunning = s === 'executing';
                             const isDone = s === 'completed';
                             const isFailed = s === 'failed';
@@ -241,7 +251,12 @@ export default function BrainBuildPlan({ todos, isSyncing = false, workedSeconds
             {/* Footer status */}
             <div className="shrink-0 px-4 py-2.5 border-t border-border-subtle flex items-center justify-between bg-sidebar/40">
                 <span className="flex items-center gap-1.5 text-[10px] font-medium text-text-muted">
-                    {isSyncing && !complete ? (
+                    {isStopped && !complete ? (
+                        <>
+                            <div className="w-2 h-2 rounded-full bg-red-400" />
+                            Interrupted
+                        </>
+                    ) : isSyncing && !complete ? (
                         <>
                             <Loader2 size={10} className="animate-spin text-accent" />
                             Syncing files…
