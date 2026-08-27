@@ -83,21 +83,52 @@ class ManagerAgent(BaseAgent):
         current_rounds = state.get("question_rounds", 0)
         is_post_answers = self._is_answering_questions(history)
 
-        # Resume build without plan approval — route to planner to re-show plan
-        if prompt == "__RESUME_BUILD__":
-            print(f"{LOG} Resume build detected (plan not yet approved) — routing to planner", flush=True)
-            analysis = {
-                "analysis": "Resuming from interruption. The plan needs to be reviewed again before building.",
-                "is_context_missing": False,
-                "missing_details": [],
-                "next_agent": "planner",
-                "confidence": 0.95
-            }
-            state["leader_analysis"] = analysis
-            state["intent_confidence"] = 0.95
-            state["next_agent"] = "planner"
-            state["status"] = "ready_to_plan"
-            return state
+        # Resume build without plan approval — determine correct next step
+        if state.get("resume_build") and not state.get("plan_approved"):
+            _has_questions = False
+            _has_plan = bool(state.get("project_plan"))
+            _has_assistant_msgs = any(m.get("role", "").lower() == "assistant" for m in history)
+            _history = state.get("messages", [])
+            for _msg in reversed(_history):
+                if _msg.get("role", "").lower() == "assistant":
+                    _content = _msg.get("content", "")
+                    if "__CLARIFY__" in _content or '"questions"' in _content:
+                        _has_questions = True
+                        break
+            
+            # Case 1: No assistant messages exist — user stopped during first processing
+            # Don't intercept — let normal flow re-run with original content
+            if not _has_assistant_msgs and not _has_plan:
+                print(f"{LOG} Resume: no assistant messages or plan — re-running normal flow", flush=True)
+                # Fall through to normal manager analysis below
+            elif _has_questions:
+                # Case 2: Questions were asked — resume questions flow
+                print(f"{LOG} Resume build: questions pending — routing to questions", flush=True)
+                state["next_agent"] = "questions"
+                state["status"] = "needs_clarification"
+                state["intent_confidence"] = 0.9
+                state["leader_analysis"] = {
+                    "analysis": "Resuming from interruption. There are pending questions to answer.",
+                    "is_context_missing": True,
+                    "next_agent": "questions",
+                    "confidence": 0.9
+                }
+                return state
+            elif _has_plan:
+                # Case 3: Plan exists but not approved — show plan for review
+                print(f"{LOG} Resume build: plan exists but not approved — routing to planner", flush=True)
+                analysis = {
+                    "analysis": "Resuming from interruption. The plan needs to be reviewed again before building.",
+                    "is_context_missing": False,
+                    "missing_details": [],
+                    "next_agent": "planner",
+                    "confidence": 0.95
+                }
+                state["leader_analysis"] = analysis
+                state["intent_confidence"] = 0.95
+                state["next_agent"] = "planner"
+                state["status"] = "ready_to_plan"
+                return state
 
         # Check for PDF or Image attachments in state or prompt
         has_attachments = (

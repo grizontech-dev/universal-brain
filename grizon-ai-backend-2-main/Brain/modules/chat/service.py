@@ -130,7 +130,14 @@ class BrainChatService:
             }
         )
 
-        graph.add_edge("recursive_clarify", END)
+        graph.add_conditional_edges(
+            "recursive_clarify",
+            self.route_after_clarify,
+            {
+                "plan": "strategic_plan",
+                "done": END,
+            }
+        )
         graph.add_edge("strategic_plan", END)
         graph.add_edge("create_tasks", "init_sandbox")
         graph.add_edge("init_sandbox", END)
@@ -161,6 +168,15 @@ class BrainChatService:
         if state.get("plan_approved"):
             return "taskify"
         return "plan"
+
+    def route_after_clarify(self, state: BrainState) -> str:
+        """After recursive_clarify: if no more questions needed, go to planner; otherwise END."""
+        next_agent = state.get("next_agent", "")
+        qd = state.get("questions_data") or {}
+        has_questions = bool(qd.get("questions"))
+        if next_agent == "planner" and not has_questions:
+            return "plan"
+        return "done"
 
     def should_continue_building(self, state: BrainState):
         tasks = state.get("plan", [])
@@ -256,6 +272,7 @@ class BrainChatService:
             }
             state["questions_data"] = questions_data
             state["report"] = f"__CLARIFY__:{json.dumps(questions_data)}"
+            state["question_rounds"] = state.get("question_rounds", 0) + 1
             return state
 
         agent = QuestionsAgent()
@@ -263,8 +280,20 @@ class BrainChatService:
         qd = state.get("questions_data")
         if qd:
             state["report"] = f"__CLARIFY__:{json.dumps(qd)}"
+            state["question_rounds"] = state.get("question_rounds", 0) + 1
         else:
-            state["report"] = "Context looks good - I have enough to start planning."
+            # No more questions needed — enough context gathered
+            # Force route to planner regardless of current_rounds
+            state["report"] = ""
+            state["next_agent"] = "planner"
+            state["status"] = "ready_to_plan"
+            state["leader_analysis"] = {
+                "analysis": "All questions answered. Sufficient context gathered — proceeding to planning.",
+                "is_context_missing": False,
+                "missing_details": [],
+                "next_agent": "planner",
+                "confidence": 0.95
+            }
         print(f"DEBUG: NODE [recursive_clarify] complete | questions_count={len(state.get('questions_data', {}).get('questions', [])) if isinstance(state.get('questions_data'), dict) else 0}", flush=True)
         return state
 
@@ -482,7 +511,7 @@ class BrainChatService:
         todo_list = state.get("plan")
         sandbox_job = state.get("sandbox_job")
         metadata = {
-            "planContent": state.get("project_plan"),
+            "planContent": json.dumps(state.get("project_plan")) if isinstance(state.get("project_plan"), dict) else state.get("project_plan"),
             "agentStep": node_name,
             "questions_data": state.get("questions_data"),
             "planApproved": state.get("plan_approved", False),
@@ -724,39 +753,43 @@ class BrainChatService:
                             self._save_phase_message(conv_id, initial_state, node_name, deducted_credits, round(_t.time() - _t_begin))
 
                         if report or node_name in ("recursive_clarify", "strategic_plan"):
-                            if node_name == "strategic_plan":
-                                leader_analysis = initial_state.get("leader_analysis") or {}
-                                thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
-                                if not thoughts:
-                                    thoughts = "Analyzing requirements and calling **Planner Agent** to create the technical roadmap."
-                            elif initial_state.get("next_agent") == "questions" or initial_state.get("status") == "needs_clarification":
-                                leader_analysis = initial_state.get("leader_analysis") or {}
-                                thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
-                                if not thoughts:
-                                    thoughts = "Calling Questions Agent to gather missing context..."
-                            else:
-                                thoughts = ""
+                            # Skip saving empty recursive_clarify messages (no questions → empty report)
+                            _should_save = not (node_name == "recursive_clarify" and not report)
 
-                            todo_list = initial_state.get("plan")
-                            sandbox_job = initial_state.get("sandbox_job")
-                            leader_analysis = initial_state.get("leader_analysis") or {}
-                            elapsed_seconds = round(_t.time() - _t_begin)
-                            metadata = {
-                                "planContent": initial_state.get("project_plan"),
-                                "agentStep": node_name,
-                                "questions_data": initial_state.get("questions_data"),
-                                "planApproved": initial_state.get("plan_approved", False),
-                                "thoughts": thoughts,
-                                "current_task_index": initial_state.get("current_task_index", 0),
-                                "durationSeconds": elapsed_seconds,
-                            }
-                            conversation_service.save_message(
-                                conv_id, "ASSISTANT", report or "",
-                                todo_list=todo_list if isinstance(todo_list, list) else None,
-                                sandbox_job=sandbox_job,
-                                metadata=metadata,
-                                credits_deducted=deducted_credits
-                            )
+                            if _should_save:
+                                if node_name == "strategic_plan":
+                                    leader_analysis = initial_state.get("leader_analysis") or {}
+                                    thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
+                                    if not thoughts:
+                                        thoughts = "Analyzing requirements and calling **Planner Agent** to create the technical roadmap."
+                                elif initial_state.get("next_agent") == "questions" or initial_state.get("status") == "needs_clarification":
+                                    leader_analysis = initial_state.get("leader_analysis") or {}
+                                    thoughts = initial_state.get("thoughts") or leader_analysis.get("analysis") or leader_analysis.get("report") or ""
+                                    if not thoughts:
+                                        thoughts = "Calling Questions Agent to gather missing context..."
+                                else:
+                                    thoughts = ""
+
+                                todo_list = initial_state.get("plan")
+                                sandbox_job = initial_state.get("sandbox_job")
+                                leader_analysis = initial_state.get("leader_analysis") or {}
+                                elapsed_seconds = round(_t.time() - _t_begin)
+                                metadata = {
+                                    "planContent": json.dumps(initial_state.get("project_plan")) if isinstance(initial_state.get("project_plan"), dict) else initial_state.get("project_plan"),
+                                    "agentStep": node_name,
+                                    "questions_data": initial_state.get("questions_data"),
+                                    "planApproved": initial_state.get("plan_approved", False),
+                                    "thoughts": thoughts,
+                                    "current_task_index": initial_state.get("current_task_index", 0),
+                                    "durationSeconds": elapsed_seconds,
+                                }
+                                conversation_service.save_message(
+                                    conv_id, "ASSISTANT", report or "",
+                                    todo_list=todo_list if isinstance(todo_list, list) else None,
+                                    sandbox_job=sandbox_job,
+                                    metadata=metadata,
+                                    credits_deducted=deducted_credits
+                                )
                         if mg:
                             try:
                                 asyncio.create_task(
@@ -1028,19 +1061,21 @@ class BrainChatService:
         resume_build = bool(request.get("resume_build"))
         plan: List[Dict[str, Any]] = []
         current_index = 0
+        _loaded_messages: List[Dict[str, Any]] = []
 
         if resume_build and conv_id and conv_id != "new":
             # Clear STOP_REGISTRY and STOP_EVENT so builder loop can run again
             self.STOP_REGISTRY.discard(conv_id)
             self.STOP_EVENTS.pop(str(conv_id), None)
             messages = conversation_service.get_messages(conv_id)
+            _loaded_messages = messages  # Keep reference for state
             plan = latest_todo_list_from_messages(messages)
             current_index, _ = compute_resume_index(plan)
 
             # Restore original user content (first human message) for sub-agent context
             original_content = ""
             for msg in messages:
-                if msg.get("role") == "human" and msg.get("content"):
+                if msg.get("role") in ("human", "user") and msg.get("content"):
                     original_content = msg.get("content", "")
                     break
             # Restore project_plan from conversation metadata if available
@@ -1049,7 +1084,13 @@ class BrainChatService:
                 meta = msg.get("metadata") or {}
                 plan_content = meta.get("planContent")
                 if plan_content:
-                    original_plan = plan_content if isinstance(plan_content, dict) else {}
+                    if isinstance(plan_content, dict):
+                        original_plan = plan_content
+                    elif isinstance(plan_content, str):
+                        try:
+                            original_plan = json.loads(plan_content)
+                        except Exception:
+                            original_plan = {}
                     break
         else:
             original_content = request.get("content") or ""
@@ -1070,7 +1111,13 @@ class BrainChatService:
                             continue
                         _pp = _meta.get("planContent")
                         if _pp:
-                            original_plan = _pp if isinstance(_pp, dict) else {}
+                            if isinstance(_pp, dict):
+                                original_plan = _pp
+                            elif isinstance(_pp, str):
+                                try:
+                                    original_plan = json.loads(_pp)
+                                except Exception:
+                                    original_plan = {}
                             break
                 except Exception:
                     pass
@@ -1088,11 +1135,17 @@ class BrainChatService:
                     _cm_meta = _cm.get("metadata") or {}
                     if isinstance(_cm_meta, str):
                         continue
-                    # Only "create_tasks" or "execute_sandbox" means plan was approved
+                    # Only "create_tasks" or "execute_sandbox" with actual task progress means plan was approved
                     # "stopped" does NOT mean approved — it means interrupted
-                    if _cm_meta.get("planApproved") and _cm_meta.get("agentStep") in ("create_tasks", "execute_sandbox"):
-                        _was_plan_approved = True
-                        break
+                    _step = _cm_meta.get("agentStep")
+                    _task_idx = _cm_meta.get("current_task_index", 0)
+                    if _cm_meta.get("planApproved") and _step in ("create_tasks", "execute_sandbox"):
+                        # Plan was approved AND tasks actually ran (index > 0 means at least one task completed)
+                        if _step == "execute_sandbox" or (_step == "create_tasks" and _task_idx > 0):
+                            _was_plan_approved = True
+                            break
+                        # create_tasks with index=0 means plan was just created but user never saw build start
+                        # Don't treat as approved — let them review the plan
             except Exception:
                 pass
 
@@ -1107,7 +1160,7 @@ class BrainChatService:
             "project_report": "",
             "questions_data": {},
             "status": "starting",
-            "messages": [],
+            "messages": _loaded_messages,
             "leader_analysis": {},
             "plan_approved": bool(request.get("plan_approved")) or (resume_build and len(plan) > 0 and _was_plan_approved),
             "plan_feedback": None,

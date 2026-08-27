@@ -654,6 +654,26 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const ingestSandboxStreamEvent = useCallback(
         (event: Record<string, unknown>) => {
+            // Update thinking message based on event type
+            const execStore = useExecutionStore.getState();
+            if (event.strategic_plan) {
+                execStore.setPhase('PLANNING');
+                execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Creating project plan' });
+                execStore.setStreamingMessage('Creating project plan...');
+            } else if (event.recursive_clarify || event.questions) {
+                execStore.setPhase('CLARIFYING');
+                execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Preparing questions' });
+                execStore.setStreamingMessage('Preparing questions...');
+            } else if (event.create_tasks) {
+                execStore.setPhase('BUILDING');
+                execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Setting up build tasks' });
+                execStore.setStreamingMessage('Setting up build tasks...');
+            } else if (event.init_sandbox || event.execute_sandbox) {
+                execStore.setPhase('EXECUTING');
+                execStore.updateAgent('builder', { status: 'THINKING', currentTask: 'Building project' });
+                execStore.setStreamingMessage('Building project...');
+            }
+
             if (event.status === 'stopped' || event.stopped) {
                 stoppedByUserRef.current = true;
                 stoppedAtRef.current = Date.now();
@@ -831,7 +851,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
     const startResumeStream = useCallback(
         async (conversationId: string, framework: string, todos: BuildTodoItem[]) => {
-            if (isLoading || stoppedByUserRef.current) return;
+            // Reset the stop ref FIRST — this function IS the resume action
+            stoppedByUserRef.current = false;
 
             // Clear stopped state — but DON'T set isBuildMode yet
             // Backend will decide: plan review OR build mode
@@ -840,6 +861,22 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
             setIsLoading(true);
             setAgentStep('executing');
             sendingRef.current = true;
+
+            // Create a thinking message so BrainAgentStatus has a container to render in
+            const resumeMsgId = `resume-msg-${Date.now()}`;
+            setMessages(prev => [...prev, {
+                id: resumeMsgId,
+                role: 'agent',
+                content: '',
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                metadata: { agentStep: 'executing' },
+            }]);
+
+            // Show thinking indicator immediately in chat
+            const execStore = useExecutionStore.getState();
+            execStore.setPhase('RESUMING');
+            execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Resuming project...' });
+            execStore.setStreamingMessage('Resuming project...');
 
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
@@ -884,23 +921,28 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                     timestamp: new Date().toLocaleTimeString()
                 }]);
             } finally {
-                // If resume returned a plan (not build tasks), save it as a message for plan review
-                if (!isBuildMode && currentPlanContentRef.current) {
-                    const planId = `brain_plan_${Date.now()}`;
-                    setMessages(prev => {
-                        // Don't add duplicate plan messages
-                        if (prev.some(m => m.id.startsWith('brain_plan_') && m.planContent)) return prev;
-                        return [...prev, {
-                            id: planId,
+                // Remove the resume thinking message (replace with plan if needed)
+                setMessages(prev => {
+                    const filtered = prev.filter(m => m.id !== resumeMsgId);
+                    // If resume returned a plan (not build tasks), save it as a message for plan review
+                    if (!isBuildMode && currentPlanContentRef.current) {
+                        if (filtered.some(m => m.id.startsWith('brain_plan_') && m.planContent)) return filtered;
+                        return [...filtered, {
+                            id: `brain_plan_${Date.now()}`,
                             role: 'agent' as const,
                             content: '',
                             planContent: currentPlanContentRef.current,
                             timestamp: new Date().toLocaleTimeString(),
                             metadata: { agentStep: 'strategic_plan' },
                         }];
-                    });
+                    }
+                    return filtered;
+                });
+                if (!isBuildMode && currentPlanContentRef.current) {
                     setAgentStep('planning');
                 }
+                // Clear thinking indicator
+                useExecutionStore.getState().setStreamingMessage(null);
                 setIsLoading(false);
                 sendingRef.current = false;
             }
@@ -3007,6 +3049,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                                                 const c = m.content || '';
                                                 
+                                                // Hide empty agent messages (no content, no plan, no thoughts)
+                                                if (m.role === 'agent' && !c && !m.planContent && (!m.thoughts || m.thoughts.length <= 20)) return false;
+
                                                 // Hide known backend status update messages
                                                 if (m.metadata?.agentStep === 'task_execution' || m.metadata?.is_task_update) return false;
                                                 

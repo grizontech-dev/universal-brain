@@ -147,13 +147,44 @@ class PlannerAgent(BaseAgent):
         print(f"{LOG} ═══ EXECUTE ═══ prompt='{prompt[:200]}' | has_feedback={bool(state.get('plan_feedback'))}", flush=True)
 
         # Resume build without approval — re-show existing plan, skip LLM
-        if prompt == "__RESUME_BUILD__":
+        if state.get("resume_build") and not state.get("plan_approved"):
             existing_plan = state.get("project_plan", {})
-            if existing_plan:
+            # Check if user had plan feedback (changes request) — if so, skip old plan and let LLM regenerate
+            _had_plan_feedback = bool(state.get("plan_feedback"))
+            print(f"{LOG} RESUME-CHECK: plan_feedback={state.get('plan_feedback')!r} → _had_plan_feedback={_had_plan_feedback}", flush=True)
+            if not _had_plan_feedback:
+                # Check messages in state first
+                _msgs = state.get("messages") or []
+                print(f"{LOG} RESUME-CHECK: state messages count={len(_msgs)}", flush=True)
+                for _m in reversed(_msgs):
+                    _mc = (_m.get("content") or "").lower()
+                    _mr = (_m.get("role") or "").lower()
+                    if _mr == "user" and ("change" in _mc or "update" in _mc or "modify" in _mc or "edit" in _mc or "revise" in _mc):
+                        _had_plan_feedback = True
+                        print(f"{LOG} RESUME-CHECK: Found feedback in state msg: '{_mc[:80]}'", flush=True)
+                        break
+                # Fallback: load messages directly from DB if state messages empty/stale
+                if not _had_plan_feedback and state.get("conversation_id"):
+                    try:
+                        from Brain.modules.conversations.service import conversation_service
+                        _db_msgs = conversation_service.get_messages(state["conversation_id"])
+                        print(f"{LOG} RESUME-CHECK: DB messages count={len(_db_msgs)}", flush=True)
+                        for _m in reversed(_db_msgs):
+                            _mc = (_m.get("content") or "").lower()
+                            _mr = (_m.get("role") or "").lower()
+                            print(f"{LOG} RESUME-CHECK: DB msg role='{_mr}' content='{_mc[:60]}'", flush=True)
+                            if _mr == "user" and ("change" in _mc or "update" in _mc or "modify" in _mc or "edit" in _mc or "revise" in _mc):
+                                _had_plan_feedback = True
+                                print(f"{LOG} RESUME-CHECK: Found feedback in DB msg", flush=True)
+                                break
+                    except Exception as e:
+                        print(f"{LOG} RESUME-CHECK: DB load error: {e}", flush=True)
+            print(f"{LOG} RESUME-CHECK: final _had_plan_feedback={_had_plan_feedback} → {'SKIP plan' if _had_plan_feedback else 'RE-SHOW plan'}", flush=True)
+            if existing_plan and not _had_plan_feedback:
                 print(f"{LOG} Resume build: re-showing existing plan '{existing_plan.get('project_name', 'N/A')}'", flush=True)
                 state["project_report"] = existing_plan.get("markdown_plan", "")
                 return state
-            # No existing plan — fall through to generate one
+            # Had feedback — fall through to regenerate plan with updated context
 
         history = state.get("messages", [])
         feedback = state.get("plan_feedback", "")
