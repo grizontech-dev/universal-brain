@@ -661,7 +661,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Creating project plan' });
                 execStore.setStreamingMessage('Creating project plan...');
             } else if (event.recursive_clarify || event.questions) {
-                execStore.setPhase('CLARIFYING');
+                execStore.setPhase('QUESTIONING');
                 execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Preparing questions' });
                 execStore.setStreamingMessage('Preparing questions...');
             } else if (event.create_tasks) {
