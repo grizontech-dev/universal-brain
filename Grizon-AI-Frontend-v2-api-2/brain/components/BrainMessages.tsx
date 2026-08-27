@@ -868,6 +868,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 id: resumeMsgId,
                 role: 'agent',
                 content: '',
+                planContent: undefined,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 metadata: { agentStep: 'executing' },
             }]);
