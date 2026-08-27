@@ -141,15 +141,16 @@ export default function BrainAgentMessage({
             <MarkdownRenderer content={content} />
           )}
 
-          {/* Plan Canvas — only show for the latest plan, hide superseded ones */}
-          {!planSuperseded && (!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')))) && (
+          {/* Plan Canvas — show loading state when plan is superseded and generating new one */}
+          {(!clarificationData?.length && (!!planContent || agentStep === 'planning' || (planVersions && planVersions.length > 0) || (typeof content === 'string' && content.includes('Revising architecture')) || planSuperseded)) && (
             <div className="mt-4 w-full pr-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <BrainPlanCanvas 
-                plan={planContent} 
+                plan={planSuperseded ? undefined : planContent} 
                 planVersions={planVersions}
                 todoList={todoList} 
                 onBuild={onBuild}
                 onReject={onReject}
+                isGenerating={planSuperseded}
               />
             </div>
           )}

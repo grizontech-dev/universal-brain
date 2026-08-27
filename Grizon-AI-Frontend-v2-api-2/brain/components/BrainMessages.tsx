@@ -3036,6 +3036,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
                                             const lastPlanMessageId = [...messages].reverse().find(m => m.planContent)?.id;
 
+                                            // When loading after user feedback, no plan is "latest" — supersede all to show loading state
+                                            const isLoadingAfterUserFeedback = isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user';
+
                                             // Filter out purely task-status messages from being rendered as main chat bubbles
                                             const displayMessages = messages.filter((m, idx) => {
                                                 if (m.role === 'user') return true;
@@ -3075,10 +3078,8 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                     return <BrainUserMessage key={msg.id} content={msg.content} dateTime={msg.timestamp} />;
                                                 }
 
-                                                const isLatestPlan = msg.id === lastPlanMessageId;
-                                                // When loading after feedback, supersede all old plans so loading state shows
-                                                const isLoadingAfterFeedback = isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user';
-                                                const isSuperseded = Boolean(msg.planContent && (!isLatestPlan || isLoadingAfterFeedback));
+                                                const isLatestPlan = msg.id === lastPlanMessageId && !isLoadingAfterUserFeedback;
+                                                const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
                                                 const isLastDisplayMessage = index === displayMessages.length - 1;
                                                 const shouldShowBuildUI = isBuildMode && isLastDisplayMessage;
                                                 const shouldShowLiveThoughts = isLoading && isLastDisplayMessage;
@@ -3098,7 +3099,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                                     : dynamicPlanVersions
                                                             }
                                                             dateTime={msg.timestamp}
-                                                            planContent={msg.planContent}
+                                                            planContent={isSuperseded ? undefined : msg.planContent}
                                                             sandboxJob={msg.sandboxJob}
                                                             todoList={(shouldShowBuildUI && buildTodos.length) ? (buildTodos as any) : (msg.metadata?.agentStep === 'create_tasks' ? msg.todoList : undefined)}
                                                             clarificationData={msg.clarificationData}

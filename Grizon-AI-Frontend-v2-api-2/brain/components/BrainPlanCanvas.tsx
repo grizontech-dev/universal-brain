@@ -18,16 +18,17 @@ interface BrainPlanCanvasProps {
     todoList?: Task[];
     onBuild?: () => void;
     onReject?: (feedback?: string) => void;
+    isGenerating?: boolean;
 }
 
-export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild, onReject }: BrainPlanCanvasProps) {
+export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild, onReject, isGenerating }: BrainPlanCanvasProps) {
     const isStopped = useExecutionStore((s) => s.isStopped);
     const [showDetails, setShowDetails] = useState(false);
     const [isRejecting, setIsRejecting] = useState(false);
     const [feedback, setFeedback] = useState("");
     const [selectedVersionIdx, setSelectedVersionIdx] = useState<number | null>(null);
 
-    if (plan === undefined && (!todoList || todoList.length === 0)) return null;
+    if (plan === undefined && (!todoList || todoList.length === 0) && !isGenerating) return null;
 
     const allPlans = [...(planVersions || [])];
     if (plan !== undefined && !allPlans.includes(plan)) {
