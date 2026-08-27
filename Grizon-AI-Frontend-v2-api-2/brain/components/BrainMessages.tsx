@@ -665,7 +665,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                 execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Preparing questions' });
                 execStore.setStreamingMessage('Preparing questions...');
             } else if (event.create_tasks) {
-                execStore.setPhase('BUILDING');
+                execStore.setPhase('EXECUTING');
                 execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Setting up build tasks' });
                 execStore.setStreamingMessage('Setting up build tasks...');
             } else if (event.init_sandbox || event.execute_sandbox) {
@@ -874,7 +874,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
 
             // Show thinking indicator immediately in chat
             const execStore = useExecutionStore.getState();
-            execStore.setPhase('RESUMING');
+            execStore.setPhase('EXECUTING');
             execStore.updateAgent('leader', { status: 'THINKING', currentTask: 'Resuming project...' });
             execStore.setStreamingMessage('Resuming project...');
 
