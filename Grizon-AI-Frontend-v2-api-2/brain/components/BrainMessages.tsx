@@ -3078,7 +3078,7 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                     return <BrainUserMessage key={msg.id} content={msg.content} dateTime={msg.timestamp} />;
                                                 }
 
-                                                const isLatestPlan = msg.id === lastPlanMessageId && !isLoadingAfterUserFeedback;
+                                                const isLatestPlan = msg.id === lastPlanMessageId && !isLoading;
                                                 const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
                                                 const isLastDisplayMessage = index === displayMessages.length - 1;
                                                 const shouldShowBuildUI = isBuildMode && isLastDisplayMessage;
