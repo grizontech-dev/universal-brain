@@ -3076,7 +3076,9 @@ export default function BrainMessages({ onToggleSidebarAction }: BrainMessagesPr
                                                 }
 
                                                 const isLatestPlan = msg.id === lastPlanMessageId;
-                                                const isSuperseded = Boolean(msg.planContent && !isLatestPlan);
+                                                // When loading after feedback, supersede all old plans so loading state shows
+                                                const isLoadingAfterFeedback = isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user';
+                                                const isSuperseded = Boolean(msg.planContent && (!isLatestPlan || isLoadingAfterFeedback));
                                                 const isLastDisplayMessage = index === displayMessages.length - 1;
                                                 const shouldShowBuildUI = isBuildMode && isLastDisplayMessage;
                                                 const shouldShowLiveThoughts = isLoading && isLastDisplayMessage;
