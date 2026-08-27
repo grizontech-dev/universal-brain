@@ -125,7 +125,8 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
 
             <div className="bg-surface-2 border border-border-default rounded-2xl overflow-hidden shadow-xl">
 
-                {/* Header */}
+                {/* Header — hide when generating */}
+                {!isGenerating && (
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
                     <div className="flex items-center gap-2.5">
                         <ListTodo size={16} className="text-accent shrink-0" />
@@ -139,7 +140,7 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                                 >
                                     {allPlans.map((_, i) => (
                                         <option key={i} value={i} className="bg-surface-2 text-text-primary">
-                                            v{i + 1} {i === allPlans.length - 1 ? '(Latest)' : ''}
+                                            v{i + 1} {i === allPlans.length -1 ? '(Latest)' : ''}
                                         </option>
                                     ))}
                                 </select>
@@ -148,9 +149,10 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                     </div>
 
                 </div>
+                )}
 
-                {/* Stack + Estimates meta row */}
-                {(uniqueStack.length > 0 || estimates.length > 0 || confidence !== null) && (
+                {/* Stack + Estimates meta row — hide when generating */}
+                {!isGenerating && (uniqueStack.length > 0 || estimates.length > 0 || confidence !== null) && (
                     <div className="flex flex-wrap items-center gap-1.5 px-5 pb-3 -mt-1">
                         {uniqueStack.map((tech, i) => (
                             <span key={`st-${i}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#976df8]/[0.08] border border-[#976df8]/[0.15] text-[10.5px] font-mono text-[#c4b5fd]">
@@ -267,7 +269,8 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                     </div>
                 )}
 
-                {/* Footer: Show details | Request Changes | Build */}
+                {/* Footer: Show details | Request Changes | Build — hide when generating */}
+                {!isGenerating && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle bg-surface-1/40">
                     <button
                         onClick={() => setShowDetails(!showDetails)}
@@ -332,6 +335,7 @@ export default function BrainPlanCanvas({ plan, planVersions, todoList, onBuild,
                         )}
                     </div>
                 </div>
+                )}
             </div>
         </div>
     );

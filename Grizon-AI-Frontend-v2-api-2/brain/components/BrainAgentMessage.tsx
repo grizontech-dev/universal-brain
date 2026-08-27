@@ -115,8 +115,8 @@ export default function BrainAgentMessage({
       <div className="w-full max-w-full">
         <div className="text-text-primary leading-relaxed text-[15px] font-normal markdown-content pl-11 relative">
           
-          {/* Active Status & Thoughts (V0 style) */}
-          {(thoughts || (timeline && timeline.length > 0) || (agentStep && agentStep !== 'idle')) && (
+          {/* Active Status & Thoughts (V0 style) — hide when plan is superseded */}
+          {!planSuperseded && (thoughts || (timeline && timeline.length > 0) || (agentStep && agentStep !== 'idle')) && (
              <div className="-ml-3 mb-3">
                  <BrainAgentStatus 
                     step={agentStep || 'completed'} 
