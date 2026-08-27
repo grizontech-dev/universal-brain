@@ -29,9 +29,9 @@ GITHUB_UPLOAD_BASE = os.getenv("GITHUB_UPLOAD_BASE", "https://uploads.github.com
 
 class GitHubRepository(Base):
     __tablename__ = "github_repositories"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="userId")
-    connectorId = Column(String, ForeignKey("connectors.id"), name="connectorId")
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="userId")
+    connectorId = Column(UUID(as_uuid=False), ForeignKey("connectors.id"), name="connectorId")
     installationId = Column(String, name="installationId")
     repoId = Column(String, name="repoId")
     owner = Column(String)
@@ -51,8 +51,8 @@ class GitHubRepository(Base):
 
 class GitHubSyncJob(Base):
     __tablename__ = "github_sync_jobs"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    repositoryId = Column(String, ForeignKey("github_repositories.id"), name="repositoryId")
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    repositoryId = Column(UUID(as_uuid=False), ForeignKey("github_repositories.id"), name="repositoryId")
     status = Column(String, default="queued")
     eventType = Column(String, nullable=True, name="eventType")
     payload = Column(JSON)

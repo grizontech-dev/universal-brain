@@ -7,7 +7,7 @@ import uuid
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(String, primary_key=True)
+    id = Column(UUID(as_uuid=False), primary_key=True)
     email = Column(String, unique=True, nullable=False)
     email_normalised = Column(String, name="email_normalised", nullable=False)
     password_hash = Column(String, name="password_hash")
@@ -36,8 +36,8 @@ class User(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
     title = Column(String)
     status = Column(String, default="active")
     platform = Column(String, default="web")
@@ -46,9 +46,9 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    conversationId = Column(String, ForeignKey("conversations.id"), name="conversation_id")
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversationId = Column(UUID(as_uuid=False), ForeignKey("conversations.id"), name="conversation_id")
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
     role = Column(String) # USER, ASSISTANT, SYSTEM
     content = Column(String)
     todoList = Column(JSON, nullable=True, name="todo_list") # Persistent project roadmap
@@ -59,9 +59,9 @@ class Message(Base):
 
 class BrainProject(Base):
     __tablename__ = "brain_projects"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="user_id")
-    conversationId = Column(String, ForeignKey("conversations.id"), name="conversation_id", unique=True)
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="user_id")
+    conversationId = Column(UUID(as_uuid=False), ForeignKey("conversations.id"), name="conversation_id", unique=True)
     title = Column(String)
     repoUrl = Column(String, name="repo_url")
     status = Column(String, default="IDLE")
@@ -70,8 +70,8 @@ class BrainProject(Base):
 
 class CreditWallet(Base):
     __tablename__ = "wallets"
-    id = Column(String, primary_key=True)
-    userId = Column(String, ForeignKey("users.id"), unique=True, name="user_id")
+    id = Column(UUID(as_uuid=False), primary_key=True)
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), unique=True, name="user_id")
     balance = Column(Integer, default=0)
     totalEarned = Column(Integer, default=0, name="lifetime_earned")
     totalSpent = Column(Integer, default=0, name="lifetime_spent")
@@ -79,8 +79,8 @@ class CreditWallet(Base):
 
 class CreditTransaction(Base):
     __tablename__ = "wallet_transactions"
-    id = Column(String, primary_key=True)
-    walletId = Column(String, ForeignKey("wallets.id"), name="wallet_id")
+    id = Column(UUID(as_uuid=False), primary_key=True)
+    walletId = Column(UUID(as_uuid=False), ForeignKey("wallets.id"), name="wallet_id")
     amount = Column(Integer) # positive for earned/granted, negative for spent
     balanceAfter = Column(Integer, name="balance_after")
     type = Column(String) # E.g., 'grant', 'deduct'
@@ -91,7 +91,7 @@ class CreditTransaction(Base):
 class BrainTask(Base):
     __tablename__ = "brain_tasks"
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    projectId = Column(String, ForeignKey("brain_projects.id"), name="project_id")
+    projectId = Column(UUID(as_uuid=False), ForeignKey("brain_projects.id"), name="project_id")
     label = Column(String)
     strategy = Column(String)
     agent = Column(String)

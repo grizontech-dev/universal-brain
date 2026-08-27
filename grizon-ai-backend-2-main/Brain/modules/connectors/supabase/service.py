@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Tuple, Dict, Any, Optional
 from cryptography.fernet import Fernet
 from sqlalchemy import Column, String, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 
 import uuid
 from Brain.config.database import Base, SessionLocal
@@ -15,8 +16,8 @@ from Brain.config.database import Base, SessionLocal
 # Database Model
 class Connector(Base):
     __tablename__ = "connectors"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    userId = Column(String, ForeignKey("users.id"), name="userId")
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    userId = Column(UUID(as_uuid=False), ForeignKey("users.id"), name="userId")
     type = Column(String)
     config = Column(JSON)
     isActive = Column(Boolean, default=True, name="isActive")
